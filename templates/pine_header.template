@@ -1,0 +1,44 @@
+// Pine header template — use for new indicators/strategies
+// Date: 2025-09-29
+// Follow the repository-wide Trading Rules: conservative defaults, opt-ins for auto actions and SL/TP suggestions.
+
+//@version=5
+// name: {{NAME}}
+// version: v{{X.Y}}
+// family: {{wyckoff|vsa|vp|cvd|strategy|library}}
+// mode: {{display-only|signal-only|strategy}}
+// author: {{author}}
+// purpose: One-line purpose / trade style
+
+indicator(title="{{NAME}} v{{X.Y}}", shorttitle="{{SHORT}}", overlay=true, max_labels_count=500)
+
+// === REQUIRED SAFETY / OPT-IN FLAGS (defaults conservative) ===
+mode = input.string("display-only", "Mode", options=["display-only","signal-only","strategy"])
+require_htf_alignment = input.bool(true, "Require HTF alignment (TopDown)")
+enable_recommended_sl_tp = input.bool(false, "Enable recommended SL/TP suggestions? (default: Off)")
+auto_place_orders = input.bool(false, "Auto place orders? (default: Off)")
+auto_manage_sl_tp = input.bool(false, "Auto-manage SL/TP? (default: Off)")
+confirm_auto_actions = input.bool(false, "I explicitly consent to auto order placement (must enable to execute)")
+dry_run = input.bool(true, "Dry run (no orders/alerts)")
+
+// === Optional risk params (used only when auto execution enabled) ===
+risk_pct_per_trade = input.float(0.5, "Risk % per trade", step=0.1)
+max_daily_trades = input.int(5, "Max daily trades")
+cooldown_after_trade = input.int(10, "Cooldown after entry (bars)")
+
+// === OUTPUTS / EXPOSED VALUES ===
+var float signal_score = 0.0
+signal_type = "none" // none|long|short
+var string signal_breakdown = ""
+recommended_sl = na
+recommended_tp = na
+suggestion_confidence = na
+suggestion_method = ""
+
+// Execution guard
+can_execute = auto_place_orders and confirm_auto_actions and not dry_run
+
+// Implementation notes:
+// - Do not compute or display recommended SL/TP unless enable_recommended_sl_tp == true
+// - Wrap any strategy.entry / strategy.exit calls in: if can_execute
+// - Expose signal_breakdown and signal_score for auditing
