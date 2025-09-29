@@ -1,0 +1,135 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © lenguyenphi
+
+//@version=5
+indicator("EZZ", overlay=true, max_boxes_count=5)
+
+vol_multiplier = input.float(2.0, title="Volume Spike Multiplier", minval=1.0)
+trap_zone_length = input.int(3, title="Trap Zone Length (bars)")
+lookback = input.int(20, title="Volume Lookback Period")
+show_sr = input.bool(true, title="Show Auto S/R")
+show_rsi_div = input.bool(true, title="Show RSI Divergence")
+div_lookback = input.int(20, title="RSI Div Lookback")
+max_trap_boxes = 5
+// Bật/tắt vẽ đường S/R theo khung
+show_h1_lines = input.bool(true, title="Show H1 S/R lines")
+show_h4_lines = input.bool(true, title="Show H4 S/R lines")
+show_d1_lines = input.bool(true, title="Show D1 S/R lines")
+// htf_live = input.bool(true, title="Use live HTF S/R (more sensitive, may repaint)")
+// Thay bằng công tắc riêng cho từng khung:
+h1_live = input.bool(true, title="H1 live S/R")
+h4_live = input.bool(true, title="H4 live S/R")
+d1_live = input.bool(true, title="D1 live S/R")
+d1_lookback = input.int(3, title="D1 S/R Lookback (days)", minval=1, step=1)
+
+// VSA Wyckoff Trap Zone logic
+avg_vol = ta.sma(volume, lookback)
+vol_spike = volume > avg_vol * vol_multiplier
+
+is_pin_bar(bull) =>
+    body = math.abs(close - open)
+    wick = bull ? (close - low) : (high - close)
+    wick > body * 2
+
+bull_pin = vol_spike and is_pin_bar(true) and close > open
+bear_pin = vol_spike and is_pin_bar(false) and close < open
+bull_engulf = vol_spike and close > open and close > ta.highest(close[1], trap_zone_length)
+bear_engulf = vol_spike and close < open and close < ta.lowest(close[1], trap_zone_length)
+trap_bull = bull_pin or bull_engulf
+trap_bear = bear_pin or bear_engulf
+
+// Auto S/R (Native + MTF)
+sr_len = 40
+sr_width = 1
+
+// Native S/R (for current timeframe)
+native_support = ta.lowest(low, sr_len)
+native_resist = ta.highest(high, sr_len)
+plot(show_sr ? native_support : na, color=color.new(color.gray, 50), linewidth=sr_width, style=plot.style_linebr, title="Sup")
+plot(show_sr ? native_resist : na, color=color.new(color.gray, 50), linewidth=sr_width, style=plot.style_linebr, title="Res")
+
+// MTF S/R Logic
+is_low_tf = timeframe.isintraday and timeframe.multiplier <= 15
+
+// Fetch H1 S/R Data
+h1_support = h1_live
+     ? request.security(syminfo.tickerid, "60", ta.lowest(low, sr_len))
+     : request.security(syminfo.tickerid, "60", ta.lowest(low, sr_len)[1])
+h1_resist  = h1_live
+     ? request.security(syminfo.tickerid, "60", ta.highest(high, sr_len))
+     : request.security(syminfo.tickerid, "60", ta.highest(high, sr_len)[1])
+
+// Fetch H4 S/R Data
+h4_support = h4_live
+     ? request.security(syminfo.tickerid, "240", ta.lowest(low, sr_len))
+     : request.security(syminfo.tickerid, "240", ta.lowest(low, sr_len)[1])
+h4_resist  = h4_live
+     ? request.security(syminfo.tickerid, "240", ta.highest(high, sr_len))
+     : request.security(syminfo.tickerid, "240", ta.highest(high, sr_len)[1])
+
+// Fetch D1 S/R Data (param lookback)
+d1_support = d1_live
+     ? request.security(syminfo.tickerid, "D", ta.lowest(low, d1_lookback))
+     : request.security(syminfo.tickerid, "D", ta.lowest(low, d1_lookback)[1])
+d1_resist  = d1_live
+     ? request.security(syminfo.tickerid, "D", ta.highest(high, d1_lookback))
+     : request.security(syminfo.tickerid, "D", ta.highest(high, d1_lookback)[1])
+
+// Show higher-TF S/R depending on current chart TF
+show_h1_sr = timeframe.isintraday and timeframe.multiplier < 60      // show H1 on < 60m (e.g., 30m, 15m,...)
+show_h4_sr = timeframe.isintraday and timeframe.multiplier < 240     // show H4 on < 240m (e.g., 30m, 1h,...)
+show_d1_sr = timeframe.isintraday                                    // show D1 on all intraday (incl. 4h)
+
+// Plot MTF S/R lines
+plot(show_sr and show_h1_lines and show_h1_sr ? h1_support : na, color=color.new(color.blue, 60), linewidth=2, style=plot.style_line,  title="H1 Sup")
+plot(show_sr and show_h1_lines and show_h1_sr ? h1_resist  : na, color=color.new(color.blue, 60), linewidth=2, style=plot.style_line,  title="H1 Res")
+plot(show_sr and show_h4_lines and show_h4_sr ? h4_support : na, color=color.new(color.purple, 50), linewidth=2, style=plot.style_line, title="H4 Sup")
+plot(show_sr and show_h4_lines and show_h4_sr ? h4_resist  : na, color=color.new(color.purple, 50), linewidth=2, style=plot.style_line, title="H4 Res")
+plot(show_sr and show_d1_lines and show_d1_sr ? d1_support : na, color=color.new(color.orange, 40), linewidth=2, style=plot.style_line, title="D1 Sup")
+plot(show_sr and show_d1_lines and show_d1_sr ? d1_resist  : na, color=color.new(color.orange, 40), linewidth=2, style=plot.style_line, title="D1 Res")
+
+// Trap zone only valid near S/R (filters weak traps) - UPDATED with MTF S/R
+// Mở rộng áp dụng cho: <=15m, 30m, 1h, 4h
+trap_tf_ok = timeframe.isintraday and (timeframe.multiplier <= 15 or timeframe.multiplier == 30 or timeframe.multiplier == 60 or timeframe.multiplier == 240)
+
+near_native_sr = (math.abs(low - native_support) / native_support < 0.002) or (math.abs(high - native_resist) / native_resist < 0.002)
+near_h1_sr = trap_tf_ok and na(h1_support) == false and ((math.abs(low - h1_support) / h1_support < 0.002) or (math.abs(high - h1_resist) / h1_resist < 0.002))
+near_h4_sr = trap_tf_ok and na(h4_support) == false and ((math.abs(low - h4_support) / h4_support < 0.002) or (math.abs(high - h4_resist) / h4_resist < 0.002))
+near_d1_sr = trap_tf_ok and na(d1_support) == false and ((math.abs(low - d1_support) / d1_support < 0.002) or (math.abs(high - d1_resist) / d1_resist < 0.002))
+
+is_in_sr_zone = near_native_sr or near_h1_sr or near_h4_sr or near_d1_sr
+final_trap_bull = trap_bull and is_in_sr_zone
+final_trap_bear = trap_bear and is_in_sr_zone
+
+// Manage number of trap zone boxes
+var box[] trap_boxes = array.new<box>()
+if final_trap_bull
+    new_box = box.new(left=bar_index, top=high, right=bar_index + trap_zone_length, bottom=low)
+    box.set_bgcolor(new_box, color.new(color.green, 80))
+    box.set_border_color(new_box, color.green)
+    array.unshift(trap_boxes, new_box)
+if final_trap_bear
+    new_box = box.new(left=bar_index, top=high, right=bar_index + trap_zone_length, bottom=low)
+    box.set_bgcolor(new_box, color.new(color.red, 80))
+    box.set_border_color(new_box, color.red)
+    array.unshift(trap_boxes, new_box)
+while array.size(trap_boxes) > max_trap_boxes
+    box.delete(array.pop(trap_boxes))
+
+// Entry signal (simplified)
+entry_buy = final_trap_bull and close > open and close[1] < open[1]
+entry_sell = final_trap_bear and close < open and close[1] > open[1]
+plotshape(entry_buy, title="B", style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.tiny, text="B")
+plotshape(entry_sell, title="S", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.tiny, text="S")
+alertcondition(entry_buy, title="Buy Entry Alert", message="Trap Scalping BUY (B)!")
+alertcondition(entry_sell, title="Sell Entry Alert", message="Trap Scalping SELL (S)!")
+
+// RSI Divergence logic (compact, dynamic lookback)
+rsi_len = 14
+rsi = ta.rsi(close, rsi_len)
+bull_div = low < ta.lowest(low, div_lookback) and rsi > ta.lowest(rsi, div_lookback)
+bear_div = high > ta.highest(high, div_lookback) and rsi < ta.highest(rsi, div_lookback)
+plotshape(show_rsi_div and bull_div, style=shape.triangleup, location=location.belowbar, color=color.aqua, size=size.tiny, text="BD", title="BD")
+plotshape(show_rsi_div and bear_div, style=shape.triangledown, location=location.abovebar, color=color.orange, size=size.tiny, text="SD", title="SD")
+alertcondition(show_rsi_div and bull_div, title="RSI Bull Div", message="RSI BD!")
+alertcondition(show_rsi_div and bear_div, title="RSI Bear Div", message="RSI SD!")

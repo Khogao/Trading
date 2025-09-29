@@ -1,0 +1,784 @@
+// © 2025 Phi & Ace — EZZ1-CGPT (Hybrid Wyckoff/PA • Temp Zones) v1.0.1
+// CHANGELOG v1.0.1 (bugfix-only, Pine v5):
+// - P0: Intrabar invalidate ACTIVE zone immediately on breach (even before HTF close).
+// - P0: One-variable-per-line for all `var` declarations (Pine syntax).
+// - P0: Removed nested helper inside get_ctx(); moved f_ctx_pair to global scope.
+// - P1: Removed unused helper; minor hygiene.
+// NOTE: Feature-freeze — no new features added.
+//
+// WHAT: Multi-TF KV Zones (5m,15m,1h,2h,4h,1D) + TEMP1/TEMP2 state.
+// WHY : Keep Wyckoff “memory” (TEMP1) while following PA trend (TEMP2).
+// B/S: Signals computed on current chart TF, normalized by ATR + zone bounds of the selected context TF.
+//@version=5
+indicator("EZZ1-CGPT (Hybrid Wyckoff/PA • Temp Zones)", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ============================== BLOCK 1: INPUTS ===============================
+var string GRP_GEN = "General Settings"
+kv_show_zones        = input.bool(true,  "Show KV Zones", group=GRP_GEN)
+kv_show_tags         = input.bool(true,  "Show TF/DIR tags on zones", group=GRP_GEN)
+sig_priority_highest = input.bool(true,  "Signal priority: Highest TF first (1D→4H→2H→1H→15→5)", group=GRP_GEN)
+
+// ---------- TEMP Logic (Hybrid Wyckoff/PA) ----------
+var string GRP_TEMP = "Temp-Zone Logic (Wyckoff/PA Hybrid)"
+temp_enable          = input.bool(true,  "Enable TEMP1/TEMP2 logic", group=GRP_TEMP)
+temp_B_min           = input.float(0.30, "Break strength B_min (>= triggers TEMP1)", minval=0.0, step=0.01, group=GRP_TEMP)
+temp_B_hard          = input.float(1.00, "Hard break B_hard (skip TEMP1 in extreme trends)", minval=0.0, step=0.01, group=GRP_TEMP)
+temp_cbuf            = input.float(0.15, "Close buffer (× ATR of TF) to confirm break", minval=0.0, step=0.01, group=GRP_TEMP)
+temp2_zone_factor    = input.float(0.85, "TEMP2 zone height factor vs Active", minval=0.5, maxval=1.2, step=0.01, group=GRP_TEMP)
+temp_adx_len         = input.int(14,     "Momentum ADX length (on TF zone)", minval=5, group=GRP_TEMP)
+temp_adx_thresh      = input.float(28.0, "Momentum ADX threshold (>= to spawn TEMP2)", minval=5, step=0.5, group=GRP_TEMP)
+temp_windowW         = input.int(120,    "Auto-retire window (bars of chart TF)", minval=10, group=GRP_TEMP)
+temp_use_volume      = input.bool(true,  "Require volume spike for break", group=GRP_TEMP)
+temp_vol_lookback    = input.int(20,     "Volume lookback", minval=1, group=GRP_TEMP)
+temp_vol_multiplier  = input.float(1.8,  "Volume spike multiplier", minval=1.0, step=0.1, group=GRP_TEMP)
+temp1_alpha_add      = input.int(20,     "TEMP1 extra alpha (more faded)", minval=0, maxval=80, group=GRP_TEMP)
+temp2_alpha_add      = input.int(10,     "TEMP2 extra alpha", minval=0, maxval=80, group=GRP_TEMP)
+
+// --------------------------- TF = 5m ---------------------------
+var string G5 = "KV • 5m Settings"
+kv_zone_len_5m        = input.int(3,     "[5m] zone swing len",   minval=1, maxval=10, group=G5)
+kv_swing_lb_5m        = input.int(60,    "[5m] swing lookback",   minval=5, maxval=400, group=G5)
+kv_throttle_bars_5m   = input.int(5,     "[5m] throttle bars",    minval=1, group=G5)
+kv_max_age_htf_5m     = input.int(10,    "[5m] Zone Max Age (bars of 5m)", minval=0, group=G5)
+kv_atr_len_5m         = input.int(14,    "[5m] ATR length",       minval=1, group=G5)
+kv_min_body_atr_5m    = input.float(0.10,"[5m] min body vs ATR",  minval=0.0, step=0.01, group=G5)
+kv_wick_mult_5m       = input.float(1.5, "[5m] wick/body ratio",  minval=0.5, step=0.1, group=G5)
+kv_zone_atr_5m        = input.float(0.8, "[5m] zone height (x ATR)", minval=0.1, step=0.1, group=G5)
+kv5_alpha             = input.int(50,    "[5m] Alpha (≤80)",      minval=0, maxval=80, group=G5)
+kv_zone_extend_5m     = input.int(120,   "[5m] zone extend (bars of chart TF)", minval=10, maxval=500, group=G5)
+
+// --------------------------- TF = 15m --------------------------
+var string G15 = "KV • 15m Settings"
+kv_zone_len_15m        = input.int(3,     "[15m] zone swing len",   minval=1, maxval=10, group=G15)
+kv_swing_lb_15m        = input.int(40,    "[15m] swing lookback",   minval=5, maxval=400, group=G15)
+kv_throttle_bars_15m   = input.int(3,     "[15m] throttle bars",    minval=1, group=G15)
+kv_max_age_htf_15m     = input.int(10,    "[15m] Zone Max Age (bars of 15m)", minval=0, group=G15)
+kv_atr_len_15m         = input.int(14,    "[15m] ATR length",       minval=1, group=G15)
+kv_min_body_atr_15m    = input.float(0.15,"[15m] min body vs ATR",  minval=0.0, step=0.01, group=G15)
+kv_wick_mult_15m       = input.float(1.5, "[15m] wick/body ratio",  minval=0.5, step=0.1, group=G15)
+kv_zone_atr_15m        = input.float(1.0, "[15m] zone height (x ATR)", minval=0.1, step=0.1, group=G15)
+kv15_alpha             = input.int(60,    "[15m] Alpha (≤80)",      minval=0, maxval=80, group=G15)
+kv_zone_extend_15m     = input.int(120,   "[15m] zone extend (bars of chart TF)", minval=10, maxval=500, group=G15)
+
+// --------------------------- TF = 1h (60) ----------------------
+var string G60 = "KV • 1h Settings"
+kv_zone_len_60        = input.int(3,     "[1h] zone swing len",   minval=1, maxval=10, group=G60)
+kv_swing_lb_60        = input.int(40,    "[1h] swing lookback",   minval=5, maxval=500, group=G60)
+kv_throttle_bars_60   = input.int(2,     "[1h] throttle bars",    minval=1, group=G60)
+kv_max_age_htf_60     = input.int(10,    "[1h] Zone Max Age (bars of 1h)", minval=0, group=G60)
+kv_atr_len_60         = input.int(14,    "[1h] ATR length",       minval=1, group=G60)
+kv_min_body_atr_60    = input.float(0.18,"[1h] min body vs ATR",  minval=0.0, step=0.01, group=G60)
+kv_wick_mult_60       = input.float(1.5, "[1h] wick/body ratio",  minval=0.5, step=0.1, group=G60)
+kv_zone_atr_60        = input.float(1.2, "[1h] zone height (x ATR)", minval=0.1, step=0.1, group=G60)
+kv60_alpha            = input.int(60,    "[1h] Alpha (≤80)",      minval=0, maxval=80, group=G60)
+kv_zone_extend_60     = input.int(180,   "[1h] zone extend (bars of chart TF)", minval=10, maxval=1000, group=G60)
+
+// --------------------------- TF = 2h (120) ---------------------
+var string G120 = "KV • 2h Settings"
+kv_zone_len_120        = input.int(3,     "[2h] zone swing len",   minval=1, maxval=10, group=G120)
+kv_swing_lb_120        = input.int(35,    "[2h] swing lookback",   minval=5, maxval=600, group=G120)
+kv_throttle_bars_120   = input.int(2,     "[2h] throttle bars",    minval=1, group=G120)
+kv_max_age_htf_120     = input.int(10,    "[2h] Zone Max Age (bars of 2h)", minval=0, group=G120)
+kv_atr_len_120         = input.int(14,    "[2h] ATR length",       minval=1, group=G120)
+kv_min_body_atr_120    = input.float(0.18,"[2h] min body vs ATR",  minval=0.0, step=0.01, group=G120)
+kv_wick_mult_120       = input.float(1.6, "[2h] wick/body ratio",  minval=0.5, step=0.1, group=G120)
+kv_zone_atr_120        = input.float(1.4, "[2h] zone height (x ATR)", minval=0.1, step=0.1, group=G120)
+kv120_alpha            = input.int(65,    "[2h] Alpha (≤80)",      minval=0, maxval=80, group=G120)
+kv_zone_extend_120     = input.int(220,   "[2h] zone extend (bars of chart TF)", minval=10, maxval=1500, group=G120)
+
+// --------------------------- TF = 4h (240) ---------------------
+var string G240 = "KV • 4h Settings"
+kv_zone_len_240        = input.int(3,     "[4h] zone swing len",   minval=1, maxval=10, group=G240)
+kv_swing_lb_240        = input.int(30,    "[4h] swing lookback",   minval=5, maxval=700, group=G240)
+kv_throttle_bars_240   = input.int(2,     "[4h] throttle bars",    minval=1, group=G240)
+kv_max_age_htf_240     = input.int(10,    "[4h] Zone Max Age (bars of 4h)", minval=0, group=G240)
+kv_atr_len_240         = input.int(14,    "[4h] ATR length",       minval=1, group=G240)
+kv_min_body_atr_240    = input.float(0.20,"[4h] min body vs ATR",  minval=0.0, step=0.01, group=G240)
+kv_wick_mult_240       = input.float(1.6, "[4h] wick/body ratio",  minval=0.5, step=0.1, group=G240)
+kv_zone_atr_240        = input.float(1.6, "[4h] zone height (x ATR)", minval=0.1, step=0.1, group=G240)
+kv240_alpha            = input.int(70,    "[4h] Alpha (≤80)",      minval=0, maxval=80, group=G240)
+kv_zone_extend_240     = input.int(260,   "[4h] zone extend (bars of chart TF)", minval=10, maxval=2000, group=G240)
+
+// --------------------------- TF = 1D (D) -----------------------
+var string GD = "KV • 1D Settings"
+kv_zone_len_D        = input.int(3,     "[1D] zone swing len",   minval=1, maxval=10, group=GD)
+kv_swing_lb_D        = input.int(20,    "[1D] swing lookback",   minval=5, maxval=1000, group=GD)
+kv_throttle_bars_D   = input.int(1,     "[1D] throttle bars",    minval=1, group=GD)
+kv_max_age_htf_D     = input.int(15,    "[1D] Zone Max Age (days)", minval=0, group=GD)
+kv_atr_len_D         = input.int(14,    "[1D] ATR length",       minval=1, group=GD)
+kv_min_body_atr_D    = input.float(0.22,"[1D] min body vs ATR",  minval=0.0, step=0.01, group=GD)
+kv_wick_mult_D       = input.float(1.7, "[1D] wick/body ratio",  minval=0.5, step=0.1, group=GD)
+kv_zone_atr_D        = input.float(2.0, "[1D] zone height (x ATR)", minval=0.1, step=0.1, group=GD)
+kvD_alpha            = input.int(75,    "[1D] Alpha (≤80)",      minval=0, maxval=80, group=GD)
+kv_zone_extend_D     = input.int(350,   "[1D] zone extend (bars of chart TF)", minval=10, maxval=3000, group=GD)
+
+// --- Signals (chart TF) ---
+var string GRP_SIG = "Signals • Entries"
+sig_show            = input.bool(true,  "Show Buy/Sell", group=GRP_SIG)
+sig_retest_only     = input.bool(true,  "Only take retest inside KV", group=GRP_SIG)
+sig_min_body_atr    = input.float(0.20, "Signal: min body vs ATR (ctx TF)", step=0.01, minval=0.0, group=GRP_SIG)
+sig_wick_rej_mult   = input.float(1.5,  "Signal: wick/body ratio", step=0.1, minval=0.5, group=GRP_SIG)
+sig_use_volume      = input.bool(true,  "Require volume spike", group=GRP_SIG)
+sig_vol_lookback    = input.int(20,     "Volume Lookback", group=GRP_SIG)
+sig_vol_multiplier  = input.float(2.0,  "Volume Spike Multiplier", minval=1.0, group=GRP_SIG)
+sig_throttle_bars   = input.int(6,      "Signal throttle (bars of chart TF)", minval=1, group=GRP_SIG)
+
+// Precompute volume spike (TEMP logic)
+vol_ma_temp = ta.sma(volume, temp_vol_lookback)
+vol_spike_temp = not temp_use_volume or (volume > vol_ma_temp * temp_vol_multiplier)
+
+// ========================= BLOCK 2: HELPERS & TRIGGERS =======================
+f_kv_trigger(direction, _close, _open, _high, _low, _zone_len, _min_body_atr, _atr_len, _wick_mult) =>
+    bool crossed = false
+    bool wick_ok = false
+    if direction == "bear"
+        hh = ta.highest(_high, _zone_len)[1]
+        crossed := ta.crossover(_close, hh)
+    else
+        ll = ta.lowest(_low, _zone_len)[1]
+        crossed := ta.crossunder(_close, ll)
+    atrv = ta.atr(_atr_len)
+    body = math.abs(_close - _open)
+    if direction == "bear"
+        upW = _high - math.max(_open, _close)
+        wick_ok := upW / math.max(body, syminfo.mintick) >= _wick_mult
+    else
+        dnW = math.min(_open, _close) - _low
+        wick_ok := dnW / math.max(body, syminfo.mintick) >= _wick_mult
+    crossed and (body >= _min_body_atr * atrv) and wick_ok
+
+f_zone_geom(direction, htf_high, htf_low, htf_atr, htf_swing_hi, htf_swing_lo, mult) =>
+    float top = na
+    float bot = na
+    if direction == "bear"
+        top := math.max(htf_high, htf_swing_hi)
+        bot := top - htf_atr * mult
+    else
+        bot := math.min(htf_low, htf_swing_lo)
+        top := bot + htf_atr * mult
+    [top, bot]
+
+// (Optional) overlap utility kept for future use
+f_overlap_ratio(lo, hi, top, bot) =>
+    height = math.max(top - bot, syminfo.mintick)
+    interTop = math.min(hi, top)
+    interBot = math.max(lo, bot)
+    inter = math.max(interTop - interBot, 0.0)
+    inter / height
+
+// Helper: prefer TEMP2 if exists; otherwise use ACTIVE
+f_ctx_pair(t2_bear_top, t2_bear_bot, t2_bull_top, t2_bull_bot, act_bear_top, act_bear_bot, act_bull_top, act_bull_bot, atr) =>
+    float _bt = na
+    float _bb = na
+    float _ut = na
+    float _ub = na
+    float _a  = atr
+    if not na(t2_bear_top) or not na(t2_bull_top)
+        _bt := t2_bear_top
+        _bb := t2_bear_bot
+        _ut := t2_bull_top
+        _ub := t2_bull_bot
+    else
+        _bt := act_bear_top
+        _bb := act_bear_bot
+        _ut := act_bull_top
+        _ub := act_bull_bot
+    [_bt, _bb, _ut, _ub, _a]
+
+// ========================= BLOCK 3: MTF REQUESTS =============================
+string TF_5   = "5"
+string TF_15  = "15"
+string TF_60  = "60"
+string TF_120 = "120"
+string TF_240 = "240"
+string TF_D   = "D"
+
+request_pack(tf, dir_bear, zl, mb, alen, wmult, swlb, adxlen) =>
+    request.security(
+        syminfo.tickerid, tf,
+        [f_kv_trigger(dir_bear ? "bear" : "bull", close, open, high, low, zl, mb, alen, wmult),
+         high, low, ta.atr(alen), ta.highest(high, swlb), ta.lowest(low, swlb), bar_index, close, ta.adx(adxlen)],
+         barmerge.gaps_off, barmerge.lookahead_off)
+
+// 5m
+([kv5_evt_bear_once, kv5_high_htf, kv5_low_htf, kv5_atr, kv5_swing_hi, kv5_swing_lo, kv5_seq, kv5_close, kv5_adx]) =
+    request_pack(TF_5, true,  kv_zone_len_5m,  kv_min_body_atr_5m,  kv_atr_len_5m,  kv_wick_mult_5m,  kv_swing_lb_5m,  temp_adx_len)
+([kv5_evt_bull_once]) =
+    request.security(syminfo.tickerid, TF_5, f_kv_trigger("bull", close, open, high, low, kv_zone_len_5m, kv_min_body_atr_5m, kv_atr_len_5m, kv_wick_mult_5m),
+                     barmerge.gaps_off, barmerge.lookahead_off)
+// 15m
+([kv15_evt_bear_once, kv15_high_htf, kv15_low_htf, kv15_atr, kv15_swing_hi, kv15_swing_lo, kv15_seq, kv15_close, kv15_adx]) =
+    request_pack(TF_15, true, kv_zone_len_15m, kv_min_body_atr_15m, kv_atr_len_15m, kv_wick_mult_15m, kv_swing_lb_15m, temp_adx_len)
+([kv15_evt_bull_once]) =
+    request.security(syminfo.tickerid, TF_15, [f_kv_trigger("bull", close, open, high, low, kv_zone_len_15m, kv_min_body_atr_15m, kv_atr_len_15m, kv_wick_mult_15m)],
+                     barmerge.gaps_off, barmerge.lookahead_off)
+// 60m
+([kv60_evt_bear_once, kv60_high_htf, kv60_low_htf, kv60_atr, kv60_swing_hi, kv60_swing_lo, kv60_seq, kv60_close, kv60_adx]) =
+    request_pack(TF_60, true, kv_zone_len_60, kv_min_body_atr_60, kv_atr_len_60, kv_wick_mult_60, kv_swing_lb_60, temp_adx_len)
+([kv60_evt_bull_once]) =
+    request.security(syminfo.tickerid, TF_60, [f_kv_trigger("bull", close, open, high, low, kv_zone_len_60, kv_min_body_atr_60, kv_atr_len_60, kv_wick_mult_60)],
+                     barmerge.gaps_off, barmerge.lookahead_off)
+// 120m
+([kv120_evt_bear_once, kv120_high_htf, kv120_low_htf, kv120_atr, kv120_swing_hi, kv120_swing_lo, kv120_seq, kv120_close, kv120_adx]) =
+    request_pack(TF_120, true, kv_zone_len_120, kv_min_body_atr_120, kv_atr_len_120, kv_wick_mult_120, kv_swing_lb_120, temp_adx_len)
+([kv120_evt_bull_once]) =
+    request.security(syminfo.tickerid, TF_120, [f_kv_trigger("bull", close, open, high, low, kv_zone_len_120, kv_min_body_atr_120, kv_atr_len_120, kv_wick_mult_120)],
+                     barmerge.gaps_off, barmerge.lookahead_off)
+// 240m
+([kv240_evt_bear_once, kv240_high_htf, kv240_low_htf, kv240_atr, kv240_swing_hi, kv240_swing_lo, kv240_seq, kv240_close, kv240_adx]) =
+    request_pack(TF_240, true, kv_zone_len_240, kv_min_body_atr_240, kv_atr_len_240, kv_wick_mult_240, kv_swing_lb_240, temp_adx_len)
+([kv240_evt_bull_once]) =
+    request.security(syminfo.tickerid, TF_240, [f_kv_trigger("bull", close, open, high, low, kv_zone_len_240, kv_min_body_atr_240, kv_atr_len_240, kv_wick_mult_240)],
+                     barmerge.gaps_off, barmerge.lookahead_off)
+// 1D
+([kvD_evt_bear_once, kvD_high_htf, kvD_low_htf, kvD_atr, kvD_swing_hi, kvD_swing_lo, kvD_seq, kvD_close, kvD_adx]) =
+    request_pack(TF_D, true, kv_zone_len_D, kv_min_body_atr_D, kv_atr_len_D, kv_wick_mult_D, kv_swing_lb_D, temp_adx_len)
+([kvD_evt_bull_once]) =
+    request.security(syminfo.tickerid, TF_D, [f_kv_trigger("bull", close, open, high, low, kv_zone_len_D, kv_min_body_atr_D, kv_atr_len_D, kv_wick_mult_D)],
+                     barmerge.gaps_off, barmerge.lookahead_off)
+
+// ==================== BLOCK 4: ACTIVE ZONE DRAWING ===========================
+var box kv5_bear_box = na
+var box kv5_bull_box = na
+var float kv5_bear_top = na
+var float kv5_bear_bot = na
+var float kv5_bull_top = na
+var float kv5_bull_bot = na
+var int kv5_bear_seq = na
+var int kv5_bull_seq = na
+var label kv5_bear_tag = na
+var label kv5_bull_tag = na
+
+var box kv15_bear_box = na
+var box kv15_bull_box = na
+var float kv15_bear_top = na
+var float kv15_bear_bot = na
+var float kv15_bull_top = na
+var float kv15_bull_bot = na
+var int kv15_bear_seq = na
+var int kv15_bull_seq = na
+var label kv15_bear_tag = na
+var label kv15_bull_tag = na
+
+var box kv60_bear_box = na
+var box kv60_bull_box = na
+var float kv60_bear_top = na
+var float kv60_bear_bot = na
+var float kv60_bull_top = na
+var float kv60_bull_bot = na
+var int kv60_bear_seq = na
+var int kv60_bull_seq = na
+var label kv60_bear_tag = na
+var label kv60_bull_tag = na
+
+var box kv120_bear_box = na
+var box kv120_bull_box = na
+var float kv120_bear_top = na
+var float kv120_bear_bot = na
+var float kv120_bull_top = na
+var float kv120_bull_bot = na
+var int kv120_bear_seq = na
+var int kv120_bull_seq = na
+var label kv120_bear_tag = na
+var label kv120_bull_tag = na
+
+var box kv240_bear_box = na
+var box kv240_bull_box = na
+var float kv240_bear_top = na
+var float kv240_bear_bot = na
+var float kv240_bull_top = na
+var float kv240_bull_bot = na
+var int kv240_bear_seq = na
+var int kv240_bull_seq = na
+var label kv240_bear_tag = na
+var label kv240_bull_tag = na
+
+var box kvD_bear_box = na
+var box kvD_bull_box = na
+var float kvD_bear_top = na
+var float kvD_bear_bot = na
+var float kvD_bull_top = na
+var float kvD_bull_bot = na
+var int kvD_bear_seq = na
+var int kvD_bull_seq = na
+var label kvD_bear_tag = na
+var label kvD_bull_tag = na
+
+f_draw_active(direction, tf_tag, evt_once, htf_high, htf_low, htf_atr, htf_swing_hi, htf_swing_lo, htf_seq, htf_close,
+              zone_atr_mult, throttle_bars, max_age, extend_bars, border_color, alpha,
+              zone_box, zone_top, zone_bot, zone_seq, zone_tag) =>
+    box _box = zone_box
+    float _top = zone_top
+    float _bot = zone_bot
+    int _seq = zone_seq
+    label _tag = zone_tag
+
+    if kv_show_zones and evt_once
+        bool can_new = na(_seq) or (htf_seq - _seq >= throttle_bars)
+        if can_new
+            if not na(_box)
+                box.delete(_box)
+            if not na(_tag)
+                label.delete(_tag)
+            [top, bot] = f_zone_geom(direction, htf_high, htf_low, htf_atr, htf_swing_hi, htf_swing_lo, zone_atr_mult)
+            _top := top
+            _bot := bot
+            _seq := htf_seq
+            _box := box.new(left=bar_index, top=top, right=bar_index + extend_bars, bottom=bot,
+                            border_color=border_color, bgcolor=color.new(border_color, alpha))
+            if kv_show_tags
+                _tag := label.new(bar_index, direction=="bear"? top : bot, text=tf_tag + " " + (direction=="bear"?"BEAR":"BULL"),
+                                  color=color.new(border_color, 85), textcolor=color.white, style=label.style_label_left, size=size.tiny)
+    // extend each bar
+    if kv_show_zones and not na(_box)
+        box.set_right(_box, bar_index + extend_bars)
+    // invalidate by HTF close (secondary protection)
+    if kv_show_zones and not na(_box)
+        if direction=="bear" and htf_close > _top
+            box.set_right(_box, bar_index)
+        if direction=="bull" and htf_close < _bot
+            box.set_right(_box, bar_index)
+        if max_age > 0 and (htf_seq - _seq > max_age)
+            box.delete(_box)
+            _box := na
+            if not na(_tag)
+                label.delete(_tag)
+                _tag := na
+    // hide when off
+    if not kv_show_zones
+        if not na(_box)
+            box.delete(_box)
+            _box := na
+        if not na(_tag)
+            label.delete(_tag)
+            _tag := na
+
+    [_box, _top, _bot, _seq, _tag]
+
+// 5m
+[kv5_bear_box, kv5_bear_top, kv5_bear_bot, kv5_bear_seq, kv5_bear_tag] =
+    f_draw_active("bear", "5m", kv5_evt_bear_once, kv5_high_htf, kv5_low_htf, kv5_atr, kv5_swing_hi, kv5_swing_lo, kv5_seq, kv5_close,
+                  kv_zone_atr_5m, kv_throttle_bars_5m, kv_max_age_htf_5m, kv_zone_extend_5m, color.orange, kv5_alpha,
+                  kv5_bear_box, kv5_bear_top, kv5_bear_bot, kv5_bear_seq, kv5_bear_tag)
+[kv5_bull_box, kv5_bull_top, kv5_bull_bot, kv5_bull_seq, kv5_bull_tag] =
+    f_draw_active("bull", "5m", kv5_evt_bull_once, kv5_high_htf, kv5_low_htf, kv5_atr, kv5_swing_hi, kv5_swing_lo, kv5_seq, kv5_close,
+                  kv_zone_atr_5m, kv_throttle_bars_5m, kv_max_age_htf_5m, kv_zone_extend_5m, color.lime, kv5_alpha,
+                  kv5_bull_box, kv5_bull_top, kv5_bull_bot, kv5_bull_seq, kv5_bull_tag)
+// 15m
+[kv15_bear_box, kv15_bear_top, kv15_bear_bot, kv15_bear_seq, kv15_bear_tag] =
+    f_draw_active("bear", "15m", kv15_evt_bear_once, kv15_high_htf, kv15_low_htf, kv15_atr, kv15_swing_hi, kv15_swing_lo, kv15_seq, kv15_close,
+                  kv_zone_atr_15m, kv_throttle_bars_15m, kv_max_age_htf_15m, kv_zone_extend_15m, color.red, kv15_alpha,
+                  kv15_bear_box, kv15_bear_top, kv15_bear_bot, kv15_bear_seq, kv15_bear_tag)
+[kv15_bull_box, kv15_bull_top, kv15_bull_bot, kv15_bull_seq, kv15_bull_tag] =
+    f_draw_active("bull", "15m", kv15_evt_bull_once, kv15_high_htf, kv15_low_htf, kv15_atr, kv15_swing_hi, kv15_swing_lo, kv15_seq, kv15_close,
+                  kv_zone_atr_15m, kv_throttle_bars_15m, kv_max_age_htf_15m, kv_zone_extend_15m, color.green, kv15_alpha,
+                  kv15_bull_box, kv15_bull_top, kv15_bull_bot, kv15_bull_seq, kv15_bull_tag)
+// 60m
+[kv60_bear_box, kv60_bear_top, kv60_bear_bot, kv60_bear_seq, kv60_bear_tag] =
+    f_draw_active("bear", "1h", kv60_evt_bear_once, kv60_high_htf, kv60_low_htf, kv60_atr, kv60_swing_hi, kv60_swing_lo, kv60_seq, kv60_close,
+                  kv_zone_atr_60, kv_throttle_bars_60, kv_max_age_htf_60, kv_zone_extend_60, color.rgb(255,140,0), kv60_alpha,
+                  kv60_bear_box, kv60_bear_top, kv60_bear_bot, kv60_bear_seq, kv60_bear_tag)
+[kv60_bull_box, kv60_bull_top, kv60_bull_bot, kv60_bull_seq, kv60_bull_tag] =
+    f_draw_active("bull", "1h", kv60_evt_bull_once, kv60_high_htf, kv60_low_htf, kv60_atr, kv60_swing_hi, kv60_swing_lo, kv60_seq, kv60_close,
+                  kv_zone_atr_60, kv_throttle_bars_60, kv_max_age_htf_60, kv_zone_extend_60, color.rgb(144,238,144), kv60_alpha,
+                  kv60_bull_box, kv60_bull_top, kv60_bull_bot, kv60_bull_seq, kv60_bull_tag)
+// 120m
+[kv120_bear_box, kv120_bear_top, kv120_bear_bot, kv120_bear_seq, kv120_bear_tag] =
+    f_draw_active("bear", "2h", kv120_evt_bear_once, kv120_high_htf, kv120_low_htf, kv120_atr, kv120_swing_hi, kv120_swing_lo, kv120_seq, kv120_close,
+                  kv_zone_atr_120, kv_throttle_bars_120, kv_max_age_htf_120, kv_zone_extend_120, color.rgb(220,20,60), kv120_alpha,
+                  kv120_bear_box, kv120_bear_top, kv120_bear_bot, kv120_bear_seq, kv120_bear_tag)
+[kv120_bull_box, kv120_bull_top, kv120_bull_bot, kv120_bull_seq, kv120_bull_tag] =
+    f_draw_active("bull", "2h", kv120_evt_bull_once, kv120_high_htf, kv120_low_htf, kv120_atr, kv120_swing_hi, kv120_swing_lo, kv120_seq, kv120_close,
+                  kv_zone_atr_120, kv_throttle_bars_120, kv_max_age_htf_120, kv_zone_extend_120, color.rgb(60,179,113), kv120_alpha,
+                  kv120_bull_box, kv120_bull_top, kv120_bull_bot, kv120_bull_seq, kv120_bull_tag)
+// 240m
+[kv240_bear_box, kv240_bear_top, kv240_bear_bot, kv240_bear_seq, kv240_bear_tag] =
+    f_draw_active("bear", "4h", kv240_evt_bear_once, kv240_high_htf, kv240_low_htf, kv240_atr, kv240_swing_hi, kv240_swing_lo, kv240_seq, kv240_close,
+                  kv_zone_atr_240, kv_throttle_bars_240, kv_max_age_htf_240, kv_zone_extend_240, color.rgb(178,34,34), kv240_alpha,
+                  kv240_bear_box, kv240_bear_top, kv240_bear_bot, kv240_bear_seq, kv240_bear_tag)
+[kv240_bull_box, kv240_bull_top, kv240_bull_bot, kv240_bull_seq, kv240_bull_tag] =
+    f_draw_active("bull", "4h", kv240_evt_bull_once, kv240_high_htf, kv240_low_htf, kv240_atr, kv240_swing_hi, kv240_swing_lo, kv240_seq, kv240_close,
+                  kv_zone_atr_240, kv_throttle_bars_240, kv_max_age_htf_240, kv_zone_extend_240, color.rgb(34,139,34), kv240_alpha,
+                  kv240_bull_box, kv240_bull_top, kv240_bull_bot, kv240_bull_seq, kv240_bull_tag)
+// 1D
+[kvD_bear_box, kvD_bear_top, kvD_bear_bot, kvD_bear_seq, kvD_bear_tag] =
+    f_draw_active("bear", "1D", kvD_evt_bear_once, kvD_high_htf, kvD_low_htf, kvD_atr, kvD_swing_hi, kvD_swing_lo, kvD_seq, kvD_close,
+                  kv_zone_atr_D, kv_throttle_bars_D, kv_max_age_htf_D, kv_zone_extend_D, color.rgb(139,0,0), kvD_alpha,
+                  kvD_bear_box, kvD_bear_top, kvD_bear_bot, kvD_bear_seq, kvD_bear_tag)
+[kvD_bull_box, kvD_bull_top, kvD_bull_bot, kvD_bull_seq, kvD_bull_tag] =
+    f_draw_active("bull", "1D", kvD_evt_bull_once, kvD_high_htf, kvD_low_htf, kvD_atr, kvD_swing_hi, kvD_swing_lo, kvD_seq, kvD_close,
+                  kv_zone_atr_D, kv_throttle_bars_D, kv_max_age_htf_D, kv_zone_extend_D, color.rgb(0,100,0), kvD_alpha,
+                  kvD_bull_box, kvD_bull_top, kvD_bull_bot, kvD_bull_seq, kvD_bull_tag)
+
+// ==================== BLOCK 4.1: TEMP1/TEMP2 MANAGEMENT ======================
+var box kv5_bear_temp1 = na
+var box kv5_bear_temp2 = na
+var float kv5_bear_t1_top = na
+var float kv5_bear_t1_bot = na
+var float kv5_bear_t2_top = na
+var float kv5_bear_t2_bot = na
+var int kv5_bear_t1_bar = na
+var int kv5_bear_t2_bar = na
+var label kv5_bear_t1_tag = na
+var label kv5_bear_t2_tag = na
+
+var box kv5_bull_temp1 = na
+var box kv5_bull_temp2 = na
+var float kv5_bull_t1_top = na
+var float kv5_bull_t1_bot = na
+var float kv5_bull_t2_top = na
+var float kv5_bull_t2_bot = na
+var int kv5_bull_t1_bar = na
+var int kv5_bull_t2_bar = na
+var label kv5_bull_t1_tag = na
+var label kv5_bull_t2_tag = na
+
+var box kv15_bear_temp1 = na
+var box kv15_bear_temp2 = na
+var float kv15_bear_t1_top = na
+var float kv15_bear_t1_bot = na
+var float kv15_bear_t2_top = na
+var float kv15_bear_t2_bot = na
+var int kv15_bear_t1_bar = na
+var int kv15_bear_t2_bar = na
+var label kv15_bear_t1_tag = na
+var label kv15_bear_t2_tag = na
+
+var box kv15_bull_temp1 = na
+var box kv15_bull_temp2 = na
+var float kv15_bull_t1_top = na
+var float kv15_bull_t1_bot = na
+var float kv15_bull_t2_top = na
+var float kv15_bull_t2_bot = na
+var int kv15_bull_t1_bar = na
+var int kv15_bull_t2_bar = na
+var label kv15_bull_t1_tag = na
+var label kv15_bull_t2_tag = na
+
+var box kv60_bear_temp1 = na
+var box kv60_bear_temp2 = na
+var float kv60_bear_t1_top = na
+var float kv60_bear_t1_bot = na
+var float kv60_bear_t2_top = na
+var float kv60_bear_t2_bot = na
+var int kv60_bear_t1_bar = na
+var int kv60_bear_t2_bar = na
+var label kv60_bear_t1_tag = na
+var label kv60_bear_t2_tag = na
+
+var box kv60_bull_temp1 = na
+var box kv60_bull_temp2 = na
+var float kv60_bull_t1_top = na
+var float kv60_bull_t1_bot = na
+var float kv60_bull_t2_top = na
+var float kv60_bull_t2_bot = na
+var int kv60_bull_t1_bar = na
+var int kv60_bull_t2_bar = na
+var label kv60_bull_t1_tag = na
+var label kv60_bull_t2_tag = na
+
+var box kv120_bear_temp1 = na
+var box kv120_bear_temp2 = na
+var float kv120_bear_t1_top = na
+var float kv120_bear_t1_bot = na
+var float kv120_bear_t2_top = na
+var float kv120_bear_t2_bot = na
+var int kv120_bear_t1_bar = na
+var int kv120_bear_t2_bar = na
+var label kv120_bear_t1_tag = na
+var label kv120_bear_t2_tag = na
+
+var box kv120_bull_temp1 = na
+var box kv120_bull_temp2 = na
+var float kv120_bull_t1_top = na
+var float kv120_bull_t1_bot = na
+var float kv120_bull_t2_top = na
+var float kv120_bull_t2_bot = na
+var int kv120_bull_t1_bar = na
+var int kv120_bull_t2_bar = na
+var label kv120_bull_t1_tag = na
+var label kv120_bull_t2_tag = na
+
+var box kv240_bear_temp1 = na
+var box kv240_bear_temp2 = na
+var float kv240_bear_t1_top = na
+var float kv240_bear_t1_bot = na
+var float kv240_bear_t2_top = na
+var float kv240_bear_t2_bot = na
+var int kv240_bear_t1_bar = na
+var int kv240_bear_t2_bar = na
+var label kv240_bear_t1_tag = na
+var label kv240_bear_t2_tag = na
+
+var box kv240_bull_temp1 = na
+var box kv240_bull_temp2 = na
+var float kv240_bull_t1_top = na
+var float kv240_bull_t1_bot = na
+var float kv240_bull_t2_top = na
+var float kv240_bull_t2_bot = na
+var int kv240_bull_t1_bar = na
+var int kv240_bull_t2_bar = na
+var label kv240_bull_t1_tag = na
+var label kv240_bull_t2_tag = na
+
+var box kvD_bear_temp1 = na
+var box kvD_bear_temp2 = na
+var float kvD_bear_t1_top = na
+var float kvD_bear_t1_bot = na
+var float kvD_bear_t2_top = na
+var float kvD_bear_t2_bot = na
+var int kvD_bear_t1_bar = na
+var int kvD_bear_t2_bar = na
+var label kvD_bear_t1_tag = na
+var label kvD_bear_t2_tag = na
+
+var box kvD_bull_temp1 = na
+var box kvD_bull_temp2 = na
+var float kvD_bull_t1_top = na
+var float kvD_bull_t1_bot = na
+var float kvD_bull_t2_top = na
+var float kvD_bull_t2_bot = na
+var int kvD_bull_t1_bar = na
+var int kvD_bull_t2_bar = na
+var label kvD_bull_t1_tag = na
+var label kvD_bull_t2_tag = na
+
+f_manage_temp(direction, tf_tag,
+              active_box, active_top, active_bot,
+              htf_atr, htf_high, htf_low, htf_swing_hi, htf_swing_lo, adx_htf,
+              zone_mult, extend_bars, color_base, alpha_active,
+              t1_box, t1_top, t1_bot, t1_bar, t1_tag,
+              t2_box, t2_top, t2_bot, t2_bar, t2_tag) =>
+    box _a_box = active_box
+    float _a_top = active_top
+    float _a_bot = active_bot
+
+    box _t1_box = t1_box
+    float _t1_top = t1_top
+    float _t1_bot = t1_bot
+    int _t1_bar = t1_bar
+    label _t1_tag = t1_tag
+
+    box _t2_box = t2_box
+    float _t2_top = t2_top
+    float _t2_bot = t2_bot
+    int _t2_bar = t2_bar
+    label _t2_tag = t2_tag
+
+    if kv_show_zones and temp_enable and not na(_a_box) and not na(_a_top) and not na(htf_atr)
+        float B = na
+        bool breach = false
+        bool close_conf = false
+        if direction == "bear"
+            B := (high - _a_top) / math.max(htf_atr, syminfo.mintick)
+            breach := high > _a_top
+            close_conf := close > _a_top + temp_cbuf * htf_atr
+        else
+            B := (_a_bot - low) / math.max(htf_atr, syminfo.mintick)
+            breach := low < _a_bot
+            close_conf := close < _a_bot - temp_cbuf * htf_atr
+
+        // BUGFIX P0: Intrabar invalidate ACTIVE immediately upon any breach
+        if breach and not na(active_box)
+            box.set_right(active_box, bar_index)
+
+        // Create TEMP1/TEMP2 only when break is strong & confirmed (and volume if enabled)
+        if breach and B >= temp_B_min and close_conf and vol_spike_temp
+            if na(_t1_box)
+                _t1_top := _a_top
+                _t1_bot := _a_bot
+                _t1_bar := bar_index
+                _t1_box := box.new(left=box.get_left(_a_box), top=_a_top, right=bar_index, bottom=_a_bot,
+                                   border_color=color_base, bgcolor=color.new(color_base, math.min(alpha_active + temp1_alpha_add, 80)))
+                if kv_show_tags
+                    _t1_tag := label.new(bar_index, direction=="bear"? _t1_top : _t1_bot, text=tf_tag + " " + (direction=="bear"?"BEAR":"BULL") + " TEMP1",
+                                         color=color.new(color_base, 85), textcolor=color.white, style=label.style_label_left, size=size.tiny)
+            bool adx_ok = adx_htf >= temp_adx_thresh
+            if adx_ok and na(_t2_box)
+                [n_top, n_bot] = f_zone_geom(direction, htf_high, htf_low, htf_atr, htf_swing_hi, htf_swing_lo, zone_mult * temp2_zone_factor)
+                _t2_top := n_top
+                _t2_bot := n_bot
+                _t2_bar := bar_index
+                _t2_box := box.new(left=bar_index, top=n_top, right=bar_index + extend_bars, bottom=n_bot,
+                                   border_color=color_base, bgcolor=color.new(color_base, math.min(alpha_active + temp2_alpha_add, 80)))
+                if kv_show_tags
+                    _t2_tag := label.new(bar_index, direction=="bear"? n_top : n_bot, text=tf_tag + " " + (direction=="bear"?"BEAR":"BULL") + " TEMP2",
+                                         color=color.new(color_base, 85), textcolor=color.white, style=label.style_label_left, size=size.tiny)
+
+    if kv_show_zones and not na(_t2_box)
+        box.set_right(_t2_box, bar_index + extend_bars)
+
+    if not na(_t1_box) and (bar_index - _t1_bar >= temp_windowW)
+        box.delete(_t1_box)
+        _t1_box := na
+        if not na(_t1_tag)
+            label.delete(_t1_tag)
+            _t1_tag := na
+    if not na(_t2_box) and (bar_index - _t2_bar >= temp_windowW)
+        box.delete(_t2_box)
+        _t2_box := na
+        if not na(_t2_tag)
+            label.delete(_t2_tag)
+            _t2_tag := na
+
+    if not kv_show_zones
+        if not na(_t1_box)
+            box.delete(_t1_box)
+            _t1_box := na
+        if not na(_t1_tag)
+            label.delete(_t1_tag)
+            _t1_tag := na
+        if not na(_t2_box)
+            box.delete(_t2_box)
+            _t2_box := na
+        if not na(_t2_tag)
+            label.delete(_t2_tag)
+            _t2_tag := na
+
+    [_t1_box, _t1_top, _t1_bot, _t1_bar, _t1_tag, _t2_box, _t2_top, _t2_bot, _t2_bar, _t2_tag]
+
+// Apply TEMP manager per TF / direction
+[kv5_bear_temp1, kv5_bear_t1_top, kv5_bear_t1_bot, kv5_bear_t1_bar, kv5_bear_t1_tag, kv5_bear_temp2, kv5_bear_t2_top, kv5_bear_t2_bot, kv5_bear_t2_bar, kv5_bear_t2_tag] =
+    f_manage_temp("bear","5m", kv5_bear_box, kv5_bear_top, kv5_bear_bot, kv5_atr, kv5_high_htf, kv5_low_htf, kv5_swing_hi, kv5_swing_lo, kv5_adx,
+                  kv_zone_atr_5m, kv_zone_extend_5m, color.red, kv5_alpha, kv5_bear_temp1, kv5_bear_t1_top, kv5_bear_t1_bot, kv5_bear_t1_bar, kv5_bear_t1_tag,
+                  kv5_bear_temp2, kv5_bear_t2_top, kv5_bear_t2_bot, kv5_bear_t2_bar, kv5_bear_t2_tag)
+[kv5_bull_temp1, kv5_bull_t1_top, kv5_bull_t1_bot, kv5_bull_t1_bar, kv5_bull_t1_tag, kv5_bull_temp2, kv5_bull_t2_top, kv5_bull_t2_bot, kv5_bull_t2_bar, kv5_bull_t2_tag] =
+    f_manage_temp("bull","5m", kv5_bull_box, kv5_bull_top, kv5_bull_bot, kv5_atr, kv5_high_htf, kv5_low_htf, kv5_swing_hi, kv5_swing_lo, kv5_adx,
+                  kv_zone_atr_5m, kv_zone_extend_5m, color.green, kv5_alpha, kv5_bull_temp1, kv5_bull_t1_top, kv5_bull_t1_bot, kv5_bull_t1_bar, kv5_bull_t1_tag,
+                  kv5_bull_temp2, kv5_bull_t2_top, kv5_bull_t2_bot, kv5_bull_t2_bar, kv5_bull_t2_tag)
+
+// 15m
+[kv15_bear_temp1, kv15_bear_t1_top, kv15_bear_t1_bot, kv15_bear_t1_bar, kv15_bear_t1_tag, kv15_bear_temp2, kv15_bear_t2_top, kv15_bear_t2_bot, kv15_bear_t2_bar, kv15_bear_t2_tag] =
+    f_manage_temp("bear","15m", kv15_bear_box, kv15_bear_top, kv15_bear_bot, kv15_atr, kv15_high_htf, kv15_low_htf, kv15_swing_hi, kv15_swing_lo, kv15_adx,
+                  kv_zone_atr_15m, kv_zone_extend_15m, color.red, kv15_alpha, kv15_bear_temp1, kv15_bear_t1_top, kv15_bear_t1_bot, kv15_bear_t1_bar, kv15_bear_t1_tag,
+                  kv15_bear_temp2, kv15_bear_t2_top, kv15_bear_t2_bot, kv15_bear_t2_bar, kv15_bear_t2_tag)
+[kv15_bull_temp1, kv15_bull_t1_top, kv15_bull_t1_bot, kv15_bull_t1_bar, kv15_bull_t1_tag, kv15_bull_temp2, kv15_bull_t2_top, kv15_bull_t2_bot, kv15_bull_t2_bar, kv15_bull_t2_tag] =
+    f_manage_temp("bull","15m", kv15_bull_box, kv15_bull_top, kv15_bull_bot, kv15_atr, kv15_high_htf, kv15_low_htf, kv15_swing_hi, kv15_swing_lo, kv15_adx,
+                  kv_zone_atr_15m, kv_zone_extend_15m, color.green, kv15_alpha, kv15_bull_temp1, kv15_bull_t1_top, kv15_bull_t1_bot, kv15_bull_t1_bar, kv15_bull_t1_tag,
+                  kv15_bull_temp2, kv15_bull_t2_top, kv15_bull_t2_bot, kv15_bull_t2_bar, kv15_bull_t2_tag)
+
+// 60m
+[kv60_bear_temp1, kv60_bear_t1_top, kv60_bear_t1_bot, kv60_bear_t1_bar, kv60_bear_t1_tag, kv60_bear_temp2, kv60_bear_t2_top, kv60_bear_t2_bot, kv60_bear_t2_bar, kv60_bear_t2_tag] =
+    f_manage_temp("bear","1h", kv60_bear_box, kv60_bear_top, kv60_bear_bot, kv60_atr, kv60_high_htf, kv60_low_htf, kv60_swing_hi, kv60_swing_lo, kv60_adx,
+                  kv_zone_atr_60, kv_zone_extend_60, color.rgb(255,140,0), kv60_alpha, kv60_bear_temp1, kv60_bear_t1_top, kv60_bear_t1_bot, kv60_bear_t1_bar, kv60_bear_t1_tag,
+                  kv60_bear_temp2, kv60_bear_t2_top, kv60_bear_t2_bot, kv60_bear_t2_bar, kv60_bear_t2_tag)
+[kv60_bull_temp1, kv60_bull_t1_top, kv60_bull_t1_bot, kv60_bull_t1_bar, kv60_bull_t1_tag, kv60_bull_temp2, kv60_bull_t2_top, kv60_bull_t2_bot, kv60_bull_t2_bar, kv60_bull_t2_tag] =
+    f_manage_temp("bull","1h", kv60_bull_box, kv60_bull_top, kv60_bull_bot, kv60_atr, kv60_high_htf, kv60_low_htf, kv60_swing_hi, kv60_swing_lo, kv60_adx,
+                  kv_zone_atr_60, kv_zone_extend_60, color.rgb(144,238,144), kv60_alpha, kv60_bull_temp1, kv60_bull_t1_top, kv60_bull_t1_bot, kv60_bull_t1_bar, kv60_bull_t1_tag,
+                  kv60_bull_temp2, kv60_bull_t2_top, kv60_bull_t2_bot, kv60_bull_t2_bar, kv60_bull_t2_tag)
+
+// 120m
+[kv120_bear_temp1, kv120_bear_t1_top, kv120_bear_t1_bot, kv120_bear_t1_bar, kv120_bear_t1_tag, kv120_bear_temp2, kv120_bear_t2_top, kv120_bear_t2_bot, kv120_bear_t2_bar, kv120_bear_t2_tag] =
+    f_manage_temp("bear","2h", kv120_bear_box, kv120_bear_top, kv120_bear_bot, kv120_atr, kv120_high_htf, kv120_low_htf, kv120_swing_hi, kv120_swing_lo, kv120_adx,
+                  kv_zone_atr_120, kv_zone_extend_120, color.rgb(220,20,60), kv120_alpha, kv120_bear_temp1, kv120_bear_t1_top, kv120_bear_t1_bot, kv120_bear_t1_bar, kv120_bear_t1_tag,
+                  kv120_bear_temp2, kv120_bear_t2_top, kv120_bear_t2_bot, kv120_bear_t2_bar, kv120_bear_t2_tag)
+[kv120_bull_temp1, kv120_bull_t1_top, kv120_bull_t1_bot, kv120_bull_t1_bar, kv120_bull_t1_tag, kv120_bull_temp2, kv120_bull_t2_top, kv120_bull_t2_bot, kv120_bull_t2_bar, kv120_bull_t2_tag] =
+    f_manage_temp("bull","2h", kv120_bull_box, kv120_bull_top, kv120_bull_bot, kv120_atr, kv120_high_htf, kv120_low_htf, kv120_swing_hi, kv120_swing_lo, kv120_adx,
+                  kv_zone_atr_120, kv_zone_extend_120, color.rgb(60,179,113), kv120_alpha, kv120_bull_temp1, kv120_bull_t1_top, kv120_bull_t1_bot, kv120_bull_t1_bar, kv120_bull_t1_tag,
+                  kv120_bull_temp2, kv120_bull_t2_top, kv120_bull_t2_bot, kv120_bull_t2_bar, kv120_bull_t2_tag)
+
+// 240m
+[kv240_bear_temp1, kv240_bear_t1_top, kv240_bear_t1_bot, kv240_bear_t1_bar, kv240_bear_t1_tag, kv240_bear_temp2, kv240_bear_t2_top, kv240_bear_t2_bot, kv240_bear_t2_bar, kv240_bear_t2_tag] =
+    f_manage_temp("bear","4h", kv240_bear_box, kv240_bear_top, kv240_bear_bot, kv240_atr, kv240_high_htf, kv240_low_htf, kv240_swing_hi, kv240_swing_lo, kv240_adx,
+                  kv_zone_atr_240, kv_zone_extend_240, color.rgb(178,34,34), kv240_alpha, kv240_bear_temp1, kv240_bear_t1_top, kv240_bear_t1_bot, kv240_bear_t1_bar, kv240_bear_t1_tag,
+                  kv240_bear_temp2, kv240_bear_t2_top, kv240_bear_t2_bot, kv240_bear_t2_bar, kv240_bear_t2_tag)
+[kv240_bull_temp1, kv240_bull_t1_top, kv240_bull_t1_bot, kv240_bull_t1_bar, kv240_bull_t1_tag, kv240_bull_temp2, kv240_bull_t2_top, kv240_bull_t2_bot, kv240_bull_t2_bar, kv240_bull_t2_tag] =
+    f_manage_temp("bull","4h", kv240_bull_box, kv240_bull_top, kv240_bull_bot, kv240_atr, kv240_high_htf, kv240_low_htf, kv240_swing_hi, kv240_swing_lo, kv240_adx,
+                  kv_zone_atr_240, kv_zone_extend_240, color.rgb(34,139,34), kv240_alpha, kv240_bull_temp1, kv240_bull_t1_top, kv240_bull_t1_bot, kv240_bull_t1_bar, kv240_bull_t1_tag,
+                  kv240_bull_temp2, kv240_bull_t2_top, kv240_bull_t2_bot, kv240_bull_t2_bar, kv240_bull_t2_tag)
+
+// 1D
+[kvD_bear_temp1, kvD_bear_t1_top, kvD_bear_t1_bot, kvD_bear_t1_bar, kvD_bear_t1_tag, kvD_bear_temp2, kvD_bear_t2_top, kvD_bear_t2_bot, kvD_bear_t2_bar, kvD_bear_t2_tag] =
+    f_manage_temp("bear","1D", kvD_bear_box, kvD_bear_top, kvD_bear_bot, kvD_atr, kvD_high_htf, kvD_low_htf, kvD_swing_hi, kvD_swing_lo, kvD_adx,
+                  kv_zone_atr_D, kv_zone_extend_D, color.rgb(139,0,0), kvD_alpha, kvD_bear_temp1, kvD_bear_t1_top, kvD_bear_t1_bot, kvD_bear_t1_bar, kvD_bear_t1_tag,
+                  kvD_bear_temp2, kvD_bear_t2_top, kvD_bear_t2_bot, kvD_bear_t2_bar, kvD_bear_t2_tag)
+[kvD_bull_temp1, kvD_bull_t1_top, kvD_bull_t1_bot, kvD_bull_t1_bar, kvD_bull_t1_tag, kvD_bull_temp2, kvD_bull_t2_top, kvD_bull_t2_bot, kvD_bull_t2_bar, kvD_bull_t2_tag] =
+    f_manage_temp("bull","1D", kvD_bull_box, kvD_bull_top, kvD_bull_bot, kvD_atr, kvD_high_htf, kvD_low_htf, kvD_swing_hi, kvD_swing_lo, kvD_adx,
+                  kv_zone_atr_D, kv_zone_extend_D, color.rgb(0,100,0), kvD_alpha, kvD_bull_temp1, kvD_bull_t1_top, kvD_bull_t1_bot, kvD_bull_t1_bar, kvD_bull_t1_tag,
+                  kvD_bull_temp2, kvD_bull_t2_top, kvD_bull_t2_bot, kvD_bull_t2_bar, kvD_bull_t2_tag)
+
+// ============================ BLOCK 5: SIGNALS ===============================
+var int last_b_bar = na
+var int last_s_bar = na
+bool buy_signal = false
+bool sell_signal = false
+
+get_ctx() =>
+    bool hf = sig_priority_highest
+
+    bool D_act   = not na(kvD_bull_temp2)   or not na(kvD_bear_temp2)   or not na(kvD_bull_box)   or not na(kvD_bear_box)
+    bool H4_act  = not na(kv240_bull_temp2) or not na(kv240_bear_temp2) or not na(kv240_bull_box) or not na(kv240_bear_box)
+    bool H2_act  = not na(kv120_bull_temp2) or not na(kv120_bear_temp2) or not na(kv120_bull_box) or not na(kv120_bear_box)
+    bool H1_act  = not na(kv60_bull_temp2)  or not na(kv60_bear_temp2)  or not na(kv60_bull_box)  or not na(kv60_bear_box)
+    bool M15_act = not na(kv15_bull_temp2)  or not na(kv15_bear_temp2)  or not na(kv15_bull_box)  or not na(kv15_bear_box)
+    bool M5_act  = not na(kv5_bull_temp2)   or not na(kv5_bear_temp2)   or not na(kv5_bull_box)   or not na(kv5_bear_box)
+
+    float bt = na
+    float bb = na
+    float ut = na
+    float ub = na
+    float a  = na
+
+    if hf
+        if D_act
+            [bt,bb,ut,ub,a] := f_ctx_pair(kvD_bear_t2_top,kvD_bear_t2_bot,kvD_bull_t2_top,kvD_bull_t2_bot,kvD_bear_top,kvD_bear_bot,kvD_bull_top,kvD_bull_bot,kvD_atr)
+        else if H4_act
+            [bt,bb,ut,ub,a] := f_ctx_pair(kv240_bear_t2_top,kv240_bear_t2_bot,kv240_bull_t2_top,kv240_bull_t2_bot,kv240_bear_top,kv240_bear_bot,kv240_bull_top,kv240_bull_bot,kv240_atr)
+        else if H2_act
+            [bt,bb,ut,ub,a] := f_ctx_pair(kv120_bear_t2_top,kv120_bear_t2_bot,kv120_bull_t2_top,kv120_bull_t2_bot,kv120_bear_top,kv120_bear_bot,kv120_bull_top,kv120_bull_bot,kv120_atr)
+        else if H1_act
+            [bt,bb,ut,ub,a] := f_ctx_pair(kv60_bear_t2_top,kv60_bear_t2_bot,kv60_bull_t2_top,kv60_bull_t2_bot,kv60_bear_top,kv60_bear_bot,kv60_bull_top,kv60_bull_bot,kv60_atr)
+        else if M15_act
+            [bt,bb,ut,ub,a] := f_ctx_pair(kv15_bear_t2_top,kv15_bear_t2_bot,kv15_bull_t2_top,kv15_bull_t2_bot,kv15_bear_top,kv15_bear_bot,kv15_bull_top,kv15_bull_bot,kv15_atr)
+        else if M5_act
+            [bt,bb,ut,ub,a] := f_ctx_pair(kv5_bear_t2_top,kv5_bear_t2_bot,kv5_bull_t2_top,kv5_bull_t2_bot,kv5_bear_top,kv5_bear_bot,kv5_bull_top,kv5_bull_bot,kv5_atr)
+    else
+        if M5_act
+            [bt,bb,ut,ub,a] := f_ctx_pair(kv5_bear_t2_top,kv5_bear_t2_bot,kv5_bull_t2_top,kv5_bull_t2_bot,kv5_bear_top,kv5_bear_bot,kv5_bull_top,kv5_bull_bot,kv5_atr)
+        else if M15_act
+            [bt,bb,ut,ub,a] := f_ctx_pair(kv15_bear_t2_top,kv15_bear_t2_bot,kv15_bull_t2_top,kv15_bull_t2_bot,kv15_bear_top,kv15_bear_bot,kv15_bull_top,kv15_bull_bot,kv15_atr)
+        else if H1_act
+            [bt,bb,ut,ub,a] := f_ctx_pair(kv60_bear_t2_top,kv60_bear_t2_bot,kv60_bull_t2_top,kv60_bull_t2_bot,kv60_bear_top,kv60_bear_bot,kv60_bull_top,kv60_bull_bot,kv60_atr)
+        else if H2_act
+            [bt,bb,ut,ub,a] := f_ctx_pair(kv120_bear_t2_top,kv120_bear_t2_bot,kv120_bull_t2_top,kv120_bull_t2_bot,kv120_bear_top,kv120_bear_bot,kv120_bull_top,kv120_bull_bot,kv120_atr)
+        else if H4_act
+            [bt,bb,ut,ub,a] := f_ctx_pair(kv240_bear_t2_top,kv240_bear_t2_bot,kv240_bull_t2_top,kv240_bull_t2_bot,kv240_bear_top,kv240_bear_bot,kv240_bull_top,kv240_bull_bot,kv240_atr)
+        else if D_act
+            [bt,bb,ut,ub,a] := f_ctx_pair(kvD_bear_t2_top,kvD_bear_t2_bot,kvD_bull_t2_top,kvD_bull_t2_bot,kvD_bear_top,kvD_bear_bot,kvD_bull_top,kvD_bull_bot,kvD_atr)
+
+    [bt, bb, ut, ub, a]
+
+// Compute signals on current bar
+if sig_show
+    [act_bear_top, act_bear_bot, act_bull_top, act_bull_bot, act_atr] = get_ctx()
+
+    vol_ma = ta.sma(volume, sig_vol_lookback)
+    vol_ok = not sig_use_volume or (volume > vol_ma * sig_vol_multiplier)
+    body = math.abs(close - open)
+    body_ok = not na(act_atr) and (body >= act_atr * sig_min_body_atr)
+
+    upW = high - math.max(open, close)
+    dnW = math.min(open, close) - low
+
+    in_bull_zone = (not na(act_bull_top) and not na(act_bull_bot)) and (low <= act_bull_top and high >= act_bull_bot)
+    in_bear_zone = (not na(act_bear_top) and not na(act_bear_bot)) and (high >= act_bear_bot and low <= act_bear_top)
+
+    bull_reject = (close > open) and (dnW / math.max(body, syminfo.mintick) >= sig_wick_rej_mult)
+    bear_reject = (close < open) and (upW / math.max(body, syminfo.mintick) >= sig_wick_rej_mult)
+
+    bull_setup = (sig_retest_only ? (in_bull_zone and bull_reject) : bull_reject) and body_ok and vol_ok
+    bear_setup = (sig_retest_only ? (in_bear_zone and bear_reject) : bear_reject) and body_ok and vol_ok
+
+    bool can_b = na(last_b_bar) or (bar_index - last_b_bar >= sig_throttle_bars)
+    bool can_s = na(last_s_bar) or (bar_index - last_s_bar >= sig_throttle_bars)
+
+    buy_signal := bull_setup and can_b
+    sell_signal := bear_setup and can_s
+
+    if buy_signal
+        last_b_bar := bar_index
+    if sell_signal
+        last_s_bar := bar_index
+
+plotshape(sig_show and buy_signal,  title="Buy Signal",  style=shape.labelup,   location=location.belowbar, color=color.new(color.lime, 0),  text="B", size=size.normal, textcolor=color.black)
+plotshape(sig_show and sell_signal, title="Sell Signal", style=shape.labeldown, location=location.abovebar, color=color.new(color.red,  0),  text="S", size=size.normal, textcolor=color.white)

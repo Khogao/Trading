@@ -1,0 +1,25 @@
+// filepath: /TradingView-Pine-Scripts/TradingView-Pine-Scripts/src/indicators/PI21-Scalping.pine
+// © 2025 Gemini AI - PI v2.1 Scalping
+// @version=5
+indicator("PI v2.1 Scalping", shorttitle="PI v2.1 Scalping", overlay=true, max_labels_count=500)
+
+// === SCALPING PARAMETERS ===
+var string GRP_SCALPING = "⚡ Scalping Parameters"
+scalpLookback = input.int(5, "Scalping Lookback Period", group=GRP_SCALPING, minval=1)
+scalpVolumeMultiplier = input.float(2.0, "Scalping Volume Multiplier", group=GRP_SCALPING, step=0.1)
+scalpATRMultiplier = input.float(1.5, "Scalping ATR Multiplier", group=GRP_SCALPING, step=0.1)
+
+// === COMMON FUNCTIONS ===
+f_safeDivision(n, d) => d > 0 ? n / d : na
+
+// === SCALPING LOGIC ===
+scalpVolumeThreshold = ta.sma(volume, scalpLookback) * scalpVolumeMultiplier
+atrValue = ta.atr(14) * scalpATRMultiplier
+
+isScalpingSignal = volume > scalpVolumeThreshold and close > open and (high - low) < atrValue
+
+// === PLOTTING SCALPING SIGNALS ===
+plotshape(isScalpingSignal, style=shape.labelup, location=location.belowbar, color=color.green, size=size.small, title="Scalping Signal", text="SCALP")
+
+// === ADDITIONAL LOGIC ===
+// Here you can add more scalping-specific logic, such as entry and exit conditions, stop-loss, and take-profit levels.

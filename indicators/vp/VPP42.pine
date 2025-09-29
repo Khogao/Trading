@@ -1,7 +1,7 @@
 //@version=5
 // TITLE: VP Production v4.2 (Final Build)
 // DESC: A production-ready, feature-complete Volume Profile indicator with preset profiles and automated structure analysis.
-indicator(title='VP Production v4.3 (Final Build)', shorttitle='VP Prod v4.3', overlay=true, max_bars_back=5000, max_boxes_count=500, max_lines_count=500, dynamic_requests=true)
+indicator(title='VP Production v4.2 (Final Build)', shorttitle='VP Prod v4.2', overlay=true, max_bars_back=5000, max_boxes_count=500, max_lines_count=500)
 
 // === INPUTS ===
 var GRP_PROFILE = "🔥 1. Master Profile"
@@ -50,15 +50,6 @@ structure_lvn_color = input.color(color.new(color.gray, 92), "LVN Fill", group=G
 
 var GRP_TABLE = "7. Info Table"
 table_pos = input.string("Top Right", "Table Position", options=["Top Right","Top Left","Bottom Right","Bottom Left"], group=GRP_TABLE)
-
-var GRP_HTF = "6. HTF Lines"
-enable_htf_vp   = input.bool(true,  "Show HTF VP Lines", group=GRP_HTF)
-htf_tf          = input.string("240", "HTF Timeframe",   group=GRP_HTF)
-htf_lookback    = input.int(50, "HTF Lookback (bars)",   minval=10, maxval=500, group=GRP_HTF)
-htf_va_percent  = input.int(70, "HTF Value Area %",      minval=10, maxval=99,  group=GRP_HTF)
-htf_color_poc   = input.color(color.new(color.orange, 0), "POC Color", group=GRP_HTF, inline="c")
-htf_color_va    = input.color(color.new(color.teal,   0), "VA Color",  group=GRP_HTF, inline="c")
-htf_levels      = input.int(60, "HTF Price Levels", minval=20, maxval=200, group=GRP_HTF)
 
 // === PROFILE LOGIC ===
 var int vp_lookback_depth = na
@@ -170,12 +161,11 @@ f_find_and_draw_nodes(max_vol, local_price_low, local_price_step, effective_look
         array.push(node_boxes, box.new(bar_index - effective_lookback, local_price_low + lvn_start_idx * local_price_step, bar_index + vp_right_offset, local_price_low + (vp_num_levels) * local_price_step, border_color=na, bgcolor=structure_lvn_color))
 
 // === HTF (request.security) VP summary and perf controls ===
-// Removed duplicate HTF inputs under GRP_EXEC to fix "already defined" errors
-// enable_htf_vp = input.bool(false, ...)
-// htf_tf = input.string(...)
-// htf_lookback = input.int(...)
-// htf_levels = input.int(...)
-// htf_va_percent = input.int(...)
+enable_htf_vp = input.bool(false, "Show HTF VP (request.security)", group=GRP_EXEC)
+htf_tf = input.string("240", "HTF timeframe (e.g. D, 240, 60)", group=GRP_EXEC)
+htf_lookback = input.int(30, "HTF lookback (bars on HTF)", minval=5, maxval=200, group=GRP_EXEC)
+htf_levels = input.int(60, "HTF Price Levels", minval=20, maxval=200, group=GRP_EXEC)
+htf_va_percent = input.int(70, "HTF Value Area %", minval=10, maxval=99, group=GRP_EXEC)
 
 // local, self-contained VP summary (safe inside request.security)
 f_vp_summary_local(vp_levels_local, lookback_local, va_pct_local) =>
@@ -227,51 +217,41 @@ var line htf_poc_line = na
 var line htf_vah_line = na
 var line htf_val_line = na
 
-// Changed: explicitly declare HTF eVP output variables as float to avoid NA-type assignment error
+// declare HTF output holders once
 var float poc_htf = na
 var float vah_htf = na
 var float val_htf = na
 
-// request HTF summary via security and draw lines
+// Perform request.security at top-level (NOT inside if) to avoid dynamic_requests/conditional restriction
+// Note: f_vp_summary_local returns [poc, va_low, va_high]
+[poc_htf_tmp, val_htf_tmp, vah_htf_tmp] = request.security(syminfo.tickerid, htf_tf, f_vp_summary_local(htf_levels, htf_lookback, htf_va_percent), lookahead=barmerge.lookahead_off)
+
+// Only assign/draw when user enables HTF VP
 if enable_htf_vp
-    // avoid using ':=' on a tuple (syntax error). destructure into new locals, then reassign declared vars
-    [poc_htf_tmp, val_htf_tmp, vah_htf_tmp] = request.security(syminfo.tickerid, htf_tf, f_vp_summary_local(htf_levels, htf_lookback, htf_va_percent), lookahead=barmerge.lookahead_off)
     if not na(poc_htf_tmp)
-        // reassign previously declared globals with ':=' to avoid shadowing warnings
+        // update declared vars
         poc_htf := poc_htf_tmp
         val_htf := val_htf_tmp
         vah_htf := vah_htf_tmp
+
+    if not na(poc_htf)
         if not na(htf_poc_line)
             line.set_xy1(htf_poc_line, bar_index - 1, poc_htf)
             line.set_xy2(htf_poc_line, bar_index + vp_right_offset, poc_htf)
         else
-            // Use configured color
-            htf_poc_line := line.new(bar_index - 1, poc_htf, bar_index + vp_right_offset, poc_htf, color=htf_color_poc, width=2)
+            htf_poc_line := line.new(bar_index - 1, poc_htf, bar_index + vp_right_offset, poc_htf, color=color.orange, width=2)
     if not na(vah_htf)
         if not na(htf_vah_line)
             line.set_xy1(htf_vah_line, bar_index - 1, vah_htf)
             line.set_xy2(htf_vah_line, bar_index + vp_right_offset, vah_htf)
         else
-            // Use configured color
-            htf_vah_line := line.new(bar_index - 1, vah_htf, bar_index + vp_right_offset, vah_htf, color=htf_color_va, width=1, style=line.style_dashed)
+            htf_vah_line := line.new(bar_index - 1, vah_htf, bar_index + vp_right_offset, vah_htf, color=color.teal, width=1, style=line.style_dashed)
     if not na(val_htf)
         if not na(htf_val_line)
             line.set_xy1(htf_val_line, bar_index - 1, val_htf)
             line.set_xy2(htf_val_line, bar_index + vp_right_offset, val_htf)
         else
-            // Use configured color
-            htf_val_line := line.new(bar_index - 1, val_htf, bar_index + vp_right_offset, val_htf, color=htf_color_va, width=1, style=line.style_dashed)
-else
-    // Cleanup lines when HTF is disabled
-    if not na(htf_poc_line)
-        line.delete(htf_poc_line)
-        htf_poc_line := na
-    if not na(htf_vah_line)
-        line.delete(htf_vah_line)
-        htf_vah_line := na
-    if not na(htf_val_line)
-        line.delete(htf_val_line)
-        htf_val_line := na
+            htf_val_line := line.new(bar_index - 1, val_htf, bar_index + vp_right_offset, val_htf, color=color.teal, width=1, style=line.style_dashed)
 
 // === MAIN LOGIC ===
 tf_mode = f_get_timeframe_mode()

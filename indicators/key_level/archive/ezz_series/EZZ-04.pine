@@ -1,0 +1,396 @@
+//@version=5
+indicator("EZZ1", overlay=true, max_boxes_count=60)
+
+// --- Inputs chính (giữ những gì thực sự dùng) ---
+vol_multiplier   = input.float(2.0, title="Volume Spike Multiplier", minval=1.0)
+lookback         = input.int(20,     title="Volume Lookback Period")
+
+// KV • Detection & Visuals
+kv_show_zones      = input.bool(true,  title="Show KV Zones",                 group="KV • Detection & Visuals")
+kv_zone_len        = input.int(3,      title="KV zone swing len (bars)",      minval=1, maxval=10, group="KV • Detection & Visuals")
+kv_zone_atr        = input.float(0.8,  title="KV zone height (x ATR)",        minval=0.1, step=0.1, group="KV • Detection & Visuals")
+kv_zone_extend     = input.int(120,    title="KV zone extend (bars)",         minval=10, maxval=500, group="KV • Detection & Visuals")
+kv_zone_alpha      = input.int(85,     title="KV zone transparency (0–100)",  minval=0, maxval=100, group="KV • Detection & Visuals")
+kv_pad_bear_atr    = input.float(0.20, title="KV Bear pad (x ATR)",           minval=0, step=0.05, group="KV • Detection & Visuals")
+kv_pad_bull_atr    = input.float(0.20, title="KV Bull pad (x ATR)",           minval=0, step=0.05, group="KV • Detection & Visuals")
+kv_swing_lb        = input.int(60,     title="KV swing lookback (LTF bars)",  minval=5, maxval=400, group="KV • Detection & Visuals")
+kv_throttle_bars   = input.int(5,      title="KV throttle bars",              minval=1, group="KV • Detection & Visuals")
+kv_show_labels     = input.bool(true,  title="Show KV Zone Labels",           group="KV • Detection & Visuals")
+kv_zone_invalidate = input.bool(true,  title="Invalidate KV Zone on price cross", group="KV • Detection & Visuals")
+kv_max_age_htf     = input.int(10,     title="KV Zone Max Age (HTF bars, 0=off)", minval=0, group="KV • Detection & Visuals")
+kv_debug_events    = input.bool(false, title="Show KV debug triangles",       group="KV • Detection & Visuals")
+kv_confirm_on_close= input.bool(true,  title="KV confirm on close",           group="KV • Detection & Visuals")
+kv_atr_len          = input.int(14,    title="KV ATR length",                 minval=1, group="KV • Detection & Visuals")
+kv_min_body_atr     = input.float(0.10,title="KV min body vs ATR",            minval=0.0, step=0.01, group="KV • Detection & Visuals")
+kv_wick_mult        = input.float(1.5, title="KV wick/body ratio",            minval=0.5, step=0.1,  group="KV • Detection & Visuals")
+
+// Signals • Entries
+sig_group          = "Signals • Entries"
+sig_show           = input.bool(true,  title="Show Buy/Sell",                   group=sig_group)
+sig_retest_only    = input.bool(true,  title="Only take retest inside KV",      group=sig_group)
+sig_min_body_atr   = input.float(0.20, title="Signal: min body vs ATR",  step=0.01, minval=0.0, group=sig_group)
+sig_wick_rej_mult  = input.float(1.5,  title="Signal: wick/body ratio",  step=0.1,  minval=0.5, group=sig_group)
+sig_use_volume     = input.bool(true,  title="Require volume spike",            group=sig_group)
+sig_throttle_bars  = input.int(6,      title="Signal throttle (bars)",  minval=1,  group=sig_group)
+
+// Lưu trạng thái throttle tín hiệu qua các bar
+var int last_b_bar = na
+var int last_s_bar = na
+
+// --- TF chọn cho hiển thị KV theo TF chart: < 15m dùng 5m, ngược lại 15m ---
+kv_tf_active = timeframe.in_seconds(timeframe.period) >= timeframe.in_seconds("15") ? "15" : "5"
+
+// === Triggers có lọc body/ATR và wick/body ===
+// (ĐÃ CHỈNH: so sánh break với HIGH/LOW; nếu confirm bằng CLOSE thì không ép wick dài)
+kv_bear_trigger(_close, _open, _high, _kv_confirm_on_close, _zone_len, _kv_min_body_atr, _kv_atr_len, _kv_wick_mult, _mintick) =>
+    hh = ta.highest(_high, _zone_len)[1]
+    srcU = _kv_confirm_on_close ? _close : _high
+    crossed = ta.crossover(srcU, hh)
+    atrv = ta.atr(_kv_atr_len)
+    body = math.abs(_close - _open)
+    upW  = _high - math.max(_open, _close)
+    wick_ok = _kv_confirm_on_close ? true : (upW / math.max(body, _mintick) >= _kv_wick_mult)
+    crossed and (body >= _kv_min_body_atr * atrv) and wick_ok
+
+kv_bull_trigger(_close, _open, _low, _kv_confirm_on_close, _zone_len, _kv_min_body_atr, _kv_atr_len, _kv_wick_mult, _mintick) =>
+    ll = ta.lowest(_low, _zone_len)[1]
+    srcD = _kv_confirm_on_close ? _close : _low
+    crossed = ta.crossunder(srcD, ll)
+    atrv = ta.atr(_kv_atr_len)
+    body = math.abs(_close - _open)
+    dnW  = math.min(_open, _close) - _low
+    wick_ok = _kv_confirm_on_close ? true : (dnW / math.max(body, _mintick) >= _kv_wick_mult)
+    crossed and (body >= _kv_min_body_atr * atrv) and wick_ok
+
+// ====== KV CORE (5m + 15m) — hệ duy nhất ======
+string KV_TF_5  = "5"
+string KV_TF_15 = "15"
+bool   show_15  = timeframe.in_seconds(timeframe.period) >= timeframe.in_seconds("15")
+
+int throttle_bars = math.max(1, kv_throttle_bars)
+
+// --- Triggers 5m dùng cùng tiêu chí với hàm chuẩn ---
+bool  kv5_evt_bear_once = request.security(syminfo.tickerid, KV_TF_5,
+     kv_bear_trigger(close, open, high, kv_confirm_on_close, kv_zone_len, kv_min_body_atr, kv_atr_len, kv_wick_mult, syminfo.mintick),
+     barmerge.gaps_off, barmerge.lookahead_off)
+bool  kv5_evt_bull_once = request.security(syminfo.tickerid, KV_TF_5,
+     kv_bull_trigger(close, open, low, kv_confirm_on_close, kv_zone_len, kv_min_body_atr, kv_atr_len, kv_wick_mult, syminfo.mintick),
+     barmerge.gaps_off, barmerge.lookahead_off)
+
+// --- Triggers 15m dùng cùng tiêu chí với hàm chuẩn ---
+bool  kv15_evt_bear_once = request.security(syminfo.tickerid, KV_TF_15,
+     kv_bear_trigger(close, open, high, kv_confirm_on_close, kv_zone_len, kv_min_body_atr, kv_atr_len, kv_wick_mult, syminfo.mintick),
+     barmerge.gaps_off, barmerge.lookahead_off)
+bool  kv15_evt_bull_once = request.security(syminfo.tickerid, KV_TF_15,
+     kv_bull_trigger(close, open, low, kv_confirm_on_close, kv_zone_len, kv_min_body_atr, kv_atr_len, kv_wick_mult, syminfo.mintick),
+     barmerge.gaps_off, barmerge.lookahead_off)
+
+// DEBUG triggers
+plotshape(kv_debug_events and kv5_evt_bear_once,  title="KV5 bear",  style=shape.triangledown, location=location.abovebar, color=color.new(color.red,   40), size=size.tiny)
+plotshape(kv_debug_events and kv5_evt_bull_once,  title="KV5 bull",  style=shape.triangleup,   location=location.belowbar, color=color.new(color.green, 40), size=size.tiny)
+plotshape(kv_debug_events and kv15_evt_bear_once, title="KV15 bear", style=shape.triangledown, location=location.top,      color=color.new(color.red,   0),  size=size.tiny)
+plotshape(kv_debug_events and kv15_evt_bull_once, title="KV15 bull", style=shape.triangleup,   location=location.bottom,   color=color.new(color.green, 0),  size=size.tiny)
+
+// HTF dữ liệu 5m
+float kv5_high_htf = request.security(syminfo.tickerid, KV_TF_5,  high,               barmerge.gaps_off, barmerge.lookahead_off)
+float kv5_low_htf  = request.security(syminfo.tickerid, KV_TF_5,  low,                barmerge.gaps_off, barmerge.lookahead_off)
+float kv5_atr      = request.security(syminfo.tickerid, KV_TF_5,  ta.atr(kv_atr_len), barmerge.gaps_off, barmerge.lookahead_off)
+float kv5_swing_hi = request.security(syminfo.tickerid, KV_TF_5,  ta.highest(high, kv_swing_lb), barmerge.gaps_off, barmerge.lookahead_off)
+float kv5_swing_lo = request.security(syminfo.tickerid, KV_TF_5,  ta.lowest(low,  kv_swing_lb),  barmerge.gaps_off, barmerge.lookahead_off)
+int   kv5_seq      = request.security(syminfo.tickerid, KV_TF_5,  bar_index,         barmerge.gaps_off, barmerge.lookahead_off)
+float kv5_close    = request.security(syminfo.tickerid, KV_TF_5,  close,             barmerge.gaps_off, barmerge.lookahead_off)
+
+// HTF dữ liệu 15m
+float kv15_high_htf = request.security(syminfo.tickerid, KV_TF_15, high,               barmerge.gaps_off, barmerge.lookahead_off)
+float kv15_low_htf  = request.security(syminfo.tickerid, KV_TF_15, low,                barmerge.gaps_off, barmerge.lookahead_off)
+float kv15_atr      = request.security(syminfo.tickerid, KV_TF_15, ta.atr(kv_atr_len), barmerge.gaps_off, barmerge.lookahead_off)
+float kv15_swing_hi = request.security(syminfo.tickerid, KV_TF_15, ta.highest(high, kv_swing_lb), barmerge.gaps_off, barmerge.lookahead_off)
+float kv15_swing_lo = request.security(syminfo.tickerid, KV_TF_15, ta.lowest(low,  kv_swing_lb),  barmerge.gaps_off, barmerge.lookahead_off)
+int   kv15_seq      = request.security(syminfo.tickerid, KV_TF_15, bar_index,          barmerge.gaps_off, barmerge.lookahead_off)
+float kv15_close    = request.security(syminfo.tickerid, KV_TF_15, close,              barmerge.gaps_off, barmerge.lookahead_off)
+
+// State 5m
+var box   kv5_bear_box = na
+var box   kv5_bull_box = na
+var float kv5_bear_top = na
+var float kv5_bear_bot = na
+var float kv5_bull_top = na
+var float kv5_bull_bot = na
+var int   kv5_bear_seq = na
+var int   kv5_bull_seq = na
+var label kv5_bear_lbl = na
+var label kv5_bull_lbl = na
+
+// State 15m
+var box   kv15_bear_box = na
+var box   kv15_bull_box = na
+var float kv15_bear_top = na
+var float kv15_bear_bot = na
+var float kv15_bull_top = na
+var float kv15_bull_bot = na
+var int   kv15_bear_seq = na
+var int   kv15_bull_seq = na
+var label kv15_bear_lbl = na
+var label kv15_bull_lbl = na
+
+// Helper màu
+f_box_colors(_isActive, _bull) =>
+    col = _bull ? color.green : color.red
+    [color.new(col, _isActive ? 0 : 100), color.new(col, _isActive ? kv_zone_alpha : 100)]
+
+// ===== Draw 5m =====
+if kv_show_zones
+    // Bear 5m
+    if kv5_evt_bear_once
+        float top = math.max(kv5_high_htf, kv5_swing_hi) + kv5_atr * kv_pad_bear_atr
+        float bot = top - kv5_atr * kv_zone_atr
+        bool  can_new = na(kv5_bear_seq) or (kv5_seq - kv5_bear_seq >= throttle_bars)
+        if can_new
+            if not na(kv5_bear_box)
+                box.delete(kv5_bear_box)
+                kv5_bear_box := na
+                if not na(kv5_bear_lbl)
+                    label.delete(kv5_bear_lbl)
+                    kv5_bear_lbl := na
+            kv5_bear_top := top
+            kv5_bear_bot := bot
+            kv5_bear_seq := kv5_seq
+            kv5_bear_box := box.new(
+                left=kv5_seq,
+                top=top,
+                right=math.min(kv5_seq + kv_zone_extend, bar_index + 500),
+                bottom=bot
+            )
+            [bcol1, bg1] = f_box_colors(not show_15, false)
+            box.set_border_color(kv5_bear_box, bcol1)
+            box.set_bgcolor(kv5_bear_box, bg1)
+            if kv_show_labels
+                kv5_bear_lbl := label.new(kv5_seq, top, "KV 5m (Bear)", style=label.style_label_down, textcolor=color.red, color=color.new(color.red, not show_15 ? 90 : 100), size=size.tiny)
+    else
+        if not na(kv5_bear_box)
+            box.set_right(kv5_bear_box, math.min(kv5_seq + kv_zone_extend, bar_index + 500))
+
+    // Bull 5m
+    if kv5_evt_bull_once
+        float bot = math.min(kv5_low_htf, kv5_swing_lo) - kv5_atr * kv_pad_bull_atr
+        float top = bot + kv5_atr * kv_zone_atr
+        bool  can_new = na(kv5_bull_seq) or (kv5_seq - kv5_bull_seq >= throttle_bars)
+        if can_new
+            if not na(kv5_bull_box)
+                box.delete(kv5_bull_box)
+                kv5_bull_box := na
+                if not na(kv5_bull_lbl)
+                    label.delete(kv5_bull_lbl)
+                    kv5_bull_lbl := na
+            kv5_bull_bot := bot
+            kv5_bull_top := top
+            kv5_bull_seq := kv5_seq
+            kv5_bull_box := box.new(
+                left=kv5_seq,
+                top=top,
+                right=math.min(kv5_seq + kv_zone_extend, bar_index + 500),
+                bottom=bot
+            )
+            [bcol2, bg2] = f_box_colors(not show_15, true)
+            box.set_border_color(kv5_bull_box, bcol2)
+            box.set_bgcolor(kv5_bull_box, bg2)
+            if kv_show_labels
+                kv5_bull_lbl := label.new(kv5_seq, bot, "KV 5m (Bull)", style=label.style_label_up, textcolor=color.green, color=color.new(color.green, not show_15 ? 90 : 100), size=size.tiny)
+    else
+        if not na(kv5_bull_box)
+            box.set_right(kv5_bull_box, math.min(kv5_seq + kv_zone_extend, bar_index + 500))
+
+// Update label 5m
+if kv_show_zones and kv_show_labels
+    if not na(kv5_bear_lbl)
+        label.set_x(kv5_bear_lbl, kv5_seq)
+        label.set_y(kv5_bear_lbl, kv5_bear_top)
+        label.set_color(kv5_bear_lbl, color.new(color.red, not show_15 ? 90 : 100))
+    if not na(kv5_bull_lbl)
+        label.set_x(kv5_bull_lbl, kv5_seq)
+        label.set_y(kv5_bull_lbl, kv5_bull_bot)
+        label.set_color(kv5_bull_lbl, color.new(color.green, not show_15 ? 90 : 100))
+
+// Max age 5m
+if kv_show_zones and kv_max_age_htf > 0
+    if not na(kv5_bear_seq) and (kv5_seq - kv5_bear_seq > kv_max_age_htf)
+        if not na(kv5_bear_box)
+            box.delete(kv5_bear_box)
+        if not na(kv5_bear_lbl)
+            label.delete(kv5_bear_lbl)
+        kv5_bear_box := na
+        kv5_bear_lbl := na
+        kv5_bear_top := na
+        kv5_bear_bot := na
+        kv5_bear_seq := na
+    if not na(kv5_bull_seq) and (kv5_seq - kv5_bull_seq > kv_max_age_htf)
+        if not na(kv5_bull_box)
+            box.delete(kv5_bull_box)
+        if not na(kv5_bull_lbl)
+            label.delete(kv5_bull_lbl)
+        kv5_bull_box := na
+        kv5_bull_lbl := na
+        kv5_bull_top := na
+        kv5_bull_bot := na
+        kv5_bull_seq := na
+
+// ===== Draw 15m =====
+if kv_show_zones
+    // Bear 15m
+    if kv15_evt_bear_once
+        float top = math.max(kv15_high_htf, kv15_swing_hi) + kv15_atr * kv_pad_bear_atr
+        float bot = top - kv15_atr * kv_zone_atr
+        bool  can_new = na(kv15_bear_seq) or (kv15_seq - kv15_bear_seq >= throttle_bars)
+        if can_new
+            if not na(kv15_bear_box)
+                box.delete(kv15_bear_box)
+                kv15_bear_box := na
+                if not na(kv15_bear_lbl)
+                    label.delete(kv15_bear_lbl)
+                    kv15_bear_lbl := na
+            kv15_bear_top := top
+            kv15_bear_bot := bot
+            kv15_bear_seq := kv15_seq
+            kv15_bear_box := box.new(
+                left=kv15_seq,
+                top=top,
+                right=math.min(kv15_seq + kv_zone_extend, bar_index + 500),
+                bottom=bot
+            )
+            [bcol3, bg3] = f_box_colors(show_15, false)
+            box.set_border_color(kv15_bear_box, bcol3)
+            box.set_bgcolor(kv15_bear_box, bg3)
+            if kv_show_labels
+                kv15_bear_lbl := label.new(kv15_seq, top, "KV 15m (Bear)", style=label.style_label_down, textcolor=color.red, color=color.new(color.red, show_15 ? 90 : 100), size=size.tiny)
+    else
+        if not na(kv15_bear_box)
+            box.set_right(kv15_bear_box, math.min(kv15_seq + kv_zone_extend, bar_index + 500))
+
+    // Bull 15m
+    if kv15_evt_bull_once
+        float bot = math.min(kv15_low_htf, kv15_swing_lo) - kv15_atr * kv_pad_bull_atr
+        float top = bot + kv15_atr * kv_zone_atr
+        bool  can_new = na(kv15_bull_seq) or (kv15_seq - kv15_bull_seq >= throttle_bars)
+        if can_new
+            if not na(kv15_bull_box)
+                box.delete(kv15_bull_box)
+                kv15_bull_box := na
+                if not na(kv15_bull_lbl)
+                    label.delete(kv15_bull_lbl)
+                    kv15_bull_lbl := na
+            kv15_bull_bot := bot
+            kv15_bull_top := top
+            kv15_bull_seq := kv15_seq
+            kv15_bull_box := box.new(
+                left=kv15_seq,
+                top=top,
+                right=math.min(kv15_seq + kv_zone_extend, bar_index + 500),
+                bottom=bot
+            )
+            [bcol4, bg4] = f_box_colors(show_15, true)
+            box.set_border_color(kv15_bull_box, bcol4)
+            box.set_bgcolor(kv15_bull_box, bg4)
+            if kv_show_labels
+                kv15_bull_lbl := label.new(kv15_seq, bot, "KV 15m (Bull)", style=label.style_label_up, textcolor=color.green, color=color.new(color.green, show_15 ? 90 : 100), size=size.tiny)
+    else
+        if not na(kv15_bull_box)
+            box.set_right(kv15_bull_box, math.min(kv15_seq + kv_zone_extend, bar_index + 500))
+
+// Update label 15m
+if kv_show_zones and kv_show_labels
+    if not na(kv15_bear_lbl)
+        label.set_x(kv15_bear_lbl, kv15_seq)
+        label.set_y(kv15_bear_lbl, kv15_bear_top)
+        label.set_color(kv15_bear_lbl, color.new(color.red, show_15 ? 90 : 100))
+    if not na(kv15_bull_lbl)
+        label.set_x(kv15_bull_lbl, kv15_seq)
+        label.set_y(kv15_bull_lbl, kv15_bull_bot)
+        label.set_color(kv15_bull_lbl, color.new(color.green, show_15 ? 90 : 100))
+
+// Invalidate theo HTF close (thống nhất)
+if kv_show_zones and kv_zone_invalidate
+    if not na(kv15_bear_box) and bar_index > box.get_left(kv15_bear_box) and kv15_close > kv15_bear_top and box.get_right(kv15_bear_box) > bar_index
+        box.set_right(kv15_bear_box, bar_index)
+    if not na(kv15_bull_box) and bar_index > box.get_left(kv15_bull_box) and kv15_close < kv15_bull_bot and box.get_right(kv15_bull_box) > bar_index
+        box.set_right(kv15_bull_box, bar_index)
+    if not na(kv5_bear_box) and bar_index > box.get_left(kv5_bear_box) and kv5_close > kv5_bear_top and box.get_right(kv5_bear_box) > bar_index
+        box.set_right(kv5_bear_box, bar_index)
+    if not na(kv5_bull_box) and bar_index > box.get_left(kv5_bull_box) and kv5_close < kv5_bull_bot and box.get_right(kv5_bull_box) > bar_index
+        box.set_right(kv5_bull_box, bar_index)
+
+// Max age 15m (đồng bộ với 5m)
+if kv_show_zones and kv_max_age_htf > 0
+    if not na(kv15_bear_seq) and (kv15_seq - kv15_bear_seq > kv_max_age_htf)
+        if not na(kv15_bear_box)
+            box.delete(kv15_bear_box)
+        if not na(kv15_bear_lbl)
+            label.delete(kv15_bear_lbl)
+        kv15_bear_box := na
+        kv15_bear_lbl := na
+        kv15_bear_top := na
+        kv15_bear_bot := na
+        kv15_bear_seq := na
+    if not na(kv15_bull_seq) and (kv15_seq - kv15_bull_seq > kv_max_age_htf)
+        if not na(kv15_bull_box)
+            box.delete(kv15_bull_box)
+        if not na(kv15_bull_lbl)
+            label.delete(kv15_bull_lbl)
+        kv15_bull_box := na
+        kv15_bull_lbl := na
+        kv15_bull_top := na
+        kv15_bull_bot := na
+        kv15_bull_seq := na
+
+// ========== BUY/SELL SIGNALS ==========
+var bool buy_signal  = false
+var bool sell_signal = false
+
+if sig_show
+    // chọn KV đang active theo TF chart
+    bool act_is15      = timeframe.in_seconds(timeframe.period) >= timeframe.in_seconds("15")
+    float act_bear_top = act_is15 ? kv15_bear_top : kv5_bear_top
+    float act_bear_bot = act_is15 ? kv15_bear_bot : kv5_bear_bot
+    float act_bull_top = act_is15 ? kv15_bull_top : kv5_bull_top
+    float act_bull_bot = act_is15 ? kv15_bull_bot : kv5_bull_bot
+    float act_atr      = act_is15 ? kv15_atr      : kv5_atr
+
+    // volume filter
+    float vol_ma = ta.sma(volume, lookback)
+    bool  vol_ok = not sig_use_volume or (volume > vol_ma * vol_multiplier)
+
+    // nến hiện tại
+    float body  = math.abs(close - open)
+    float upW   = high - math.max(open, close)
+    float dnW   = math.min(open, close) - low
+    bool  body_ok = body >= nz(act_atr, ta.atr(kv_atr_len)) * sig_min_body_atr
+
+    // ở trong vùng?
+    bool in_bull_zone = not na(act_bull_top) and not na(act_bull_bot) and high >= act_bull_bot and low <= act_bull_top
+    bool in_bear_zone = not na(act_bear_top) and not na(act_bear_bot) and high >= act_bear_bot and low <= act_bear_top
+
+    // mẫu đảo chiều
+    bool bull_reject = (close > open) and (dnW / math.max(body, syminfo.mintick) >= sig_wick_rej_mult)
+    bool bear_reject = (close < open) and (upW / math.max(body, syminfo.mintick) >= sig_wick_rej_mult)
+
+    // breakout mép vùng (nếu không bắt buộc retest)
+    bool bull_break = not na(act_bull_top) and ta.crossover(close, act_bull_top)
+    bool bear_break = not na(act_bear_bot) and ta.crossunder(close, act_bear_bot)
+
+    bool bull_setup = (sig_retest_only ? (in_bull_zone and bull_reject) : ((in_bull_zone and bull_reject) or bull_break)) and body_ok and vol_ok
+    bool bear_setup = (sig_retest_only ? (in_bear_zone and bear_reject) : ((in_bear_zone and bear_reject) or bear_break)) and body_ok and vol_ok
+
+    bool can_b = na(last_b_bar) or (bar_index - last_b_bar >= sig_throttle_bars)
+    bool can_s = na(last_s_bar) or (bar_index - last_s_bar >= sig_throttle_bars)
+
+    // chống double-fire — nếu cả hai cùng true, không bắn
+    buy_signal  := bull_setup and can_b and not (bear_setup and can_s)
+    sell_signal := bear_setup and can_s and not (bull_setup and can_b)
+
+    if buy_signal
+        last_b_bar := bar_index
+    if sell_signal
+        last_s_bar := bar_index
+
+// Vẽ ở global scope
+plotshape(sig_show and buy_signal,  title="B", style=shape.triangleup,   location=location.belowbar, color=color.lime, text="B", size=size.small)
+plotshape(sig_show and sell_signal, title="S", style=shape.triangledown, location=location.abovebar, color=color.red,  text="S", size=size.small)

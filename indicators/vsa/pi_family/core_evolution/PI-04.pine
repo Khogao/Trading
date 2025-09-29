@@ -1,0 +1,330 @@
+// © 2025 Gemini AI - Phi's VSA Engine (PI v2.1 Syntax Corrected)
+// @version=5
+indicator("PI v2.1 (Syntax Corrected)", shorttitle="PI v2.1", overlay=true, max_labels_count=500)
+
+// === GREG'S WAY (GW) - PHẦN 0: KHAI BÁO & CẤU HÌNH CỐT LÕI ===
+var float VALUE_AREA_PERCENT = 0.7
+var float CLIMAX_VOL_THRESHOLD = 0.95
+var float DEFAULT_CLOSE_LOCATION = 0.5
+var float MIN_PRICE_RANGE = 0.00001
+var int VA_UPDATE_INTERVAL = 10
+var float VA_PRICE_MOVE_THRESHOLD = 0.03
+
+// LỖII 1: Sửa khai báo type - mỗi field trên một dòng
+type BarAnalysis
+    bool isUp
+    bool isDown
+    bool isNarrow
+    bool isWide
+    bool isHighVol
+    bool isLowVol
+    float location
+
+// === PHẦN 1: BẢNG ĐIỀU KHIỂN & CÀI ĐẶT ===
+var string GRP_DISPLAY = "🎨 Giao Dien & Hien Thi"
+showInfoPanel = input.bool(true, "Bang Thong Tin", group=GRP_DISPLAY)
+showBackground = input.bool(true, "To Nen Tin Hieu Manh", group=GRP_DISPLAY)
+showScoreOnBars = input.bool(true, "Hien Thi Diem VSA", group=GRP_DISPLAY)
+
+var string GRP_SCORE_LABEL = "📊 Tùy Chỉnh Nhãn Điểm VSA"
+scoreLabelOffset = input.float(0.8, "Khoảng cách (x ATR)", group=GRP_SCORE_LABEL, minval=0.1, step=0.1)
+scoreLabelBullColor = input.color(color.new(color.gray, 25), "Màu điểm Tăng", group=GRP_SCORE_LABEL)
+scoreLabelBearColor = input.color(color.new(color.gray, 25), "Màu điểm Giảm", group=GRP_SCORE_LABEL)
+
+var string GRP_VP = "📊 Value Area"
+showVALines = input.bool(true, "Hien thi POC, VAH, VAL", group=GRP_VP)
+vpLookback = input.int(50, "Do dai tinh VA", group=GRP_VP, minval=20, maxval=200)
+vpProximityPercent = input.float(0.3, "Bien do Tim kiem quanh VA (%)", group=GRP_VP, minval=0.1, maxval=2.0, step=0.1)
+
+var string GRP_TR_LINES = "📈 Duong Trading Range"
+showTRLines = input.bool(true, "Ve Duong S/R tu dong", group=GRP_TR_LINES)
+trLineOffset = input.int(15, "Do dai ke duong", group=GRP_TR_LINES, minval=5, maxval=50)
+maxLines = input.int(10, "Gioi han so duong ke", group=GRP_TR_LINES, minval=5, maxval=30)
+
+var string GRP_SIGNALS = "🎯 Cau Hinh Tin Hieu"
+enableSpringUpthrust = input.bool(true, "Spring & Upthrust", group=GRP_SIGNALS)
+enableClimacticVol = input.bool(true, "Volume Cuc Dai (Climax)", group=GRP_SIGNALS)
+enableNoSupplyDemand = input.bool(true, "No Supply & No Demand", group=GRP_SIGNALS)
+enableStoppingVol = input.bool(true, "Stopping Volume", group=GRP_SIGNALS)
+enableEffortVsResult = input.bool(true, "No Luc vs Ket Qua", group=GRP_SIGNALS)
+enableShakeout = input.bool(true, "Shakeout", group=GRP_SIGNALS)
+enableSOS_SOW = input.bool(true, "Sign of Strength/Weakness", group=GRP_SIGNALS)
+enableTestBar = input.bool(true, "Test Bar", group=GRP_SIGNALS)
+
+var string GRP_PARAMS = "⚙️ Tham So Chien Luoc"
+lookbackH_L = input.int(12, "Do dai tim H/L (Spring/UT)", group=GRP_PARAMS, minval=5, maxval=100)
+volLookback = input.int(20, "Do dai tinh Volume TB", group=GRP_PARAMS)
+volMultiplier = input.float(1.8, "He so Volume Cao", group=GRP_PARAMS, step=0.1)
+lowVolMultiplier = input.float(0.6, "He so Volume Thap", group=GRP_PARAMS, step=0.1)
+climaxLookback = input.int(40, "Do dai tim Volume Climax", group=GRP_PARAMS)
+scoreLookback = input.int(10, "Do dai tinh Diem VSA", group=GRP_PARAMS)
+narrowRangeFactor = input.float(0.7, "He so Nen Hep (Narrow)", group=GRP_PARAMS)
+wideRangeFactor = input.float(1.3, "He so Nen Rong (Wide)", group=GRP_PARAMS)
+bullishCloseLocation = input.float(0.6, "Nguong Dong cua Bullish", group=GRP_PARAMS, step=0.1)
+bearishCloseLocation = input.float(0.4, "Nguong Dong cua Bearish", group=GRP_PARAMS, step=0.1)
+
+var string GRP_TREND = "🌊 He Thong Dan Duong"
+useDualEMA = input.bool(true, "Su dung He thong EMA Kep", group=GRP_TREND)
+emaFastLength = input.int(21, "EMA Nhanh", group=GRP_TREND)
+emaFastColor = input.color(color.aqua, "Màu", group=GRP_TREND)
+emaSlowLength = input.int(50, "EMA Cham", group=GRP_TREND)
+emaSlowColor = input.color(color.orange, "Màu", group=GRP_TREND)
+showEmaCloud = input.bool(true, "Hien thi Dam may Xu huong", group=GRP_TREND)
+useEma200 = input.bool(true, "Su dung EMA 200 (Boi canh)", group=GRP_TREND)
+emaLength200 = input.int(200, "EMA 200", group=GRP_TREND)
+ema200Color = input.color(color.white, "Màu", group=GRP_TREND)
+
+// === PHẦN 2: KHỞI TẠO & HÀM TIỆN ÍCH ===
+var float cached_dPOC = na
+var float cached_dVAH = na
+var float cached_dVAL = na
+var int last_va_bar = 0
+var bool va_cache_valid = false
+
+// Khởi tạo lines trong pool
+if barstate.isfirst
+    for i = 0 to maxLines - 1
+        array.push(supportPool.pool, line.new(0, 0, 0, 0, color=color.green))
+        array.push(resistancePool.pool, line.new(0, 0, 0, 0, color=color.red))
+
+f_safeDivision(n, d) => d > MIN_PRICE_RANGE ? n / d : na
+
+// LỖII 3: Sửa hàm f_safeSum - cú pháp vòng lặp for
+f_safeSum(source, length) =>
+    _sum = 0.0
+    lookback_len = math.min(length - 1, bar_index)
+    if lookback_len >= 0
+        for i = 0 to lookback_len
+            _sum += nz(source[i])
+    _sum
+
+f_analyzeBar() =>
+    _range = high - low
+    _avgVolume = ta.sma(volume, volLookback)
+    _isNarrow = _range < ta.sma(_range, volLookback) * narrowRangeFactor
+    _isWide = _range > ta.sma(_range, volLookback) * wideRangeFactor
+    _isHighVol = volume > _avgVolume * volMultiplier
+    _isLowVol = volume < _avgVolume * lowVolMultiplier
+    _location = f_safeDivision(close - low, _range)
+    BarAnalysis.new(close > open, close < open, _isNarrow, _isWide, _isHighVol, _isLowVol, nz(_location, 0.5))
+
+f_isNearVA(price) =>
+    if not va_cache_valid or na(cached_dPOC)
+        false
+    else
+        pocDiff = f_safeDivision(math.abs(price - cached_dPOC), cached_dPOC)
+        vahDiff = f_safeDivision(math.abs(price - cached_dVAH), cached_dVAH)
+        valDiff = f_safeDivision(math.abs(price - cached_dVAL), cached_dVAL)
+        (not na(pocDiff) and pocDiff < vpProximityPercent / 100) or (not na(vahDiff) and vahDiff < vpProximityPercent / 100) or (not na(valDiff) and valDiff < vpProximityPercent / 100)
+
+f_calculateValueArea() =>
+    rowCount = 100
+    lookback_high = ta.highest(high, vpLookback)
+    lookback_low = ta.lowest(low, vpLookback)
+    step_price = f_safeDivision(lookback_high - lookback_low, rowCount - 1)
+    
+    if na(step_price) or step_price <= MIN_PRICE_RANGE
+        [close, high, low]
+    else
+        price_rows = array.new<float>(rowCount, 0)
+        volume_rows = array.new<float>(rowCount, 0)
+        array.fill(volume_rows, 0)
+        
+        for i = 0 to rowCount - 1
+            array.set(price_rows, i, lookback_low + step_price * i)
+        
+        total_volume = 0.0
+        for i = 0 to math.min(vpLookback - 1, bar_index)
+            vol = nz(volume[i])
+            price = (high[i] + low[i]) / 2
+            total_volume += vol
+            price_row_index = math.round(f_safeDivision(price - lookback_low, step_price))
+            if not na(price_row_index) and price_row_index >= 0 and price_row_index < rowCount
+                array.set(volume_rows, price_row_index, array.get(volume_rows, price_row_index) + vol)
+        
+        poc_volume = array.max(volume_rows)
+        poc_index = na(poc_volume) ? na : array.indexof(volume_rows, poc_volume)
+        _dPOC = na(poc_index) ? close : array.get(price_rows, poc_index)
+        
+        va_volume_target = total_volume * VALUE_AREA_PERCENT
+        va_volume_current = nz(poc_volume)
+        up_index = nz(poc_index, 0) + 1
+        down_index = nz(poc_index, 0) - 1
+        
+        while va_volume_current < va_volume_target and (up_index < rowCount or down_index >= 0)
+            vol_up = up_index < rowCount ? array.get(volume_rows, up_index) : 0
+            vol_down = down_index >= 0 ? array.get(volume_rows, down_index) : 0
+            if vol_up == 0 and vol_down == 0
+                break
+            if vol_up >= vol_down and up_index < rowCount
+                va_volume_current += vol_up
+                up_index += 1
+            else if down_index >= 0
+                va_volume_current += vol_down
+                down_index -= 1
+            else
+                break
+        
+        _dVAH = up_index > nz(poc_index, 0) ? array.get(price_rows, math.min(rowCount - 1, up_index - 1)) : _dPOC
+        _dVAL = down_index < nz(poc_index, 0) ? array.get(price_rows, math.max(0, down_index + 1)) : _dPOC
+        
+        [_dPOC, _dVAH, _dVAL]
+
+// === PHẦN 3: VÒNG LẶP TÍNH TOÁN CHÍNH ===
+bar = f_analyzeBar()
+fastEMA = ta.ema(close, emaFastLength)
+slowEMA = ta.ema(close, emaSlowLength)
+ema200 = ta.ema(close, emaLength200)
+isUptrend = useDualEMA ? fastEMA > slowEMA : close > ema200
+
+lowest_low_val = ta.lowest(low, lookbackH_L)[1]
+highest_high_val = ta.highest(high, lookbackH_L)[1]
+highest_vol_val = ta.highest(volume, climaxLookback)
+
+atr14 = ta.atr(14)
+
+shouldUpdateVA = barstate.islast and (not va_cache_valid or bar_index - last_va_bar > VA_UPDATE_INTERVAL or (va_cache_valid and f_safeDivision(math.abs(close - cached_dPOC), cached_dPOC) > VA_PRICE_MOVE_THRESHOLD))
+
+[newPOC, newVAH, newVAL] = f_calculateValueArea()
+if shouldUpdateVA and not na(newPOC)
+    cached_dPOC := newPOC
+    cached_dVAH := newVAH
+    cached_dVAL := newVAL
+    va_cache_valid := true
+    last_va_bar := bar_index
+
+float barScore = 0.0
+
+// LỖII 4: Sửa khởi tạo array
+var bullish_signals_on_bar = array.new<string>()
+var bearish_signals_on_bar = array.new<string>()
+
+array.clear(bullish_signals_on_bar)
+array.clear(bearish_signals_on_bar)
+
+if barstate.isconfirmed
+    // LỖII 5: Sửa điều kiện SOS/SOW với kiểm tra na
+    isSpring = enableSpringUpthrust and bar.isDown and close > lowest_low_val and low < lowest_low_val and bar.isHighVol
+    isSellingClimax = enableClimacticVol and bar.isDown and bar.isWide and volume >= highest_vol_val * CLIMAX_VOL_THRESHOLD
+    isStoppingVol = enableStoppingVol and bar.isDown and bar.isHighVol and bar.location > bullishCloseLocation
+    isEffortVsFall = enableEffortVsResult and bar.isDown and bar.isHighVol and bar.isNarrow
+    isShakeout = enableShakeout and bar.isDown and bar.isHighVol and bar.location > bullishCloseLocation
+    
+    // Sửa SOS với kiểm tra VA hợp lệ
+    isSOS = enableSOS_SOW and bar.isUp and bar.isHighVol and bar.location > 0.7 and (va_cache_valid and not na(cached_dVAH) and not na(cached_dPOC) ? (close > cached_dVAH or close > cached_dPOC) : true)
+    
+    isTestBar = enableTestBar and bar.isDown and bar.isNarrow and bar.isLowVol and bar.location > bullishCloseLocation
+    isNoSupply = enableNoSupplyDemand and bar.isDown and bar.isNarrow and bar.isLowVol
+    isUpthrust = enableSpringUpthrust and bar.isUp and close < highest_high_val and high > highest_high_val and bar.isHighVol
+    isBuyingClimax = enableClimacticVol and bar.isUp and bar.isWide and volume >= highest_vol_val * CLIMAX_VOL_THRESHOLD
+    isEffortVsRise = enableEffortVsResult and bar.isUp and bar.isHighVol and bar.isNarrow
+    
+    // Sửa SOW với kiểm tra VA hợp lệ
+    isSOW = enableSOS_SOW and bar.isDown and bar.isHighVol and bar.location < bearishCloseLocation and (va_cache_valid and not na(cached_dVAL) and not na(cached_dPOC) ? (close < cached_dVAL or close < cached_dPOC) : true)
+    
+    isNoDemand = enableNoSupplyDemand and bar.isUp and bar.isNarrow and bar.isLowVol
+
+    if isSpring
+        array.push(bullish_signals_on_bar, "SPR")
+        barScore += 2.5
+    if isSellingClimax
+        array.push(bullish_signals_on_bar, "SC")
+        barScore += 2.0
+    if isStoppingVol
+        array.push(bullish_signals_on_bar, "StV")
+        barScore += 2.2
+    if isEffortVsFall
+        array.push(bullish_signals_on_bar, "EFF")
+        barScore += 2.0
+    if isShakeout
+        array.push(bullish_signals_on_bar, "SO")
+        barScore += 2.2
+    if isSOS
+        array.push(bullish_signals_on_bar, "SOS")
+        barScore += 2.4
+    if isTestBar
+        array.push(bullish_signals_on_bar, "TST")
+        barScore += 1.5
+    if isNoSupply
+        array.push(bullish_signals_on_bar, "NS")
+        barScore += 1.0
+    if isUpthrust
+        array.push(bearish_signals_on_bar, "UT")
+        barScore -= 2.5
+    if isBuyingClimax
+        array.push(bearish_signals_on_bar, "BC")
+        barScore -= 2.0
+    if isEffortVsRise
+        array.push(bearish_signals_on_bar, "EFR")
+        barScore -= 2.0
+    if isSOW
+        array.push(bearish_signals_on_bar, "SOW")
+        barScore -= 2.4
+    if isNoDemand
+        array.push(bearish_signals_on_bar, "ND")
+        barScore -= 1.0
+    
+    if showTRLines
+        if isSpring
+            f_getLineFromPool(supportPool, bar_index, low, bar_index + trLineOffset, low, color.new(color.green, 30), line.style_solid)
+        if isUpthrust
+            f_getLineFromPool(resistancePool, bar_index, high, bar_index + trLineOffset, high, color.new(color.red, 30), line.style_solid)
+
+vsaScore = f_safeSum(barScore, scoreLookback)
+
+// === PHẦN 4: HIỂN THỊ & GIAO DIỆN NGƯỜI DÙNG ===
+p_ema200 = plot(useEma200 ? ema200 : na, "EMA 200", ema200Color, 2)
+p_fast = plot(useDualEMA ? fastEMA : na, "EMA Nhanh", emaFastColor, 2)
+p_slow = plot(useDualEMA ? slowEMA : na, "EMA Cham", emaSlowColor, 2)
+
+fill(p_fast, p_slow, color=useDualEMA and showEmaCloud ? (fastEMA > slowEMA ? color.new(color.green, 85) : color.new(color.red, 85)) : na)
+
+// === VẼ VALUE AREA BẰNG PLOT (DÍNH VỚI NẾN) ===
+plot(showVALines and va_cache_valid ? cached_dPOC : na, "POC", color.yellow, 2, plot.style_line)
+plot(showVALines and va_cache_valid ? cached_dVAH : na, "VAH", color.blue, 1, plot.style_line)
+plot(showVALines and va_cache_valid ? cached_dVAL : na, "VAL", color.blue, 1, plot.style_line)
+
+bgcolor(showBackground and math.abs(vsaScore) > 2.5 ? (vsaScore > 0 ? color.new(color.green, 90) : color.new(color.red, 90)) : na)
+
+if array.size(bullish_signals_on_bar) > 0
+    bullish_text = array.join(bullish_signals_on_bar, "+")
+    isNear = f_isNearVA(low)
+    finalBullText = isNear ? bullish_text + " ⭐" : bullish_text
+    // Sử dụng yloc.belowbar thay vì yloc.price để label tự động điều chỉnh
+    label.new(bar_index, na, finalBullText, style=label.style_label_up, yloc=yloc.belowbar, 
+              color=color.lime, textcolor=color.black, size=size.normal)
+
+if array.size(bearish_signals_on_bar) > 0
+    bearish_text = array.join(bearish_signals_on_bar, "+")
+    isNear = f_isNearVA(high)
+    finalBearText = isNear ? bearish_text + " ⭐" : bearish_text
+    // Sử dụng yloc.abovebar thay vì yloc.price
+    label.new(bar_index, na, finalBearText, style=label.style_label_down, yloc=yloc.abovebar,
+              color=color.red, textcolor=color.white, size=size.normal)
+
+// === SỬA SCORE LABELS - dòng 316-319 ===
+if showScoreOnBars and vsaScore != 0
+    // Dùng yloc tương đối thay vì tọa độ tuyệt đối
+    scoreStyle = vsaScore > 0 ? label.style_label_up : label.style_label_down
+    scoreYloc = vsaScore > 0 ? yloc.belowbar : yloc.abovebar
+    label.new(bar_index, na, str.tostring(vsaScore, "#.#"), style=scoreStyle, yloc=scoreYloc,
+              color=color.new(vsaScore > 0 ? color.green : color.red, 70), 
+              textcolor=color.white, size=size.small)
+
+var table infoTable = na
+if showInfoPanel and barstate.islast
+    if na(infoTable)
+        infoTable := table.new(position.top_right, 2, 6, bgcolor=color.new(color.gray, 85), border_width=1)
+    
+    table.cell(infoTable, 0, 0, "VSA ANALYSIS", text_color=color.white, bgcolor=color.black)
+    table.cell(infoTable, 1, 0, timeframe.period, text_color=color.white, bgcolor=color.black)
+    table.cell(infoTable, 0, 1, "Trend:")
+    table.cell(infoTable, 0, 2, "VSA Score:")
+    table.cell(infoTable, 0, 3, "Volume:")
+    table.cell(infoTable, 0, 4, "Range:")
+    table.cell(infoTable, 0, 5, "Near VA:")
+    table.cell(infoTable, 1, 1, isUptrend ? "BULLISH" : "BEARISH", text_color=isUptrend ? color.green : color.red)
+    table.cell(infoTable, 1, 2, str.tostring(vsaScore, "#.##"), text_color=vsaScore > 0 ? color.green : vsaScore < 0 ? color.red : color.gray)
+    table.cell(infoTable, 1, 3, bar.isHighVol ? "HIGH" : bar.isLowVol ? "LOW" : "NORMAL", text_color=bar.isHighVol ? color.red : bar.isLowVol ? color.gray : color.blue)
+    table.cell(infoTable, 1, 4, bar.isWide ? "WIDE" : bar.isNarrow ? "NARROW" : "NORMAL", text_color=bar.isWide ? color.orange : bar.isNarrow ? color.gray : color.blue)
+    table.cell(infoTable, 1, 5, f_isNearVA(close) ? "YES" : "NO", text_color=f_isNearVA(close) ? color.yellow : color.gray)

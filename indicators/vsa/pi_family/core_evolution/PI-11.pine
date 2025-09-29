@@ -1,0 +1,411 @@
+// © 2025 Gemini AI - PI v2.1 Scalping Edition
+// @version=5
+indicator("PI v2.1 Scalping", shorttitle="PI v2.1 Scalp", overlay=true, max_labels_count=500)
+
+// === CONSTANTS ===
+var float VALUE_AREA_PERCENT = 0.7
+var float CLIMAX_VOL_THRESHOLD = 0.95
+var float DEFAULT_CLOSE_LOCATION = 0.5
+var float MIN_PRICE_RANGE = 0.00001
+var int VA_UPDATE_INTERVAL = 10
+var float VA_PRICE_MOVE_THRESHOLD = 0.03
+
+// === TYPE DEFINITION ===
+type BarAnalysis
+    bool isUp
+    bool isDown
+    bool isNarrow
+    bool isWide
+    bool isHighVol
+    bool isLowVol
+    float location
+
+// === INPUT SETTINGS ===
+var string GRP_DISPLAY = "🎨 Giao Dien & Hien Thi"
+showInfoPanel = input.bool(false, "Bang Thong Tin", group=GRP_DISPLAY)
+dashboardPosition = input.string("top_right", "Vi tri Dashboard", options=["top_left", "top_center", "top_right", "middle_left", "middle_center", "middle_right", "bottom_left", "bottom_center", "bottom_right"], group=GRP_DISPLAY)
+showBackground = input.bool(false, "To Nen Tin Hieu Manh", group=GRP_DISPLAY)
+showScoreOnBars = input.bool(false, "Hien Thi Diem VSA", group=GRP_DISPLAY)
+
+var string GRP_SCORE_LABEL = "📊 Tùy Chỉnh Nhãn Điểm VSA"
+scoreLabelOffset = input.float(0.8, "Khoảng cách (x ATR)", group=GRP_SCORE_LABEL, minval=0.1, step=0.1)
+scoreLabelBullColor = input.color(color.new(color.gray, 25), "Màu điểm Tăng", group=GRP_SCORE_LABEL)
+scoreLabelBearColor = input.color(color.new(color.gray, 25), "Màu điểm Giảm", group=GRP_SCORE_LABEL)
+
+var string GRP_VP = "📊 Value Area"
+showVALines = input.bool(true, "Hien thi POC, VAH, VAL", group=GRP_VP)
+vpLookback = input.int(50, "Do dai tinh VA", group=GRP_VP, minval=20, maxval=200)
+vpProximityPercent = input.float(0.3, "Bien do Tim kiem quanh VA (%)", group=GRP_VP, minval=0.1, maxval=2.0, step=0.1)
+
+var string GRP_TR_LINES = "📈 Duong Trading Range"
+showTRLines = input.bool(true, "Ve Duong S/R tu dong", group=GRP_TR_LINES)
+trLineOffset = input.int(15, "Do dai ke duong", group=GRP_TR_LINES, minval=5, maxval=50)
+
+var string GRP_SIGNALS = "🎯 Cau Hinh Tin Hieu"
+enableSpringUpthrust = input.bool(true, "Spring & Upthrust", group=GRP_SIGNALS)
+enableClimacticVol = input.bool(true, "Volume Cuc Dai (Climax)", group=GRP_SIGNALS)
+enableNoSupplyDemand = input.bool(true, "No Supply & No Demand", group=GRP_SIGNALS)
+enableStoppingVol = input.bool(true, "Stopping Volume", group=GRP_SIGNALS)
+enableEffortVsResult = input.bool(true, "No Luc vs Ket Qua", group=GRP_SIGNALS)
+enableShakeout = input.bool(true, "Shakeout", group=GRP_SIGNALS)
+enableSOS_SOW = input.bool(true, "Sign of Strength/Weakness", group=GRP_SIGNALS)
+enableTestBar = input.bool(true, "Test Bar", group=GRP_SIGNALS)
+
+var string GRP_PARAMS = "⚙️ Tham So Chien Luoc"
+lookbackH_L = input.int(12, "Do dai tim H/L (Spring/UT)", group=GRP_PARAMS, minval=5, maxval=100)
+volLookback = input.int(20, "Do dai tinh Volume TB", group=GRP_PARAMS)
+volMultiplier = input.float(1.8, "He so Volume Cao", group=GRP_PARAMS, step=0.1)
+lowVolMultiplier = input.float(0.6, "He so Volume Thap", group=GRP_PARAMS, step=0.1)
+climaxLookback = input.int(40, "Do dai tim Volume Climax", group=GRP_PARAMS)
+scoreLookback = input.int(10, "Do dai tinh Diem VSA", group=GRP_PARAMS)
+narrowRangeFactor = input.float(0.7, "He so Nen Hep (Narrow)", group=GRP_PARAMS)
+wideRangeFactor = input.float(1.3, "He so Nen Rong (Wide)", group=GRP_PARAMS)
+bullishCloseLocation = input.float(0.6, "Nguong Dong cua Bullish", group=GRP_PARAMS, step=0.1)
+bearishCloseLocation = input.float(0.4, "Nguong Dong cua Bearish", group=GRP_PARAMS, step=0.1)
+
+var string GRP_TREND = "🌊 He Thong Dan Duong"
+useDualEMA = input.bool(true, "Su dung He thong EMA Kep", group=GRP_TREND)
+emaFastLength = input.int(21, "EMA Nhanh", group=GRP_TREND)
+emaFastColor = input.color(color.aqua, "Màu", group=GRP_TREND)
+emaSlowLength = input.int(50, "EMA Cham", group=GRP_TREND)
+emaSlowColor = input.color(color.orange, "Màu", group=GRP_TREND)
+showEmaCloud = input.bool(true, "Hien thi Dam may Xu huong", group=GRP_TREND)
+useEma200 = input.bool(true, "Su dung EMA 200 (Boi canh)", group=GRP_TREND)
+emaLength200 = input.int(200, "EMA 200", group=GRP_TREND)
+ema200Color = input.color(color.gray, "Màu", group=GRP_TREND)
+
+// === 🎯 SCALPING MODE (NEW FEATURE) ===
+var string GRP_SCALPING = "🎯 SCALPING MODE"
+enableScalpMode = input.bool(false, "🚀 BAT SCALPING MODE", group=GRP_SCALPING, tooltip="Bật để tối ưu cho scalping 1m-15m")
+scalpSensitivity = input.string("High", "Do nhay Scalp", options=["Low", "Medium", "High"], group=GRP_SCALPING)
+scalpTimeframe = input.string("1m-5m", "Toi uu cho TF", options=["1m-5m", "15m-1h", "4h+"], group=GRP_SCALPING)
+showScalpIndicator = input.bool(true, "Hien thi chi bao 🎯", group=GRP_SCALPING)
+
+// Scalping parameter overrides
+scalpVolLookback = input.int(10, "📍 Scalp: Volume Lookback", group=GRP_SCALPING, minval=5, maxval=50)
+scalpVolMultiplier = input.float(1.5, "📍 Scalp: Volume Multiplier", group=GRP_SCALPING, step=0.1, minval=1.0, maxval=3.0)
+scalpClimaxLookback = input.int(20, "📍 Scalp: Climax Lookback", group=GRP_SCALPING, minval=10, maxval=100)
+scalpScoreLookback = input.int(5, "📍 Scalp: Score Lookback", group=GRP_SCALPING, minval=3, maxval=20)
+scalpLookbackH_L = input.int(6, "📍 Scalp: H/L Lookback", group=GRP_SCALPING, minval=3, maxval=30)
+scalpAlertThreshold = input.float(2.0, "📍 Scalp: Alert Threshold", group=GRP_SCALPING, step=0.5, minval=1.0, maxval=5.0)
+
+// Dynamic parameter selection
+useVolLookback = enableScalpMode ? scalpVolLookback : volLookback
+useVolMultiplier = enableScalpMode ? scalpVolMultiplier : volMultiplier
+useClimaxLookback = enableScalpMode ? scalpClimaxLookback : climaxLookback
+useScoreLookback = enableScalpMode ? scalpScoreLookback : scoreLookback
+useLookbackH_L = enableScalpMode ? scalpLookbackH_L : lookbackH_L
+useAlertThreshold = enableScalpMode ? scalpAlertThreshold : 3.0
+useClimaxThreshold = enableScalpMode ? CLIMAX_VOL_THRESHOLD * 0.85 : CLIMAX_VOL_THRESHOLD
+
+// === CACHE VARIABLES ===
+var float cached_dPOC = na
+var float cached_dVAH = na
+var float cached_dVAL = na
+var int last_va_bar = 0
+var bool va_cache_valid = false
+
+// === UTILITY FUNCTIONS ===
+f_safeDivision(n, d) => d > MIN_PRICE_RANGE ? n / d : na
+
+f_safeSum(source, length) =>
+    _sum = 0.0
+    lookback_len = math.min(length - 1, bar_index)
+    if lookback_len >= 0
+        for i = 0 to lookback_len
+            _sum += nz(source[i])
+    _sum
+
+f_analyzeBar() =>
+    _range = high - low
+    _avgVolume = ta.sma(volume, useVolLookback)
+    _isNarrow = _range < ta.sma(_range, useVolLookback) * narrowRangeFactor
+    _isWide = _range > ta.sma(_range, useVolLookback) * wideRangeFactor
+    _isHighVol = volume > _avgVolume * useVolMultiplier
+    _isLowVol = volume < _avgVolume * lowVolMultiplier
+    _location = f_safeDivision(close - low, _range)
+    BarAnalysis.new(close > open, close < open, _isNarrow, _isWide, _isHighVol, _isLowVol, nz(_location, 0.5))
+
+f_isNearVA(price) =>
+    if not va_cache_valid or na(cached_dPOC)
+        false
+    else
+        pocDiff = f_safeDivision(math.abs(price - cached_dPOC), cached_dPOC)
+        vahDiff = f_safeDivision(math.abs(price - cached_dVAH), cached_dVAH)
+        valDiff = f_safeDivision(math.abs(price - cached_dVAL), cached_dVAL)
+        (not na(pocDiff) and pocDiff < vpProximityPercent / 100) or (not na(vahDiff) and vahDiff < vpProximityPercent / 100) or (not na(valDiff) and valDiff < vpProximityPercent / 100)
+
+f_calculateValueArea() =>
+    rowCount = 200
+    lookback_high = ta.highest(high, vpLookback)
+    lookback_low = ta.lowest(low, vpLookback)
+    step_price = f_safeDivision(lookback_high - lookback_low, rowCount - 1)
+    
+    if na(step_price) or step_price <= MIN_PRICE_RANGE
+        [close, lookback_high, lookback_low]
+    else
+        price_rows = array.new<float>(rowCount, 0)
+        volume_rows = array.new<float>(rowCount, 0)
+        array.fill(volume_rows, 0)
+        
+        for i = 0 to rowCount - 1
+            array.set(price_rows, i, lookback_low + step_price * i)
+        
+        total_volume = 0.0
+        for i = 0 to math.min(vpLookback - 1, bar_index)
+            bar_high = high[i]
+            bar_low = low[i]
+            bar_vol = nz(volume[i])
+            total_volume += bar_vol
+            
+            start_index = math.max(0, math.round(f_safeDivision(bar_low - lookback_low, step_price)))
+            end_index = math.min(rowCount - 1, math.round(f_safeDivision(bar_high - lookback_low, step_price)))
+            
+            if start_index <= end_index
+                rows_in_bar = end_index - start_index + 1
+                vol_per_row = bar_vol / rows_in_bar
+                
+                for j = start_index to end_index
+                    current_vol = array.get(volume_rows, j)
+                    array.set(volume_rows, j, current_vol + vol_per_row)
+        
+        poc_volume = array.max(volume_rows)
+        poc_index = na(poc_volume) ? na : array.indexof(volume_rows, poc_volume)
+        _dPOC = na(poc_index) ? close : array.get(price_rows, poc_index)
+        
+        va_volume_target = total_volume * VALUE_AREA_PERCENT
+        va_volume_current = nz(poc_volume)
+        up_index = nz(poc_index, 0) + 1
+        down_index = nz(poc_index, 0) - 1
+        
+        while va_volume_current < va_volume_target and (up_index < rowCount or down_index >= 0)
+            vol_up = up_index < rowCount ? array.get(volume_rows, up_index) : 0
+            vol_down = down_index >= 0 ? array.get(volume_rows, down_index) : 0
+            
+            if vol_up == 0 and vol_down == 0
+                break
+                
+            if vol_up >= vol_down and up_index < rowCount
+                va_volume_current += vol_up
+                up_index += 1
+            else if down_index >= 0
+                va_volume_current += vol_down
+                down_index -= 1
+            else
+                up_index += 1
+        
+        _dVAH = up_index > nz(poc_index, 0) ? array.get(price_rows, math.min(rowCount - 1, up_index - 1)) : _dPOC
+        _dVAL = down_index < nz(poc_index, 0) ? array.get(price_rows, math.max(0, down_index + 1)) : _dPOC
+        
+        if _dVAH < _dPOC
+            _dVAH := _dPOC + (step_price * 5)
+        if _dVAL > _dPOC
+            _dVAL := _dPOC - (step_price * 5)
+        
+        [_dPOC, _dVAH, _dVAL]
+
+// === MAIN CALCULATIONS ===
+bar = f_analyzeBar()
+fastEMA = ta.ema(close, emaFastLength)
+slowEMA = ta.ema(close, emaSlowLength)
+ema200 = ta.ema(close, emaLength200)
+isUptrend = useDualEMA ? fastEMA > slowEMA : close > ema200
+
+lowest_low_val = ta.lowest(low, useLookbackH_L)[1]
+highest_high_val = ta.highest(high, useLookbackH_L)[1]
+highest_vol_val = ta.highest(volume, useClimaxLookback)
+
+atr14 = ta.atr(14)
+
+[newPOC, newVAH, newVAL] = f_calculateValueArea()
+if not na(newPOC)
+    cached_dPOC := newPOC
+    cached_dVAH := newVAH
+    cached_dVAL := newVAL
+    va_cache_valid := true
+    last_va_bar := bar_index
+
+// === VSA SIGNAL DETECTION (FIXED - REMOVE BARSTATE.ISCONFIRMED) ===
+float barScore = 0.0
+var bullish_signals_on_bar = array.new<string>()
+var bearish_signals_on_bar = array.new<string>()
+
+array.clear(bullish_signals_on_bar)
+array.clear(bearish_signals_on_bar)
+
+isSpring = false
+isUpthrust = false
+
+// REMOVE: if barstate.isconfirmed - THIS CAUSES THE DRIFT!
+isSpring := enableSpringUpthrust and bar.isDown and close > lowest_low_val and low < lowest_low_val and bar.isHighVol
+isSellingClimax = enableClimacticVol and bar.isDown and bar.isWide and volume >= highest_vol_val * useClimaxThreshold
+isStoppingVol = enableStoppingVol and bar.isDown and bar.isHighVol and bar.location > bullishCloseLocation
+isEffortVsFall = enableEffortVsResult and bar.isDown and bar.isHighVol and bar.isNarrow
+isShakeout = enableShakeout and bar.isDown and bar.isHighVol and bar.location > bullishCloseLocation
+
+isSOS = enableSOS_SOW and bar.isUp and bar.isHighVol and bar.location > 0.7 and (va_cache_valid and not na(cached_dVAH) and not na(cached_dPOC) ? (close > cached_dVAH or close > cached_dPOC) : true)
+
+isTestBar = enableTestBar and bar.isDown and bar.isNarrow and bar.isLowVol and bar.location > bullishCloseLocation
+isNoSupply = enableNoSupplyDemand and bar.isDown and bar.isNarrow and bar.isLowVol
+isUpthrust := enableSpringUpthrust and bar.isUp and close < highest_high_val and high > highest_high_val and bar.isHighVol
+isBuyingClimax = enableClimacticVol and bar.isUp and bar.isWide and volume >= highest_vol_val * useClimaxThreshold
+isEffortVsRise = enableEffortVsResult and bar.isUp and bar.isHighVol and bar.isNarrow
+
+isSOW = enableSOS_SOW and bar.isDown and bar.isHighVol and bar.location < bearishCloseLocation and (va_cache_valid and not na(cached_dVAL) and not na(cached_dPOC) ? (close < cached_dVAL or close < cached_dPOC) : true)
+
+isNoDemand = enableNoSupplyDemand and bar.isUp and bar.isNarrow and bar.isLowVol
+
+// Scalping bonus
+scalpBonus = enableScalpMode ? 0.5 : 0.0
+
+if isSpring
+    array.push(bullish_signals_on_bar, "SPR")
+    barScore += 2.5 + scalpBonus
+if isSellingClimax
+    array.push(bullish_signals_on_bar, "SC")
+    barScore += 2.0 + scalpBonus
+if isStoppingVol
+    array.push(bullish_signals_on_bar, "StV")
+    barScore += 2.2 + scalpBonus
+if isEffortVsFall
+    array.push(bullish_signals_on_bar, "EFF")
+    barScore += 2.0 + scalpBonus
+if isShakeout
+    array.push(bullish_signals_on_bar, "SO")
+    barScore += 2.2 + scalpBonus
+if isSOS
+    array.push(bullish_signals_on_bar, "SOS")
+    barScore += 2.4 + scalpBonus
+if isTestBar
+    array.push(bullish_signals_on_bar, "TST")
+    barScore += 1.5 + scalpBonus
+if isNoSupply
+    array.push(bullish_signals_on_bar, "NS")
+    barScore += 1.0 + scalpBonus
+if isUpthrust
+    array.push(bearish_signals_on_bar, "UT")
+    barScore -= 2.5 + scalpBonus
+if isBuyingClimax
+    array.push(bearish_signals_on_bar, "BC")
+    barScore -= 2.0 + scalpBonus
+if isEffortVsRise
+    array.push(bearish_signals_on_bar, "EFR")
+    barScore -= 2.0 + scalpBonus
+if isSOW
+    array.push(bearish_signals_on_bar, "SOW")
+    barScore -= 2.4 + scalpBonus
+if isNoDemand
+    array.push(bearish_signals_on_bar, "ND")
+    barScore -= 1.0 + scalpBonus
+
+vsaScore = f_safeSum(barScore, useScoreLookback)
+
+// === DISPLAY PLOTS ===
+p_ema200 = plot(useEma200 ? ema200 : na, "EMA 200", ema200Color, 2)
+p_fast = plot(useDualEMA ? fastEMA : na, "EMA Nhanh", emaFastColor, 2)
+p_slow = plot(useDualEMA ? slowEMA : na, "EMA Cham", emaSlowColor, 2)
+
+fill(p_fast, p_slow, color=useDualEMA and showEmaCloud ? (fastEMA > slowEMA ? color.new(color.green, 85) : color.new(color.red, 85)) : na)
+
+plot(showVALines ? cached_dPOC : na, "POC", color.red, 1, plot.style_line)
+plot(showVALines ? cached_dVAH : na, "VAH", color.blue, 1, plot.style_line)
+plot(showVALines ? cached_dVAL : na, "VAL", color.blue, 1, plot.style_line)
+
+bgcolor(showBackground and math.abs(vsaScore) > useAlertThreshold ? (vsaScore > 0 ? color.new(color.green, 90) : color.new(color.red, 90)) : na)
+
+plotchar(showTRLines and isSpring, "Spring", "▲", location.belowbar, color.green, size=size.small)
+plotchar(showTRLines and isUpthrust, "Upthrust", "▼", location.abovebar, color.red, size=size.small)
+
+// === SCALPING INDICATOR (FIXED) ===
+scalpColor = enableScalpMode and showScalpIndicator ? (scalpSensitivity == "High" ? color.lime : scalpSensitivity == "Medium" ? color.yellow : color.orange) : na
+plotchar(showScalpIndicator and enableScalpMode, "Scalp Mode", "🎯", location.top, scalpColor, size=size.tiny)
+
+// === SIGNAL LABELS (ULTIMATE FIX) ===
+if array.size(bullish_signals_on_bar) > 0 and barstate.isconfirmed
+    bullish_text = array.join(bullish_signals_on_bar, "+")
+    shouldShowStar = false
+    for i = 0 to array.size(bullish_signals_on_bar) - 1
+        signal = array.get(bullish_signals_on_bar, i)
+        if signal == "SC"
+            shouldShowStar := true
+            break
+    
+    finalBullText = shouldShowStar ? bullish_text + " ⭐" : bullish_text
+    labelOffset = atr14 * scoreLabelOffset
+    labelPrice = low - labelOffset
+    labelColor = enableScalpMode ? color.new(color.lime, 30) : color.new(color.gray, 30)
+    
+    label.new(bar_index, labelPrice, finalBullText, 
+              style=label.style_label_down, size=size.normal,
+              color=labelColor, textcolor=color.white, 
+              tooltip="Bullish VSA Signal")
+
+if array.size(bearish_signals_on_bar) > 0 and barstate.isconfirmed
+    bearish_text = array.join(bearish_signals_on_bar, "+")
+    shouldShowStar = false
+    for i = 0 to array.size(bearish_signals_on_bar) - 1
+        signal = array.get(bearish_signals_on_bar, i)
+        if signal == "BC"
+            shouldShowStar := true
+            break
+    
+    finalBearText = shouldShowStar ? bearish_text + " ⭐" : bearish_text
+    labelOffset = atr14 * scoreLabelOffset
+    labelPrice = high + labelOffset
+    labelColor = enableScalpMode ? color.new(color.fuchsia, 30) : color.new(color.gray, 30)
+    
+    label.new(bar_index, labelPrice, finalBearText,
+              style=label.style_label_up, size=size.normal,
+              color=labelColor, textcolor=color.white,
+              tooltip="Bearish VSA Signal")
+
+// === SCORE LABELS (ULTIMATE FIX) ===
+if showScoreOnBars and vsaScore != 0 and barstate.isconfirmed
+    scoreOffset = atr14 * scoreLabelOffset * 1.5
+    scoreLabelPrice = vsaScore > 0 ? low - scoreOffset : high + scoreOffset
+    scoreTextColor = vsaScore > 0 ? scoreLabelBullColor : scoreLabelBearColor
+    
+    label.new(bar_index, scoreLabelPrice, str.tostring(vsaScore, "#.#"),
+              style=label.style_none, size=size.small,
+              color=scoreTextColor, textcolor=color.white,
+              tooltip="VSA Score: " + str.tostring(vsaScore, "#.##"))
+
+// === ENHANCED DASHBOARD ===
+var table infoTable = na
+if showInfoPanel and barstate.islast
+    tablePosition = switch dashboardPosition
+        "top_left" => position.top_left
+        "top_center" => position.top_center
+        "top_right" => position.top_right
+        "middle_left" => position.middle_left
+        "middle_center" => position.middle_center
+        "middle_right" => position.middle_right
+        "bottom_left" => position.bottom_left
+        "bottom_center" => position.bottom_center
+        "bottom_right" => position.bottom_right
+        => position.top_right
+    
+    if na(infoTable)
+        infoTable := table.new(tablePosition, 2, 7, bgcolor=color.new(color.gray, 85), border_width=1)
+    
+    modeText = enableScalpMode ? "SCALP " + scalpSensitivity : "STANDARD"
+    
+    table.cell(infoTable, 0, 0, "VSA ANALYSIS", text_color=color.yellow, bgcolor=color.black)
+    table.cell(infoTable, 1, 0, timeframe.period + " | " + modeText, text_color=color.aqua, bgcolor=color.black)
+    table.cell(infoTable, 0, 1, "Mode:", text_color=color.black)
+    table.cell(infoTable, 1, 1, enableScalpMode ? scalpTimeframe : "Normal", text_color=enableScalpMode ? color.orange : color.green)
+    table.cell(infoTable, 0, 2, "Trend:", text_color=color.black)
+    table.cell(infoTable, 1, 2, isUptrend ? "BULLISH" : "BEARISH", text_color=isUptrend ? color.green : color.red)
+    table.cell(infoTable, 0, 3, "VSA Score:", text_color=color.black)
+    table.cell(infoTable, 1, 3, str.tostring(vsaScore, "#.##"), text_color=vsaScore > 0 ? color.green : vsaScore < 0 ? color.red : color.gray)
+    table.cell(infoTable, 0, 4, "Volume:", text_color=color.black)
+    table.cell(infoTable, 1, 4, bar.isHighVol ? "HIGH" : bar.isLowVol ? "LOW" : "NORMAL", text_color=bar.isHighVol ? color.red : bar.isLowVol ? color.gray : color.blue)
+    table.cell(infoTable, 0, 5, "Range:", text_color=color.black)
+    table.cell(infoTable, 1, 5, bar.isWide ? "WIDE" : bar.isNarrow ? "NARROW" : "NORMAL", text_color=bar.isWide ? color.orange : bar.isNarrow ? color.gray : color.blue)
+    table.cell(infoTable, 0, 6, "Near VA:", text_color=color.black)
+    table.cell(infoTable, 1, 6, f_isNearVA(close) ? "YES" : "NO", text_color=f_isNearVA(close) ? color.red : color.gray)
+
+// === ALERTS ===
+alertcondition(vsaScore > useAlertThreshold, "VSA Bullish", "VSA Bullish Signal Detected")
+alertcondition(vsaScore < -useAlertThreshold, "VSA Bearish", "VSA Bearish Signal Detected")
+alertcondition(enableScalpMode and math.abs(vsaScore) > useAlertThreshold, "Scalp Alert", "Scalping Signal Detected")

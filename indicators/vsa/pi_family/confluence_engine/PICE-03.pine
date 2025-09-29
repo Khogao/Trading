@@ -1,0 +1,201 @@
+// © 2025 Gemini AI - Phi's Confluence Engine (v1.4.2)
+// @version=5
+// THAY ĐỔI: Sửa lỗi cú pháp cuối cùng trong Dashboard.
+indicator("PI Confluence Engine v1.4.2", shorttitle="PICE v1.4.2", overlay=true, max_labels_count=500)
+
+// === CORE & UI SETTINGS ===
+var string GRP_CORE = "⚙️ Core & UI Settings"
+show_table = input.bool(true, "Show Dashboard", group=GRP_CORE)
+show_ema = input.bool(true, "Show EMA Lines", group=GRP_CORE)
+max_labels = input.int(50, "Max Signal Labels", group=GRP_CORE, tooltip="Giới hạn số lượng nhãn tín hiệu để tránh quá tải.")
+
+// === RANKING ===
+var string GRP_RANKING = "🏆 Xếp Hạng Tín Hiệu"
+long_A_threshold = input.float(4.0, "Ngưỡng điểm Long 'A'", group=GRP_RANKING)
+long_A_star_threshold = input.float(6.0, "Ngưỡng điểm Long 'A⭐'", group=GRP_RANKING)
+short_A_threshold = input.float(4.0, "Ngưỡng điểm Short 'A'", group=GRP_RANKING)
+short_A_star_threshold = input.float(6.0, "Ngưỡng điểm Short 'A⭐'", group=GRP_RANKING)
+
+// === VSA SIGNALS ===
+var string GRP_VSA = "🎯 VSA Signals"
+enableSpring = input.bool(true, "Spring", group=GRP_VSA, inline="s1")
+spring_base_score = input.float(2.5, "", group=GRP_VSA, inline="s1")
+enableUpthrust = input.bool(true, "Upthrust", group=GRP_VSA, inline="s2")
+upthrust_base_score = input.float(2.5, "", group=GRP_VSA, inline="s2")
+enableShakeout = input.bool(true, "Shakeout", group=GRP_VSA, inline="s3")
+shakeout_base_score = input.float(2.2, "", group=GRP_VSA, inline="s3")
+enableSOS = input.bool(true, "Sign of Strength", group=GRP_VSA, inline="s4")
+sos_base_score = input.float(2.4, "", group=GRP_VSA, inline="s4")
+enableSOW = input.bool(true, "Sign of Weakness", group=GRP_VSA, inline="s5")
+sow_base_score = input.float(2.4, "", group=GRP_VSA, inline="s5")
+vsa_lookback = input.int(12, "Độ dài tìm H/L", group=GRP_VSA)
+vol_lookback = input.int(20, "Độ dài tính Vol TB", group=GRP_VSA)
+vol_multiplier = input.float(1.8, "Hệ số Vol Cao", group=GRP_VSA)
+
+// === CONFLUENCE FACTORS ===
+var string GRP_CONF = "📊 Yếu Tố Hội Tụ"
+trend_score = input.float(1.5, "Điểm cho Trend (EMA Kép)", group=GRP_CONF)
+emaFastLength = input.int(21, "EMA Nhanh", group=GRP_CONF)
+emaSlowLength = input.int(50, "EMA Chậm", group=GRP_CONF)
+macd_score = input.float(1.0, "Điểm cho MACD", group=GRP_CONF)
+fast_length = input.int(12, "MACD Fast", group=GRP_CONF)
+slow_length = input.int(26, "MACD Slow", group=GRP_CONF)
+signal_length = input.int(9, "MACD Signal", group=GRP_CONF)
+rsi_score = input.float(1.0, "Điểm cho RSI", group=GRP_CONF)
+rsiLength = input.int(14, "RSI Length", group=GRP_CONF)
+rsi_bullish_level = input.int(55, "Ngưỡng RSI Bullish", group=GRP_CONF)
+rsi_bearish_level = input.int(45, "Ngưỡng RSI Bearish", group=GRP_CONF)
+stoch_score = input.float(0.5, "Điểm cho Stochastic", group=GRP_CONF)
+stochLength = input.int(14, "Stoch Length", group=GRP_CONF)
+obv_score = input.float(1.0, "Điểm cho OBV", group=GRP_CONF)
+obvLength = input.int(20, "OBV EMA Length", group=GRP_CONF)
+
+// === FILTERS ===
+var string GRP_FILTER = "🔍 Filters"
+require_trend_align = input.bool(false, "Bắt buộc Thuận xu hướng", group=GRP_FILTER, tooltip="Nếu bật, chỉ các tín hiệu thuận với xu hướng EMA Kép mới được tính điểm.")
+
+// === PHẦN 2: CÁC HÀM TIỆN ÍCH ===
+f_safeDivision(n, d) => d > 0.00001 ? n / d : na
+
+var label[] signalLabels = array.new_label()
+// Add signal strength indicator
+f_getSignalStrength(score, threshold_a, threshold_astar) =>
+    strength = "WEAK"
+    if score >= threshold_astar
+        strength := "STRONG ⭐"
+    else if score >= threshold_a
+        strength := "MEDIUM"
+    strength
+
+// Enhance label management
+f_manageAndCreateLabel(isBullish, score, price) =>
+    if array.size(signalLabels) >= max_labels
+        label.delete(array.shift(signalLabels))
+    
+    strength = f_getSignalStrength(score, 
+                                 isBullish ? long_A_threshold : short_A_threshold,
+                                 isBullish ? long_A_star_threshold : short_A_star_threshold)
+    signalText = isBullish ? "L " + strength : "S " + strength
+    signalColor = strength == "STRONG ⭐" ? color.yellow : 
+                  isBullish ? color.green : color.red
+    
+    newLabel = label.new(bar_index, price, signalText, 
+                        yloc = isBullish ? yloc.belowbar : yloc.abovebar,
+                        style = isBullish ? label.style_label_up : label.style_label_down,
+                        color = color.new(signalColor, 20),
+                        textcolor = color.white,
+                        size = size.small)
+    array.push(signalLabels, newLabel)
+
+// === PHẦN 3: TÍNH TOÁN CÁC CHỈ BÁO & ĐIỀU KIỆN ===
+f_analyzeBar() =>
+    _range = high - low
+    _avgVol = ta.sma(volume, vol_lookback)
+    _isHighVol = volume > _avgVol * vol_multiplier
+    _location = f_safeDivision(close - low, _range)
+    [_isHighVol, nz(_location, 0.5)]
+
+[isHighVolume, closeLocation] = f_analyzeBar()
+fastEMA = ta.ema(close, emaFastLength)
+slowEMA = ta.ema(close, emaSlowLength)
+isTrendUp = fastEMA > slowEMA
+[macdLine, signalLine, histLine] = ta.macd(close, fast_length, slow_length, signal_length)
+isMacdBullish = macdLine > signalLine and histLine > 0 and histLine > histLine[1]
+isMacdBearish = macdLine < signalLine and histLine < 0 and histLine < histLine[1]
+rsi = ta.rsi(close, rsiLength)
+isRsiBullish = rsi > rsi_bullish_level
+isRsiBearish = rsi < rsi_bearish_level
+k = ta.sma(ta.stoch(close, high, low, stochLength), 3)
+d = ta.sma(k, 3)
+isStochBullish = k > d and k > k[1]
+isStochBearish = k < d and k < k[1]
+obv = ta.obv
+obvEma = ta.ema(obv, obvLength)
+isObvBullish = obv > obvEma
+isObvBearish = obv < obvEma
+
+// === PHẦN 4: BỘ NÃO TÍNH ĐIỂM (REFACTORED) ===
+f_calculateBullishScore() =>
+    score = 0.0
+    trigger = ""
+    lowestLow = ta.lowest(low, vsa_lookback)[1]
+    isSpring = enableSpring and close > lowestLow and low < lowestLow and isHighVolume
+    isShakeout = enableShakeout and close < open and isHighVolume and closeLocation > 0.6
+    isSOS = enableSOS and close > open and isHighVolume and closeLocation > 0.7
+    if isSpring or isShakeout or isSOS
+        score += isSpring ? spring_base_score : isShakeout ? shakeout_base_score : sos_base_score
+        trigger := isSpring ? "Spring" : isShakeout ? "Shakeout" : "SOS"
+        if require_trend_align and not isTrendUp
+            score := 0
+        else
+            score += isTrendUp ? trend_score : 0.0
+            score += isMacdBullish ? macd_score : 0.0
+            score += isRsiBullish ? rsi_score : 0.0
+            score += isStochBullish ? stoch_score : 0.0
+            score += isObvBullish ? obv_score : 0.0
+    [score, trigger]
+
+f_calculateBearishScore() =>
+    score = 0.0
+    trigger = ""
+    highestHigh = ta.highest(high, vsa_lookback)[1]
+    isUpthrust = enableUpthrust and close < highestHigh and high > highestHigh and isHighVolume
+    isSOW = enableSOW and close < open and isHighVolume and closeLocation < 0.3
+    if isUpthrust or isSOW
+        score += isUpthrust ? upthrust_base_score : sow_base_score
+        trigger := isUpthrust ? "Upthrust" : "SOW"
+        if require_trend_align and isTrendUp
+            score := 0
+        else
+            score += not isTrendUp ? trend_score : 0.0
+            score += isMacdBearish ? macd_score : 0.0
+            score += isRsiBearish ? rsi_score : 0.0
+            score += isStochBearish ? stoch_score : 0.0
+            score += isObvBearish ? obv_score : 0.0
+    [score, trigger]
+
+[bullishScore, bullishTrigger] = f_calculateBullishScore()
+[bearishScore, bearishTrigger] = f_calculateBearishScore()
+
+// === PHẦN 5: HIỂN THỊ & CẢNH BÁO ===
+if bullishScore > bearishScore and bullishScore >= long_A_threshold
+    f_manageAndCreateLabel(true, bullishScore, low)
+else if bearishScore > bullishScore and bearishScore >= short_A_threshold
+    f_manageAndCreateLabel(false, bearishScore, high)
+
+plot(show_ema ? fastEMA : na, "EMA Nhanh", color.new(color.aqua, 50))
+plot(show_ema ? slowEMA : na, "EMA Chậm", color.new(color.orange, 50))
+
+var table infoPanel = table.new(position.bottom_right, 2, 4, bgcolor=color.new(color.black, 70), border_width=1)
+if show_table and barstate.islast
+    finalTrigger = bullishScore > bearishScore ? bullishTrigger : bearishScore > bullishScore ? bearishTrigger : ""
+    
+    // GW v1.4.2 FIX: Sử dụng named arguments để đảm bảo cú pháp chính xác.
+    table.cell(table_id=infoPanel, column=0, row=0, text="CONFLUENCE", text_color=color.white, width=120)
+    table.cell(table_id=infoPanel, column=1, row=0, text="STATUS", text_color=color.white, width=120)
+    
+    table.cell(table_id=infoPanel, column=0, row=1, text="Trend", text_color=color.white)
+    table.cell(table_id=infoPanel, column=1, row=1, text=isTrendUp ? "Uptrend" : "Downtrend", text_color=isTrendUp ? color.green : color.red)
+    
+    table.cell(table_id=infoPanel, column=0, row=2, text="Trigger", text_color=color.white)
+    table.cell(table_id=infoPanel, column=1, row=2, text=finalTrigger, text_color=color.yellow)
+    
+    table.cell(table_id=infoPanel, column=0, row=3, text="Score (B/S)", text_color=color.white)
+    scoreText = str.tostring(bullishScore, "#.#") + " / " + str.tostring(bearishScore, "#.#")
+    bullColor = bullishScore > 0 ? color.new(color.green, 100 - math.min(90, int(bullishScore * 10))) : na
+    bearColor = bearishScore > 0 ? color.new(color.red, 100 - math.min(90, int(bearishScore * 10))) : na
+    finalColor = bullishScore > bearishScore ? bullColor : bearColor
+    table.cell(table_id=infoPanel, column=1, row=3, text=scoreText, bgcolor=finalColor, text_color=color.white)
+
+    // Add market context to dashboard
+    table.cell(table_id=infoPanel, column=0, row=4, text="Strength", text_color=color.white)
+    strength = bullishScore > bearishScore ? 
+        f_getSignalStrength(bullishScore, long_A_threshold, long_A_star_threshold) :
+        f_getSignalStrength(bearishScore, short_A_threshold, short_A_star_threshold)
+    table.cell(table_id=infoPanel, column=1, row=4, text=strength, 
+              text_color=strength == "STRONG ⭐" ? color.yellow : color.white)
+
+alert_bull_msg = "PICE Bullish Signal " + (bullishScore >= long_A_star_threshold ? "A⭐" : "A") + "\nTrigger: " + bullishTrigger + "\nScore: " + str.tostring(bullishScore, "#.#")
+alert_bear_msg = "PICE Bearish Signal " + (bearishScore >= short_A_star_threshold ? "A⭐" : "A") + "\nTrigger: " + bearishTrigger + "\nScore: " + str.tostring(bearishScore, "#.#")
+alertcondition(bullishScore > bearishScore and bullishScore >= long_A_threshold, "PICE Bullish Signal", alert_bull_msg)
+alertcondition(bearishScore > bullishScore and bearishScore >= short_A_threshold, "PICE Bearish Signal", alert_bear_msg)

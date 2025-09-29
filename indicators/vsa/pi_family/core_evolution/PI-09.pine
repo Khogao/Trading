@@ -1,0 +1,644 @@
+// © 2025 Gemini AI - PI v2.1 Fixed (No LinePool System)
+// @version=5
+indicator("PI v2.5 Claude", shorttitle="PI v2.5+C", overlay=true, max_labels_count=500)
+
+// === GREG'S WAY (GW) - PHẦN 0: KHAI BÁO & CẤU HÌNH CỐT LÕI ===
+var float VALUE_AREA_PERCENT = 0.7
+var float CLIMAX_VOL_THRESHOLD = 0.95
+var float DEFAULT_CLOSE_LOCATION = 0.5
+var float MIN_PRICE_RANGE = 0.00001
+var int VA_UPDATE_INTERVAL = 10
+var float VA_PRICE_MOVE_THRESHOLD = 0.03
+
+// Sửa khai báo type - mỗi field trên một dòng
+type BarAnalysis
+    bool isUp
+    bool isDown
+    bool isNarrow
+    bool isWide
+    bool isHighVol
+    bool isLowVol
+    float location
+
+// === PHẦN 1: BẢNG ĐIỀU KHIỂN & CÀI ĐẶT ===
+var string GRP_DISPLAY = "🎨 Giao Dien & Hien Thi"
+showInfoPanel = input.bool(false, "Bang Thong Tin", group=GRP_DISPLAY)
+dashboardPosition = input.string("top_right", "Vi tri Dashboard", options=["top_left", "top_center", "top_right", "middle_left", "middle_center", "middle_right", "bottom_left", "bottom_center", "bottom_right"], group=GRP_DISPLAY)
+showBackground = input.bool(false, "To Nen Tin Hieu Manh", group=GRP_DISPLAY)
+showScoreOnBars = input.bool(false, "Hien Thi Diem VSA", group=GRP_DISPLAY)
+
+var string GRP_SCORE_LABEL = "📊 Tùy Chỉnh Nhãn Điểm VSA"
+scoreLabelOffset = input.float(0.2, "Khoảng cách (x ATR)", group=GRP_SCORE_LABEL, minval=0, step=0.05)
+scoreLabelBullColor = input.color(color.new(color.green, 25), "Màu điểm Tăng", group=GRP_SCORE_LABEL)
+scoreLabelBearColor = input.color(color.new(color.red, 25), "Màu điểm Giảm", group=GRP_SCORE_LABEL)
+
+var string GRP_VP = "📊 Value Area"
+showVALines = input.bool(true, "Hien thi POC, VAH, VAL", group=GRP_VP)
+vpLookback = input.int(50, "Do dai tinh VA", group=GRP_VP, minval=20, maxval=200)
+vpProximityPercent = input.float(0.3, "Bien do Tim kiem quanh VA (%)", group=GRP_VP, minval=0.1, maxval=2.0, step=0.1)
+
+var string GRP_TR_LINES = "📈 Duong Trading Range"
+showTRLines = input.bool(true, "Ve Duong S/R tu dong", group=GRP_TR_LINES)
+trLineOffset = input.int(20, "Do dai ke duong", group=GRP_TR_LINES, minval=5, maxval=50)
+
+var string GRP_SIGNALS = "🎯 Cau Hinh Tin Hieu"
+// === INPUT MTF CHO TỪNG TF ===
+inputLookbackH_L_1m  = input.int(9,  "Lookback H/L 1m", group="Preset 1m")
+inputLookbackH_L_5m  = input.int(14, "Lookback H/L 5m", group="Preset 5m")
+inputLookbackH_L_15m = input.int(14, "Lookback H/L 15m", group="Preset 15m")
+inputLookbackH_L_30m = input.int(14, "Lookback H/L 30m", group="Preset 30m")
+inputLookbackH_L_1h  = input.int(14, "Lookback H/L 1h", group="Preset 1h")
+inputLookbackH_L_4h  = input.int(18, "Lookback H/L 4h", group="Preset 4h")
+inputLookbackH_L_1d  = input.int(20, "Lookback H/L 1d", group="Preset 1d")
+
+inputBearCloseLoc_1m  = input.float(0.4,  "Bear Close Loc 1m", group="Preset 1m", step=0.01)
+inputBearCloseLoc_5m  = input.float(0.4,  "Bear Close Loc 5m", group="Preset 5m", step=0.01)
+inputBearCloseLoc_15m = input.float(0.4,  "Bear Close Loc 15m", group="Preset 15m", step=0.01)
+inputBearCloseLoc_30m = input.float(0.4,  "Bear Close Loc 30m", group="Preset 30m", step=0.01)
+inputBearCloseLoc_1h  = input.float(0.4,  "Bear Close Loc 1h", group="Preset 1h", step=0.01)
+inputBearCloseLoc_4h  = input.float(0.4,  "Bear Close Loc 4h", group="Preset 4h", step=0.01)
+inputBearCloseLoc_1d  = input.float(0.4,  "Bear Close Loc 1d", group="Preset 1d", step=0.01)
+
+inputBullCloseLoc_1m  = input.float(0.6,  "Bull Close Loc 1m", group="Preset 1m", step=0.01)
+inputBullCloseLoc_5m  = input.float(0.6,  "Bull Close Loc 5m", group="Preset 5m", step=0.01)
+inputBullCloseLoc_15m = input.float(0.6,  "Bull Close Loc 15m", group="Preset 15m", step=0.01)
+inputBullCloseLoc_30m = input.float(0.6,  "Bull Close Loc 30m", group="Preset 30m", step=0.01)
+inputBullCloseLoc_1h  = input.float(0.6,  "Bull Close Loc 1h", group="Preset 1h", step=0.01)
+inputBullCloseLoc_4h  = input.float(0.6,  "Bull Close Loc 4h", group="Preset 4h", step=0.01)
+inputBullCloseLoc_1d  = input.float(0.6,  "Bull Close Loc 1d", group="Preset 1d", step=0.01)
+
+// --- LẤY INPUT THEO TF HIỆN TẠI ---
+lookbackH_L = timeframe.period == "1"  ? inputLookbackH_L_1m  :
+              timeframe.period == "5"  ? inputLookbackH_L_5m  :
+              timeframe.period == "15" ? inputLookbackH_L_15m :
+              timeframe.period == "30" ? inputLookbackH_L_30m :
+              timeframe.period == "60" ? inputLookbackH_L_1h  :
+              timeframe.period == "240" ? inputLookbackH_L_4h :
+              timeframe.isdaily or timeframe.isweekly or timeframe.ismonthly or timeframe.isyearly ? inputLookbackH_L_1d : 12
+
+volLookback = timeframe.period == "1"  ? inputVolLookback_1m  :
+              timeframe.period == "5"  ? inputVolLookback_5m  :
+              timeframe.period == "15" ? inputVolLookback_15m :
+              timeframe.period == "30" ? inputVolLookback_30m :
+              timeframe.period == "60" ? inputVolLookback_1h  :
+              timeframe.period == "240" ? inputVolLookback_4h :
+              timeframe.isdaily or timeframe.isweekly or timeframe.ismonthly or timeframe.isyearly ? inputVolLookback_1d : 20
+
+volMultiplier = timeframe.period == "1"  ? inputVolMultiplier_1m  :
+                timeframe.period == "5"  ? inputVolMultiplier_5m  :
+                timeframe.period == "15" ? inputVolMultiplier_15m :
+                timeframe.period == "30" ? inputVolMultiplier_30m :
+                timeframe.period == "60" ? inputVolMultiplier_1h  :
+                timeframe.period == "240" ? inputVolMultiplier_4h :
+                timeframe.isdaily or timeframe.isweekly or timeframe.ismonthly or timeframe.isyearly ? inputVolMultiplier_1d : 1.8
+
+lowVolMultiplier = timeframe.period == "1"  ? inputLowVolMultiplier_1m  :
+                   timeframe.period == "5"  ? inputLowVolMultiplier_5m  :
+                   timeframe.period == "15" ? inputLowVolMultiplier_15m :
+                   timeframe.period == "30" ? inputLowVolMultiplier_30m :
+                   timeframe.period == "60" ? inputLowVolMultiplier_1h  :
+                   timeframe.period == "240" ? inputLowVolMultiplier_4h :
+                   timeframe.isdaily or timeframe.isweekly or timeframe.ismonthly or timeframe.isyearly ? inputLowVolMultiplier_1d : 0.6
+
+climaxLookback = timeframe.period == "1"  ? inputClimaxLookback_1m  :
+                 timeframe.period == "5"  ? inputClimaxLookback_5m  :
+                 timeframe.period == "15" ? inputClimaxLookback_15m :
+                 timeframe.period == "30" ? inputClimaxLookback_30m :
+                 timeframe.period == "60" ? inputClimaxLookback_1h  :
+                 timeframe.period == "240" ? inputClimaxLookback_4h :
+                 timeframe.isdaily or timeframe.isweekly or timeframe.ismonthly or timeframe.isyearly ? inputClimaxLookback_1d : 40
+
+scoreLookback = timeframe.period == "1"  ? inputScoreLookback_1m  :
+                timeframe.period == "5"  ? inputScoreLookback_5m  :
+                timeframe.period == "15" ? inputScoreLookback_15m :
+                timeframe.period == "30" ? inputScoreLookback_30m :
+                timeframe.period == "60" ? inputScoreLookback_1h  :
+                timeframe.period == "240" ? inputScoreLookback_4h :
+                timeframe.isdaily or timeframe.isweekly or timeframe.ismonthly or timeframe.isyearly ? inputScoreLookback_1d : 10
+
+narrowRangeFactor = timeframe.period == "1"  ? inputNarrowRangeFactor_1m  :
+                   timeframe.period == "5"  ? inputNarrowRangeFactor_5m  :
+                   timeframe.period == "15" ? inputNarrowRangeFactor_15m :
+                   timeframe.period == "30" ? inputNarrowRangeFactor_30m :
+                   timeframe.period == "60" ? inputNarrowRangeFactor_1h  :
+                   timeframe.period == "240" ? inputNarrowRangeFactor_4h :
+                   timeframe.isdaily or timeframe.isweekly or timeframe.ismonthly or timeframe.isyearly ? inputNarrowRangeFactor_1d : 0.7
+
+wideRangeFactor = timeframe.period == "1"  ? inputWideRangeFactor_1m  :
+                  timeframe.period == "5"  ? inputWideRangeFactor_5m  :
+                  timeframe.period == "15" ? inputWideRangeFactor_15m :
+                  timeframe.period == "30" ? inputWideRangeFactor_30m :
+                  timeframe.period == "60" ? inputWideRangeFactor_1h  :
+                  timeframe.period == "240" ? inputWideRangeFactor_4h :
+                  timeframe.isdaily or timeframe.isweekly or timeframe.ismonthly or timeframe.isyearly ? inputWideRangeFactor_1d : 1.3
+
+bullishCloseLocation = timeframe.period == "1"  ? inputBullCloseLoc_1m  :
+                      timeframe.period == "5"  ? inputBullCloseLoc_5m  :
+                      timeframe.period == "15" ? inputBullCloseLoc_15m :
+                      timeframe.period == "30" ? inputBullCloseLoc_30m :
+                      timeframe.period == "60" ? inputBullCloseLoc_1h  :
+                      timeframe.period == "240" ? inputBullCloseLoc_4h :
+                      timeframe.isdaily or timeframe.isweekly or timeframe.ismonthly or timeframe.isyearly ? inputBullCloseLoc_1d : 0.6
+
+bearishCloseLocation = timeframe.period == "1"  ? inputBearCloseLoc_1m  :
+                       timeframe.period == "5"  ? inputBearCloseLoc_5m  :
+                       timeframe.period == "15" ? inputBearCloseLoc_15m :
+                       timeframe.period == "30" ? inputBearCloseLoc_30m :
+                       timeframe.period == "60" ? inputBearCloseLoc_1h  :
+                       timeframe.period == "240" ? inputBearCloseLoc_4h :
+                       timeframe.isdaily or timeframe.isweekly or timeframe.ismonthly or timeframe.isyearly ? inputBearCloseLoc_1d : 0.4
+enableSpringUpthrust = input.bool(true, "Spring & Upthrust", group=GRP_SIGNALS)
+enableClimacticVol = input.bool(true, "Volume Cuc Dai (Climax)", group=GRP_SIGNALS)
+enableNoSupplyDemand = input.bool(true, "No Supply & No Demand", group=GRP_SIGNALS)
+enableStoppingVol = input.bool(true, "Stopping Volume", group=GRP_SIGNALS)
+enableEffortVsResult = input.bool(true, "No Luc vs Ket Qua", group=GRP_SIGNALS)
+enableShakeout = input.bool(true, "Shakeout", group=GRP_SIGNALS)
+enableSOS_SOW = input.bool(true, "Sign of Strength/Weakness", group=GRP_SIGNALS)
+enableTestBar = input.bool(true, "Test Bar", group=GRP_SIGNALS)
+
+// === INPUT MTF CHO TỪNG TF (CHỈ KHAI BÁO 1 LẦN, LIÊN TỤC) ===
+inputLookbackH_L_1m  = input.int(9,  "Lookback H/L 1m", group="Preset 1m")
+inputLookbackH_L_5m  = input.int(14, "Lookback H/L 5m", group="Preset 5m")
+inputLookbackH_L_15m = input.int(14, "Lookback H/L 15m", group="Preset 15m")
+inputLookbackH_L_30m = input.int(14, "Lookback H/L 30m", group="Preset 30m")
+inputLookbackH_L_1h  = input.int(14, "Lookback H/L 1h", group="Preset 1h")
+inputLookbackH_L_4h  = input.int(18, "Lookback H/L 4h", group="Preset 4h")
+inputLookbackH_L_1d  = input.int(20, "Lookback H/L 1d", group="Preset 1d")
+
+inputVolLookback_1m  = input.int(9, "Vol Lookback 1m", group="Preset 1m")
+inputVolLookback_5m  = input.int(14, "Vol Lookback 5m", group="Preset 5m")
+inputVolLookback_15m = input.int(20, "Vol Lookback 15m", group="Preset 15m")
+inputVolLookback_30m = input.int(20, "Vol Lookback 30m", group="Preset 30m")
+inputVolLookback_1h  = input.int(20, "Vol Lookback 1h", group="Preset 1h")
+inputVolLookback_4h  = input.int(32, "Vol Lookback 4h", group="Preset 4h")
+inputVolLookback_1d  = input.int(36, "Vol Lookback 1d", group="Preset 1d")
+
+inputVolMultiplier_1m  = input.float(2.2, "Vol Multiplier 1m", group="Preset 1m")
+inputVolMultiplier_5m  = input.float(2.0, "Vol Multiplier 5m", group="Preset 5m")
+inputVolMultiplier_15m = input.float(1.8, "Vol Multiplier 15m", group="Preset 15m")
+inputVolMultiplier_30m = input.float(1.7, "Vol Multiplier 30m", group="Preset 30m")
+inputVolMultiplier_1h  = input.float(1.6, "Vol Multiplier 1h", group="Preset 1h")
+inputVolMultiplier_4h  = input.float(1.5, "Vol Multiplier 4h", group="Preset 4h")
+inputVolMultiplier_1d  = input.float(1.5, "Vol Multiplier 1d", group="Preset 1d")
+
+inputLowVolMultiplier_1m  = input.float(0.7,  "Low Vol Multiplier 1m", group="Preset 1m")
+inputLowVolMultiplier_5m  = input.float(0.65, "Low Vol Multiplier 5m", group="Preset 5m")
+inputLowVolMultiplier_15m = input.float(0.6,  "Low Vol Multiplier 15m", group="Preset 15m")
+inputLowVolMultiplier_30m = input.float(0.6,  "Low Vol Multiplier 30m", group="Preset 30m")
+inputLowVolMultiplier_1h  = input.float(0.55, "Low Vol Multiplier 1h", group="Preset 1h")
+inputLowVolMultiplier_4h  = input.float(0.5,  "Low Vol Multiplier 4h", group="Preset 4h")
+inputLowVolMultiplier_1d  = input.float(0.5,  "Low Vol Multiplier 1d", group="Preset 1d")
+
+inputClimaxLookback_1m  = input.int(20,  "Climax Lookback 1m", group="Preset 1m")
+inputClimaxLookback_5m  = input.int(28,  "Climax Lookback 5m", group="Preset 5m")
+inputClimaxLookback_15m = input.int(40,  "Climax Lookback 15m", group="Preset 15m")
+inputClimaxLookback_30m = input.int(48,  "Climax Lookback 30m", group="Preset 30m")
+inputClimaxLookback_1h  = input.int(56,  "Climax Lookback 1h", group="Preset 1h")
+inputClimaxLookback_4h  = input.int(64,  "Climax Lookback 4h", group="Preset 4h")
+inputClimaxLookback_1d  = input.int(80,  "Climax Lookback 1d", group="Preset 1d")
+
+inputScoreLookback_1m  = input.int(6,  "Score Lookback 1m", group="Preset 1m")
+inputScoreLookback_5m  = input.int(8,  "Score Lookback 5m", group="Preset 5m")
+inputScoreLookback_15m = input.int(10, "Score Lookback 15m", group="Preset 15m")
+inputScoreLookback_30m = input.int(12, "Score Lookback 30m", group="Preset 30m")
+inputScoreLookback_1h  = input.int(14, "Score Lookback 1h", group="Preset 1h")
+inputScoreLookback_4h  = input.int(16, "Score Lookback 4h", group="Preset 4h")
+inputScoreLookback_1d  = input.int(18, "Score Lookback 1d", group="Preset 1d")
+
+inputNarrowRangeFactor_1m  = input.float(0.8,  "Narrow Range Factor 1m", group="Preset 1m")
+inputNarrowRangeFactor_5m  = input.float(0.75, "Narrow Range Factor 5m", group="Preset 5m")
+inputNarrowRangeFactor_15m = input.float(0.7,  "Narrow Range Factor 15m", group="Preset 15m")
+inputNarrowRangeFactor_30m = input.float(0.7,  "Narrow Range Factor 30m", group="Preset 30m")
+inputNarrowRangeFactor_1h  = input.float(0.65, "Narrow Range Factor 1h", group="Preset 1h")
+inputNarrowRangeFactor_4h  = input.float(0.6,  "Narrow Range Factor 4h", group="Preset 4h")
+inputNarrowRangeFactor_1d  = input.float(0.6,  "Narrow Range Factor 1d", group="Preset 1d")
+
+inputWideRangeFactor_1m  = input.float(1.5,  "Wide Range Factor 1m", group="Preset 1m")
+inputWideRangeFactor_5m  = input.float(1.4,  "Wide Range Factor 5m", group="Preset 5m")
+inputWideRangeFactor_15m = input.float(1.3,  "Wide Range Factor 15m", group="Preset 15m")
+inputWideRangeFactor_30m = input.float(1.25, "Wide Range Factor 30m", group="Preset 30m")
+inputWideRangeFactor_1h  = input.float(1.2,  "Wide Range Factor 1h", group="Preset 1h")
+inputWideRangeFactor_4h  = input.float(1.15, "Wide Range Factor 4h", group="Preset 4h")
+inputWideRangeFactor_1d  = input.float(1.15, "Wide Range Factor 1d", group="Preset 1d")
+
+inputBullCloseLoc_1m  = input.float(0.6,  "Bull Close Loc 1m", group="Preset 1m", step=0.01)
+inputBullCloseLoc_5m  = input.float(0.6,  "Bull Close Loc 5m", group="Preset 5m", step=0.01)
+inputBullCloseLoc_15m = input.float(0.6,  "Bull Close Loc 15m", group="Preset 15m", step=0.01)
+inputBullCloseLoc_30m = input.float(0.6,  "Bull Close Loc 30m", group="Preset 30m", step=0.01)
+inputBullCloseLoc_1h  = input.float(0.6,  "Bull Close Loc 1h", group="Preset 1h", step=0.01)
+inputBullCloseLoc_4h  = input.float(0.6,  "Bull Close Loc 4h", group="Preset 4h", step=0.01)
+inputBullCloseLoc_1d  = input.float(0.6,  "Bull Close Loc 1d", group="Preset 1d", step=0.01)
+
+inputBearCloseLoc_1m  = input.float(0.4,  "Bear Close Loc 1m", group="Preset 1m", step=0.01)
+inputBearCloseLoc_5m  = input.float(0.4,  "Bear Close Loc 5m", group="Preset 5m", step=0.01)
+inputBearCloseLoc_15m = input.float(0.4,  "Bear Close Loc 15m", group="Preset 15m", step=0.01)
+inputBearCloseLoc_30m = input.float(0.4,  "Bear Close Loc 30m", group="Preset 30m", step=0.01)
+inputBearCloseLoc_1h  = input.float(0.4,  "Bear Close Loc 1h", group="Preset 1h", step=0.01)
+inputBearCloseLoc_4h  = input.float(0.4,  "Bear Close Loc 4h", group="Preset 4h", step=0.01)
+inputBearCloseLoc_1d  = input.float(0.4,  "Bear Close Loc 1d", group="Preset 1d", step=0.01)
+
+
+
+inputVolLookback_1m  = input.int(9, "Vol Lookback 1m", group="Preset 1m")
+inputVolLookback_5m  = input.int(14, "Vol Lookback 5m", group="Preset 5m")
+inputVolLookback_15m = input.int(20, "Vol Lookback 15m", group="Preset 15m")
+inputVolLookback_30m = input.int(20, "Vol Lookback 30m", group="Preset 30m")
+inputVolLookback_1h  = input.int(20, "Vol Lookback 1h", group="Preset 1h")
+inputVolLookback_4h  = input.int(32, "Vol Lookback 4h", group="Preset 4h")
+inputVolLookback_1d  = input.int(36, "Vol Lookback 1d", group="Preset 1d")
+
+inputVolMultiplier_1m  = input.float(2.2, "Vol Multiplier 1m", group="Preset 1m")
+inputVolMultiplier_5m  = input.float(2.0, "Vol Multiplier 5m", group="Preset 5m")
+inputVolMultiplier_15m = input.float(1.8, "Vol Multiplier 15m", group="Preset 15m")
+inputVolMultiplier_30m = input.float(1.7, "Vol Multiplier 30m", group="Preset 30m")
+inputVolMultiplier_1h  = input.float(1.6, "Vol Multiplier 1h", group="Preset 1h")
+inputVolMultiplier_4h  = input.float(1.5, "Vol Multiplier 4h", group="Preset 4h")
+inputVolMultiplier_1d  = input.float(1.5, "Vol Multiplier 1d", group="Preset 1d")
+
+inputLowVolMultiplier_1m  = input.float(0.7,  "Low Vol Multiplier 1m", group="Preset 1m")
+inputLowVolMultiplier_5m  = input.float(0.65, "Low Vol Multiplier 5m", group="Preset 5m")
+inputLowVolMultiplier_15m = input.float(0.6,  "Low Vol Multiplier 15m", group="Preset 15m")
+inputLowVolMultiplier_30m = input.float(0.6,  "Low Vol Multiplier 30m", group="Preset 30m")
+inputLowVolMultiplier_1h  = input.float(0.55, "Low Vol Multiplier 1h", group="Preset 1h")
+inputLowVolMultiplier_4h  = input.float(0.5,  "Low Vol Multiplier 4h", group="Preset 4h")
+inputLowVolMultiplier_1d  = input.float(0.5,  "Low Vol Multiplier 1d", group="Preset 1d")
+
+inputClimaxLookback_1m  = input.int(20,  "Climax Lookback 1m", group="Preset 1m")
+inputClimaxLookback_5m  = input.int(28,  "Climax Lookback 5m", group="Preset 5m")
+inputClimaxLookback_15m = input.int(40,  "Climax Lookback 15m", group="Preset 15m")
+inputClimaxLookback_30m = input.int(48,  "Climax Lookback 30m", group="Preset 30m")
+inputClimaxLookback_1h  = input.int(56,  "Climax Lookback 1h", group="Preset 1h")
+inputClimaxLookback_4h  = input.int(64,  "Climax Lookback 4h", group="Preset 4h")
+inputClimaxLookback_1d  = input.int(80,  "Climax Lookback 1d", group="Preset 1d")
+
+inputScoreLookback_1m  = input.int(6,  "Score Lookback 1m", group="Preset 1m")
+inputScoreLookback_5m  = input.int(8,  "Score Lookback 5m", group="Preset 5m")
+inputScoreLookback_15m = input.int(10, "Score Lookback 15m", group="Preset 15m")
+inputScoreLookback_30m = input.int(12, "Score Lookback 30m", group="Preset 30m")
+inputScoreLookback_1h  = input.int(14, "Score Lookback 1h", group="Preset 1h")
+inputScoreLookback_4h  = input.int(16, "Score Lookback 4h", group="Preset 4h")
+inputScoreLookback_1d  = input.int(18, "Score Lookback 1d", group="Preset 1d")
+
+inputNarrowRangeFactor_1m  = input.float(0.8,  "Narrow Range Factor 1m", group="Preset 1m")
+inputNarrowRangeFactor_5m  = input.float(0.75, "Narrow Range Factor 5m", group="Preset 5m")
+inputNarrowRangeFactor_15m = input.float(0.7,  "Narrow Range Factor 15m", group="Preset 15m")
+inputNarrowRangeFactor_30m = input.float(0.7,  "Narrow Range Factor 30m", group="Preset 30m")
+inputNarrowRangeFactor_1h  = input.float(0.65, "Narrow Range Factor 1h", group="Preset 1h")
+inputNarrowRangeFactor_4h  = input.float(0.6,  "Narrow Range Factor 4h", group="Preset 4h")
+inputNarrowRangeFactor_1d  = input.float(0.6,  "Narrow Range Factor 1d", group="Preset 1d")
+
+inputWideRangeFactor_1m  = input.float(1.5,  "Wide Range Factor 1m", group="Preset 1m")
+inputWideRangeFactor_5m  = input.float(1.4,  "Wide Range Factor 5m", group="Preset 5m")
+inputWideRangeFactor_15m = input.float(1.3,  "Wide Range Factor 15m", group="Preset 15m")
+inputWideRangeFactor_30m = input.float(1.25, "Wide Range Factor 30m", group="Preset 30m")
+inputWideRangeFactor_1h  = input.float(1.2,  "Wide Range Factor 1h", group="Preset 1h")
+inputWideRangeFactor_4h  = input.float(1.15, "Wide Range Factor 4h", group="Preset 4h")
+inputWideRangeFactor_1d  = input.float(1.15, "Wide Range Factor 1d", group="Preset 1d")
+
+inputBullCloseLoc_1m  = input.float(0.6,  "Bull Close Loc 1m", group="Preset 1m", step=0.01)
+inputBullCloseLoc_5m  = input.float(0.6,  "Bull Close Loc 5m", group="Preset 5m", step=0.01)
+inputBullCloseLoc_15m = input.float(0.6,  "Bull Close Loc 15m", group="Preset 15m", step=0.01)
+inputBullCloseLoc_30m = input.float(0.6,  "Bull Close Loc 30m", group="Preset 30m", step=0.01)
+inputBullCloseLoc_1h  = input.float(0.6,  "Bull Close Loc 1h", group="Preset 1h", step=0.01)
+
+bearishCloseLocation = timeframe.period == "1"  ? inputBearCloseLoc_1m  :
+                       timeframe.period == "5"  ? inputBearCloseLoc_5m  :
+                       timeframe.period == "15" ? inputBearCloseLoc_15m :
+                       timeframe.period == "30" ? inputBearCloseLoc_30m :
+                       timeframe.period == "60" ? inputBearCloseLoc_1h  :
+                       timeframe.period == "240" ? inputBearCloseLoc_4h :
+                       timeframe.isdaily or timeframe.isweekly or timeframe.ismonthly or timeframe.isyearly ? inputBearCloseLoc_1d : 0.4
+
+var string GRP_TREND = "🌊 He Thong Dan Duong"
+useDualEMA = input.bool(true, "Su dung He thong EMA Kep", group=GRP_TREND)
+emaFastLength = input.int(21, "EMA Nhanh", group=GRP_TREND)
+emaFastColor = input.color(color.aqua, "Màu", group=GRP_TREND)
+emaSlowLength = input.int(50, "EMA Cham", group=GRP_TREND)
+emaSlowColor = input.color(color.orange, "Màu", group=GRP_TREND)
+showEmaCloud = input.bool(true, "Hien thi Dam may Xu huong", group=GRP_TREND)
+useEma200 = input.bool(true, "Su dung EMA 200 (Boi canh)", group=GRP_TREND)
+emaLength200 = input.int(200, "EMA 200", group=GRP_TREND)
+ema200Color = input.color(color.gray, "Màu", group=GRP_TREND)
+
+// === PHẦN 2: KHỞI TẠO & HÀM TIỆN ÍCH ===
+var float cached_dPOC = na
+var float cached_dVAH = na
+var float cached_dVAL = na
+var int last_va_bar = 0
+var bool va_cache_valid = false
+
+f_safeDivision(n, d) => d > MIN_PRICE_RANGE ? n / d : na
+
+// Sửa hàm f_safeSum - cú pháp vòng lặp for
+f_safeSum(source, length) =>
+    _sum = 0.0
+    lookback_len = math.min(length - 1, bar_index)
+    if lookback_len >= 0
+        for i = 0 to lookback_len
+            _sum += nz(source[i])
+    _sum
+
+// Helper: nối chuỗi cho mảng string (thay array.join)
+f_join(arr_id, sep) =>
+    _txt = ""
+    arr_sz = array.size(arr_id)
+    if arr_sz > 0
+        for i = 0 to arr_sz - 1
+            _txt += array.get(arr_id, i)
+            if i < arr_sz - 1
+                _txt += sep
+    _txt
+
+// Helper: percentile volume trong lookback
+f_vol_percentile(len) =>
+    float rank = 0.0
+    for i = 1 to len
+        rank += volume > volume[i] ? 1.0 : 0.0
+    rank / len * 100.0
+
+f_analyzeBar() =>
+    _range = high - low
+    _avgVolume = ta.sma(volume, volLookback)
+    _isNarrow = _range < ta.sma(_range, volLookback) * narrowRangeFactor
+    _isWide = _range > ta.sma(_range, volLookback) * wideRangeFactor
+    _isHighVol = volume > _avgVolume * volMultiplier
+    _isLowVol = volume < _avgVolume * lowVolMultiplier
+    _location = f_safeDivision(close - low, _range)
+    BarAnalysis.new(close > open, close < open, _isNarrow, _isWide, _isHighVol, _isLowVol, nz(_location, 0.5))
+
+f_isNearVA(price) =>
+    if not va_cache_valid or na(cached_dPOC)
+        false
+    else
+        pocDiff = f_safeDivision(math.abs(price - cached_dPOC), cached_dPOC)
+        vahDiff = f_safeDivision(math.abs(price - cached_dVAH), cached_dVAH)
+        valDiff = f_safeDivision(math.abs(price - cached_dVAL), cached_dVAL)
+        (not na(pocDiff) and pocDiff < vpProximityPercent / 100) or (not na(vahDiff) and vahDiff < vpProximityPercent / 100) or (not na(valDiff) and valDiff < vpProximityPercent / 100)
+
+f_calculateValueArea() =>
+    rowCount = 200
+    lookback_high = ta.highest(high, vpLookback)
+    lookback_low = ta.lowest(low, vpLookback)
+    step_price = f_safeDivision(lookback_high - lookback_low, rowCount - 1)
+    
+    if na(step_price) or step_price <= MIN_PRICE_RANGE
+        [close, lookback_high, lookback_low]
+    else
+        price_rows = array.new<float>(rowCount, 0)
+        volume_rows = array.new<float>(rowCount, 0)
+        array.fill(volume_rows, 0)
+        
+        for i = 0 to rowCount - 1
+            array.set(price_rows, i, lookback_low + step_price * i)
+        
+        total_volume = 0.0
+        for i = 0 to math.min(vpLookback - 1, bar_index)
+            bar_high = high[i]
+            bar_low = low[i]
+            bar_vol = nz(volume[i])
+            total_volume += bar_vol
+            
+            start_index = math.max(0, math.round(f_safeDivision(bar_low - lookback_low, step_price)))
+            end_index = math.min(rowCount - 1, math.round(f_safeDivision(bar_high - lookback_low, step_price)))
+            
+            if start_index <= end_index
+                rows_in_bar = end_index - start_index + 1
+                vol_per_row = bar_vol / rows_in_bar
+                for j = start_index to end_index
+                    current_vol = array.get(volume_rows, j)
+                    array.set(volume_rows, j, current_vol + vol_per_row)
+        
+        poc_volume = array.max(volume_rows)
+        poc_index = na(poc_volume) ? na : array.indexof(volume_rows, poc_volume)
+        _dPOC = na(poc_index) ? close : array.get(price_rows, poc_index)
+        
+        va_volume_target = total_volume * VALUE_AREA_PERCENT
+        va_volume_current = nz(poc_volume)
+        up_index = nz(poc_index, 0) + 1
+        down_index = nz(poc_index, 0) - 1
+        
+        while va_volume_current < va_volume_target and (up_index < rowCount or down_index >= 0)
+            vol_up = up_index < rowCount ? array.get(volume_rows, up_index) : 0
+            vol_down = down_index >= 0 ? array.get(volume_rows, down_index) : 0
+            
+            if vol_up == 0 and vol_down == 0
+                break
+                
+            if vol_up >= vol_down and up_index < rowCount
+                va_volume_current += vol_up
+                up_index += 1
+            else if down_index >= 0
+                va_volume_current += vol_down
+                down_index -= 1
+            else
+                up_index += 1
+        
+        _dVAH = up_index > nz(poc_index, 0) ? array.get(price_rows, math.min(rowCount - 1, up_index - 1)) : _dPOC
+        _dVAL = down_index < nz(poc_index, 0) ? array.get(price_rows, math.max(0, down_index + 1)) : _dPOC
+        
+        if _dVAH < _dPOC
+            _dVAH := _dPOC + (step_price * 5)
+        if _dVAL > _dPOC
+            _dVAL := _dPOC - (step_price * 5)
+        
+        [_dPOC, _dVAH, _dVAL]
+
+// === PHẦN 3: VÒNG LẶP TÍNH TOÁN CHÍNH ===
+bar = f_analyzeBar()
+fastEMA = ta.ema(close, emaFastLength)
+slowEMA = ta.ema(close, emaSlowLength)
+ema200 = ta.ema(close, emaLength200)
+isUptrend = useDualEMA ? fastEMA > slowEMA : close > ema200
+
+lowest_low_val = ta.lowest(low, lookbackH_L)[1]
+highest_high_val = ta.highest(high, lookbackH_L)[1]
+highest_vol_val = ta.highest(volume, climaxLookback)
+
+atr14 = ta.atr(14)
+avgRange = ta.sma(high - low, volLookback)
+isWideNow = (high - low) > avgRange * wideRangeFactor
+isNarrowNow = (high - low) < avgRange * narrowRangeFactor
+volPR = f_vol_percentile(climaxLookback)
+
+// Update VA mỗi bar để đảm bảo luôn có data
+[newPOC, newVAH, newVAL] = f_calculateValueArea()
+if not na(newPOC)
+    cached_dPOC := newPOC
+    cached_dVAH := newVAH
+    cached_dVAL := newVAL
+    va_cache_valid := true
+    last_va_bar := bar_index
+
+float barScore = 0.0
+
+// Sửa khởi tạo array
+var bullish_signals_on_bar = array.new<string>()
+var bearish_signals_on_bar = array.new<string>()
+
+array.clear(bullish_signals_on_bar)
+array.clear(bearish_signals_on_bar)
+
+// Khởi tạo cờ tín hiệu
+bool isSpring = false
+bool isUpthrust = false
+bool isSellingClimax = false
+bool isBuyingClimax = false
+bool isStoppingVol = false
+bool isEffortVsFall = false
+bool isEffortVsRise = false
+bool isShakeout = false
+bool isSOS = false
+bool isSOW = false
+bool isTestBar = false
+bool isNoSupply = false
+bool isNoDemand = false
+
+// VSA SIGNAL DETECTION (tinh chỉnh logic, không đổi tính năng)
+if barstate.isconfirmed
+    // SPRING / UPTHRUST
+    isSpring := enableSpringUpthrust and bar.isDown and low < lowest_low_val and close > lowest_low_val and bar.location > bullishCloseLocation and bar.isHighVol and isWideNow
+    isUpthrust := enableSpringUpthrust and bar.isUp and high > highest_high_val and close < highest_high_val and bar.location < bearishCloseLocation and bar.isHighVol and isWideNow
+    
+    // CLIMAX theo percentile
+    isSellingClimax := enableClimacticVol and bar.isDown and isWideNow and volPR >= 95
+    isBuyingClimax  := enableClimacticVol and bar.isUp   and isWideNow and volPR >= 95
+
+    // STOPPING VOLUME
+    isStoppingVol := enableStoppingVol and bar.isDown and (bar.isHighVol or volPR >= 85) and bar.location >= bullishCloseLocation and (high - low) >= avgRange
+
+    // EFFORT vs RESULT
+    isEffortVsFall := enableEffortVsResult and bar.isDown and (bar.isHighVol or volPR >= 75) and isNarrowNow
+    isEffortVsRise := enableEffortVsResult and bar.isUp   and (bar.isHighVol or volPR >= 75) and isNarrowNow
+
+    // SOS / SOW với VA
+    isSOS := enableSOS_SOW and bar.isUp and (bar.isHighVol or volPR >= 75) and bar.location > 0.7 and (va_cache_valid ? (close > nz(cached_dVAH, cached_dPOC)) : true)
+    isSOW := enableSOS_SOW and bar.isDown and (bar.isHighVol or volPR >= 75) and bar.location < 0.3 and (va_cache_valid ? (close < nz(cached_dVAL, cached_dPOC)) : true)
+
+    // NO SUPPLY / NO DEMAND
+    isNoSupply := enableNoSupplyDemand and bar.isDown and isNarrowNow and (volume < math.min(volume[1], volume[2]) * 0.9)
+    isNoDemand := enableNoSupplyDemand and bar.isUp   and isNarrowNow and (volume < math.min(volume[1], volume[2]) * 0.9)
+
+    // TEST: sau sức mạnh gần (1–3 bar)
+    recentStrength = (nz(isSpring[1]) or nz(isSellingClimax[1]) or nz(isStoppingVol[1]) or nz(isSOS[1]) or nz(isSpring[2]) or nz(isSellingClimax[2]) or nz(isStoppingVol[2]) or nz(isSOS[2]) or nz(isSpring[3]) or nz(isSellingClimax[3]) or nz(isStoppingVol[3]) or nz(isSOS[3]))
+    isTestBar := enableTestBar and bar.isDown and isNarrowNow and (volume < math.min(volume[1], volume[2]) * 0.9) and bar.location > bullishCloseLocation and recentStrength
+
+    // Cộng điểm & icon (giữ nguyên cơ chế)
+    if isSpring
+        array.push(bullish_signals_on_bar, "Sp")
+        barScore += 2.5
+    if isSellingClimax
+        array.push(bullish_signals_on_bar, "S")
+        barScore += 2.0
+    if isStoppingVol
+        array.push(bullish_signals_on_bar, "Sv")
+        barScore += 2.2
+    if isEffortVsFall
+        array.push(bullish_signals_on_bar, "Ef")
+        barScore += 2.0
+    if isShakeout
+        array.push(bullish_signals_on_bar, "Sk")
+        barScore += 2.2
+    if isSOS
+        array.push(bullish_signals_on_bar, "SS")
+        barScore += 2.4
+    if isTestBar
+        array.push(bullish_signals_on_bar, "Tb")
+        barScore += 1.5
+    if isNoSupply
+        array.push(bullish_signals_on_bar, "Ns")
+        barScore += 1.0
+    if isUpthrust
+        array.push(bearish_signals_on_bar, "Ut")
+        barScore -= 2.5
+    if isBuyingClimax
+        array.push(bearish_signals_on_bar, "B")
+        barScore -= 2.0
+    if isEffortVsRise
+        array.push(bearish_signals_on_bar, "Er")
+        barScore -= 2.0
+    if isSOW
+        array.push(bearish_signals_on_bar, "Sw")
+        barScore -= 2.4
+    if isNoDemand
+        array.push(bearish_signals_on_bar, "Nd")
+        barScore -= 1.0
+
+vsaScore = f_safeSum(barScore, scoreLookback)
+
+// === PHẦN 4: HIỂN THỊ & GIAO DIỆN NGƯỜI DÙNG ===
+p_ema200 = plot(useEma200 ? ema200 : na, "EMA 200", ema200Color, 1)
+p_fast = plot(useDualEMA ? fastEMA : na, "EMA Nhanh", emaFastColor, 1)
+p_slow = plot(useDualEMA ? slowEMA : na, "EMA Cham", emaSlowColor, 1)
+
+fill(p_fast, p_slow, color=useDualEMA and showEmaCloud ? (fastEMA > slowEMA ? color.new(color.green, 85) : color.new(color.red, 85)) : na)
+
+// === VẼ VALUE AREA BẰNG PLOT (DÍNH VỚI NẾN) ===
+plot(showVALines ? cached_dPOC : na, "POC", color.red, 1, plot.style_line)
+plot(showVALines ? cached_dVAH : na, "VAH", color.blue, 1, plot.style_line)
+plot(showVALines ? cached_dVAL : na, "VAL", color.blue, 1, plot.style_line)
+
+bgcolor(showBackground and math.abs(vsaScore) > 2.5 ? (vsaScore > 0 ? color.new(color.green, 80) : color.new(color.red, 80)) : na)
+
+// === TRADING RANGE MARKS (KHÔNG DÙNG LinePool) ===
+plotchar(showTRLines and isSpring, "Spring", "▲", location.belowbar, color.green, size=size.tiny)
+plotchar(showTRLines and isUpthrust, "Upthrust", "▼", location.abovebar, color.red, size=size.tiny)
+
+// === SIGNAL LABELS ===
+if array.size(bullish_signals_on_bar) > 0
+    bullish_text = f_join(bullish_signals_on_bar, "+")
+    shouldShowStar = isSellingClimax
+    finalBullText = shouldShowStar ? bullish_text + "⭐" : bullish_text
+    labelPrice = low - (atr14 * 0.8)
+    label.new(bar_index, labelPrice, finalBullText, style=label.style_none, yloc=yloc.price, 
+              color=color.new(color.gray, 30), textcolor=color.black, size=size.normal)
+
+if array.size(bearish_signals_on_bar) > 0
+    bearish_text = f_join(bearish_signals_on_bar, "+")
+    shouldShowStar = isBuyingClimax
+    finalBearText = shouldShowStar ? bearish_text + "⭐" : bearish_text
+    labelPrice = high + (atr14 * 0.6)
+    label.new(bar_index, labelPrice, finalBearText, style=label.style_none, yloc=yloc.price, 
+              color=color.new(color.gray, 30), textcolor=color.black, size=size.normal)
+
+// === SCORE LABELS ===
+if showScoreOnBars and vsaScore != 0
+    scoreOffset = vsaScore > 0 ? -(atr14 * 1.6) : (atr14 * 1.6)
+    scoreLabelPrice = vsaScore > 0 ? low + scoreOffset : high + scoreOffset
+    scoreTextColor = vsaScore > 0 ? color.blue : color.maroon
+    label.new(bar_index, scoreLabelPrice, str.tostring(vsaScore, "#.#"), style=label.style_none, yloc=yloc.price, 
+              color=color.new(color.gray, 30), textcolor=scoreTextColor, size=size.small)
+
+// === DASHBOARD ===
+var table infoTable = na
+if showInfoPanel and barstate.islast
+    tablePosition = switch dashboardPosition
+        "top_left" => position.top_left
+        "top_center" => position.top_center
+        "top_right" => position.top_right
+        "middle_left" => position.middle_left
+        "middle_center" => position.middle_center
+        "middle_right" => position.middle_right
+        "bottom_left" => position.bottom_left
+        "bottom_center" => position.bottom_center
+        "bottom_right" => position.bottom_right
+        => position.top_right
+    
+    if na(infoTable)
+        infoTable := table.new(tablePosition, 2, 6, bgcolor=color.new(color.gray, 85), border_width=1)
+    
+    table.cell(infoTable, 0, 0, "VSA ANALYSIS", text_color=color.orange, bgcolor=color.black)
+    table.cell(infoTable, 1, 0, timeframe.period, text_color=color.aqua, bgcolor=color.black)
+    table.cell(infoTable, 0, 1, "Trend:", text_color=color.black)
+    table.cell(infoTable, 0, 2, "VSA Score:", text_color=color.black)
+    table.cell(infoTable, 0, 3, "Volume:", text_color=color.black)
+    table.cell(infoTable, 0, 4, "Range:", text_color=color.black)
+    table.cell(infoTable, 0, 5, "Near VA:", text_color=color.black)
+    table.cell(infoTable, 1, 1, isUptrend ? "BULLISH" : "BEARISH", text_color=isUptrend ? color.green : color.red)
+    table.cell(infoTable, 1, 2, str.tostring(vsaScore, "#.##"), text_color=vsaScore > 0 ? color.green : vsaScore < 0 ? color.red : color.gray)
+    table.cell(infoTable, 1, 3, bar.isHighVol ? "HIGH" : bar.isLowVol ? "LOW" : "NORMAL", text_color=bar.isHighVol ? color.red : bar.isLowVol ? color.gray : color.blue)
+    table.cell(infoTable, 1, 4, bar.isWide ? "WIDE" : bar.isNarrow ? "NARROW" : "NORMAL", text_color=bar.isWide ? color.orange : bar.isNarrow ? color.gray : color.blue)
+    table.cell(infoTable, 1, 5, f_isNearVA(close) ? "YES" : "NO", text_color=f_isNearVA(close) ? color.red : color.gray)
+
+// === ALERTS ===
+alertcondition(vsaScore > 3.0, "VSA Bullish Strong", "VSA Bullish Signal Detected")
+alertcondition(vsaScore < -3.0, "VSA Bearish Strong", "VSA Bearish Signal Detected")
