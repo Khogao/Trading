@@ -1,0 +1,5 @@
+chạy errors/problems console, linter trên mỗi file .pine và redflag bất cứ file nào có lỗi, dù chỉ 1 lỗi tức là chưa ready for product.
+
+continue cho tới khi đọc hết tất cả các file. 
+
+sau khi organize xong thì đánh giá tính chất, chất lượng code và độ phù hợp của code với Supreme Rule (SR), tạo bảng tổng hợp toàn bộ các code, sau đó đề xuất reorganize lần nữa dựa trên đánh giá vừa lập và danh sách các code quan trọng cần focus để hoàn thiện, các code nào không cần thiết nữa, có thể xóa đi , code nào nên lưu lại thành archive trong folder legacy

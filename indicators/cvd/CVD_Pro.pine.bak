@@ -1,0 +1,299 @@
+//@version=6
+// TITLE: CVD Pro (Final Build)
+// DESC: The definitive order flow and volume analysis tool, combining VSA, CVD, and an advanced divergence engine.
+indicator("CVD Pro", shorttitle="CVD Pro", format=format.volume, precision=0, overlay=false, scale=scale.left, max_lines_count=500, max_labels_count=500)
+
+import TradingView/ta/8
+
+// ==============================================================================================
+// INPUTS
+// ==============================================================================================
+// --- 1. VSA Volume Settings ---
+var string GRP_VSA = "1. VSA Volume Settings"
+showMA = input.bool(false, title="Show Volume Moving Average", group=GRP_VSA)
+lengthVolumeMA = input.int(20, title="Length of Volume MA", minval=1, group=GRP_VSA)
+vsa_zscore_sensitivity = input.float(1.5, title="VSA Z-score Sensitivity", minval=0.5, maxval=4.0, step=0.1, group=GRP_VSA)
+// NEW: VSA Climax threshold (close near high)
+vsa_climax_close_threshold = input.float(0.6, "Climax Close Location (%)", minval=0.5, maxval=0.95, step=0.05, group=GRP_VSA, tooltip="Close location from low > threshold (near high). Used for Bc/SC.")
+
+// --- 2. CVD Settings ---
+var string GRP_CVD = "2. CVD Settings"
+anchorInput = input.timeframe("D", "CVD Anchor Period", group=GRP_CVD)
+useCustomTimeframeInput = input.bool(false, "Use Custom Lower Timeframe", group=GRP_CVD)
+lowerTimeframeInput = input.timeframe("1", "Lower Timeframe", group=GRP_CVD)
+cvdTransparency = input.int(70, "CVD Transparency", minval=0, maxval=100, group=GRP_CVD)
+showCVDBorders = input.bool(true, "Show CVD Borders", group=GRP_CVD)
+showCVDWicks   = input.bool(true, "Show CVD Wicks", group=GRP_CVD)
+cvdBullColor   = input.color(color.blue, "CVD Bull Color", group=GRP_CVD)
+cvdBearColor   = input.color(color.orange,   "CVD Bear Color", group=GRP_CVD)
+cvdLookback    = input.int(50, "CVD Scaling Lookback", group=GRP_CVD)
+// New: raise CVD overlay a bit above volume baseline
+cvdBaselineOffsetPct = input.float(0.06, "CVD Zero-line Offset (% of max vol)", minval=0.0, maxval=0.5, step=0.01, group=GRP_CVD)
+
+// --- 3. Divergence Detection ---
+var string GRP_DIV = "3. Divergence Detection"
+show_divergences = input.bool(true, "Show Divergences", group=GRP_DIV)
+pivot_lookback_left = input.int(5, "Pivot Lookback Left", minval=2, maxval=20, group=GRP_DIV)
+pivot_lookback_right = input.int(5, "Pivot Lookback Right", minval=2, maxval=20, group=GRP_DIV)
+range_lower = input.int(5, "Min Range", group=GRP_DIV)
+range_upper = input.int(60, "Max Range", group=GRP_DIV)
+show_regular_div = input.bool(true, "Show Regular Divergences", group=GRP_DIV, inline="div_type")
+show_hidden_div = input.bool(false, "Show Hidden Divergences", group=GRP_DIV, inline="div_type")
+bull_div_color = input.color(color.new(color.green, 0), "Bullish Div Color", group=GRP_DIV)
+bear_div_color = input.color(color.new(color.red, 0), "Bearish Div Color", group=GRP_DIV)
+div_highlight_color = input.color(color.new(color.lime, 40), "Divergence Highlight Color", group=GRP_DIV)
+// NEW: Divergence markers
+show_div_markers = input.bool(true, "Show Divergence Markers", group=GRP_DIV)
+div_marker_offset_pct = input.float(0.05, "Div Marker Offset (% of volume)", minval=0.0, maxval=0.5, step=0.01, group=GRP_DIV)
+
+// --- 4. Absorption Detection ---
+var string GRP_ABS = "4. Absorption Detection"
+show_absorption = input.bool(true, "Show Absorption Signals (Buy Absorption)", group=GRP_ABS)
+absorption_close_threshold = input.float(0.5, "Min Close Location (%)", minval=0.1, maxval=0.9, step=0.1, group=GRP_ABS)
+absorption_color = input.color(color.new(color.lime, 0), "Buy Absorption Color", group=GRP_ABS)        // xanh
+// NEW: Sell absorption (absorb buying)
+show_absorption_sell = input.bool(true, "Show Sell Absorption Signals", group=GRP_ABS)
+absorption_color_sell = input.color(color.new(color.red, 0), "Sell Absorption Color", group=GRP_ABS)    // đỏ
+// NEW: marker offset above volume top
+absorption_marker_offset_pct = input.float(0.03, "Marker Offset (% of volume)", minval=0.0, maxval=0.5, step=0.01, group=GRP_ABS)
+
+// ==============================================================================================
+// FUNCTIONS
+// ==============================================================================================
+f_calculateZScore(float value, int length) =>
+    mean = ta.sma(value, length)
+    std_dev = ta.stdev(value, length)
+    float result = 0.0
+    if std_dev > 0
+        result := (value - mean) / std_dev
+    result
+
+_inRange(bool cond) =>
+    bars = ta.barssince(cond)
+    range_lower <= bars and bars <= range_upper
+
+// ==============================================================================================
+// CORE CALCULATIONS
+// ==============================================================================================
+// VSA Z-Score
+vol_zscore = f_calculateZScore(volume, lengthVolumeMA)
+volumeMA = ta.sma(volume, lengthVolumeMA)
+isUltraHigh = vol_zscore >= vsa_zscore_sensitivity * 1.5
+isVeryHigh  = vol_zscore >= vsa_zscore_sensitivity * 1.2 and vol_zscore < vsa_zscore_sensitivity * 1.5
+isHigh      = vol_zscore >= vsa_zscore_sensitivity
+
+// CVD Data
+string lowerTimeframe = useCustomTimeframeInput ? lowerTimeframeInput : timeframe.isseconds ? "1S" : timeframe.isintraday ? "1" : timeframe.isdaily ? "5" : "60"
+[openVolume, maxVolume, minVolume, lastVolume] = ta.requestVolumeDelta(lowerTimeframe, anchorInput)
+// Intrabar delta (theo current TF)
+[barOpen, _, _, barLast] = ta.requestVolumeDelta(timeframe.period, timeframe.period)
+cvd_delta_perbar = barLast - barOpen
+cvd_delta_since_anchor = lastVolume - openVolume
+
+// CVD Anchor-based Scaling (thay thế CVD Scaling Factors cũ)
+var float anchorCvdMax = na
+var float anchorCvdMin = na
+var float anchorVolMax = na
+
+isNewAnchor = ta.change(time(anchorInput)) != 0
+if isNewAnchor or na(anchorCvdMax)
+    anchorCvdMax := lastVolume
+    anchorCvdMin := lastVolume
+    anchorVolMax := volume
+else
+    anchorCvdMax := math.max(anchorCvdMax, lastVolume)
+    anchorCvdMin := math.min(anchorCvdMin, lastVolume)
+    anchorVolMax := math.max(anchorVolMax, volume)
+
+anchorCvdRange = anchorCvdMax - anchorCvdMin
+anchorScaleFactor = anchorCvdRange > 0 ? anchorVolMax / anchorCvdRange * 0.8 : 1
+cvdZeroOffset = anchorVolMax * cvdBaselineOffsetPct
+
+// Helper: scale with anchor-based fixed range
+scaleCVD(x) =>
+    (x - anchorCvdMin) * anchorScaleFactor + cvdZeroOffset
+
+// ==============================================================================================
+// DIVERGENCE ENGINE & ABSORPTION ENGINE
+// ==============================================================================================
+var bool bullCondState = false
+var bool bearCondState = false
+
+if show_divergences
+    phFound = not na(ta.pivothigh(high, pivot_lookback_left, pivot_lookback_right))
+    plFound = not na(ta.pivotlow(low, pivot_lookback_left, pivot_lookback_right))
+
+    // Pre-calculate all historical values for consistency
+    prev_low_val = ta.valuewhen(plFound, low[pivot_lookback_right], 1)
+    prev_low_idx = ta.valuewhen(plFound, bar_index[pivot_lookback_right], 1)
+    prev_cvd_low_val = ta.valuewhen(plFound, lastVolume[pivot_lookback_right], 1)
+    in_range_low = _inRange(plFound[1])
+    
+    prev_high_val = ta.valuewhen(phFound, high[pivot_lookback_right], 1)
+    prev_high_idx = ta.valuewhen(phFound, bar_index[pivot_lookback_right], 1)
+    prev_cvd_high_val = ta.valuewhen(phFound, lastVolume[pivot_lookback_right], 1)
+    in_range_high = _inRange(phFound[1])
+
+    // Regular Bullish
+    priceLL = low[pivot_lookback_right] < prev_low_val
+    cvdHL = lastVolume[pivot_lookback_right] > prev_cvd_low_val
+    bullCond = show_regular_div and plFound and priceLL and cvdHL and in_range_low
+    if bullCond
+        y1_cvd_scaled = scaleCVD(lastVolume[pivot_lookback_right])
+        y2_cvd_scaled = scaleCVD(prev_cvd_low_val)
+        line.new(bar_index - pivot_lookback_right, y1_cvd_scaled, prev_low_idx, y2_cvd_scaled, color=bull_div_color, width=2)
+        label.new(bar_index - pivot_lookback_right, y1_cvd_scaled, "Bull Div", color=color.new(color.white, 100), textcolor=bull_div_color, style=label.style_label_up)
+    
+    bullCondState := bullCond
+
+    // Regular Bearish
+    priceHH = high[pivot_lookback_right] > prev_high_val
+    cvdLH = lastVolume[pivot_lookback_right] < prev_cvd_high_val
+    bearCond = show_regular_div and phFound and priceHH and cvdLH and in_range_high
+    if bearCond
+        y1_cvd_scaled = scaleCVD(lastVolume[pivot_lookback_right])
+        y2_cvd_scaled = scaleCVD(prev_cvd_high_val)
+        line.new(bar_index - pivot_lookback_right, y1_cvd_scaled, prev_high_idx, y2_cvd_scaled, color=bear_div_color, width=2)
+        label.new(bar_index - pivot_lookback_right, y1_cvd_scaled, "Bear Div", color=color.new(color.white, 100), textcolor=bear_div_color, style=label.style_label_down)
+        
+    bearCondState := bearCond
+
+// Absorption Engine
+isDownBar = close < open
+isUpBar   = close > open
+isHighEffort = isVeryHigh or isUltraHigh
+
+// Safe range to avoid div/0
+rng = math.max(high - low, syminfo.mintick)
+closePctFromLow  = (close - low) / rng
+closePctFromHigh = (high - close) / rng
+
+// Buy absorption (down-bar, close mạnh phía trên)
+isStrongCloseUp   = closePctFromLow  > absorption_close_threshold
+buy_absorption_signal  = show_absorption and isDownBar and isHighEffort and isStrongCloseUp
+
+// NEW: Sell absorption (up-bar, close yếu phía dưới)
+isStrongCloseDown = closePctFromHigh > absorption_close_threshold
+sell_absorption_signal = show_absorption_sell and isUpBar and isHighEffort and isStrongCloseDown
+
+// NEW: VSA Climax proxies
+isBuyingClimax   = isUpBar   and isHighEffort and closePctFromLow > vsa_climax_close_threshold
+isSellingClimax  = isDownBar and isHighEffort and closePctFromLow > vsa_climax_close_threshold
+
+// NEW: Accumulation/Distribution bars (đặt sớm để dùng cho marker)
+bool isAccumulationBar = close > open and (high - close) / rng < 0.4 and (close - low) / rng > 0.6 and isHigh
+bool isDistributionBar = close < open and (close - low) / rng < 0.4 and (high - close) / rng > 0.6 and isHigh
+
+// NEW: Divergence signals (đặt sau khi bullCondState/bearCondState đã cập nhật)
+bool bullDivSignal = show_divergences and bullCondState
+bool bearDivSignal = show_divergences and bearCondState
+
+// ==============================================================================================
+// PLOTTING
+// ==============================================================================================
+// VSA Volume Plotting
+vsaColor = if isUltraHigh
+    color.new(color.purple, 20)
+else if isVeryHigh
+    color.new(color.red, 20)
+else if isHigh
+    color.new(color.orange, 20)
+else
+    color.new(color.gray, 20)
+
+finalVSAColor = if bullCondState[pivot_lookback_right] or bearCondState[pivot_lookback_right]
+    div_highlight_color
+else
+    vsaColor
+
+plot(volume, color=finalVSAColor, style=plot.style_columns, title="VSA Volume")
+plot(showMA ? volumeMA : na, color=color.new(color.black, 0), title="Volume MA")
+
+// Absorption markers on top of volume bars
+offMult = 1 + absorption_marker_offset_pct
+buyY  = buy_absorption_signal  ? volume * offMult : na
+sellY = sell_absorption_signal ? volume * offMult : na
+plotshape(buyY,  title="Buy Absorption",  location=location.absolute, style=shape.diamond, color=absorption_color, size=size.tiny, text="BA")
+plotshape(sellY, title="Sell Absorption", location=location.absolute, style=shape.diamond, color=absorption_color_sell, size=size.tiny, text="SA")
+
+// Divergence markers
+divOffMult = 1 + div_marker_offset_pct
+
+// Bullish
+bullConfluenceCond = isAccumulationBar or buy_absorption_signal or isSellingClimax
+bullDivY_conf = show_div_markers and bullDivSignal and bullConfluenceCond ? volume * divOffMult : na
+bullDivY_only = show_div_markers and bullDivSignal and not bullConfluenceCond ? volume * divOffMult : na
+plotshape(bullDivY_conf, title="Bullish Div (conf)", location=location.absolute, style=shape.triangleup, color=bull_div_color, size=size.small, text="BD+")
+plotshape(bullDivY_only, title="Bullish Div", location=location.absolute, style=shape.triangleup, color=bull_div_color, size=size.tiny, text="BD")
+
+// Bearish
+bearConfluenceCond = isDistributionBar or sell_absorption_signal or isBuyingClimax
+bearDivY_conf = show_div_markers and bearDivSignal and bearConfluenceCond ? volume * divOffMult : na
+bearDivY_only = show_div_markers and bearDivSignal and not bearConfluenceCond ? volume * divOffMult : na
+plotshape(bearDivY_conf, title="Bearish Div (conf)", location=location.absolute, style=shape.triangledown, color=bear_div_color, size=size.small, text="SD+")
+plotshape(bearDivY_only, title="Bearish Div", location=location.absolute, style=shape.triangledown, color=bear_div_color, size=size.tiny, text="SD")
+
+// CVD Plotting
+// Detect new anchor boundary: reset open to anchor open when anchor changes
+// isNewAnchor = ta.change(time(anchorInput)) != 0  // removed duplicate; reuse the one defined above
+
+var float prevScaledClose = na
+var float oCVD = na
+currCumRaw = lastVolume
+cCVD = scaleCVD(currCumRaw)
+
+if isNewAnchor or na(prevScaledClose)
+    oCVD := scaleCVD(openVolume)
+else
+    oCVD := prevScaledClose
+
+prevScaledClose := cCVD
+
+hCVDraw = scaleCVD(maxVolume)
+lCVDraw = scaleCVD(minVolume)
+hCVD = math.max(hCVDraw, math.max(oCVD, cCVD))
+lCVD = math.min(lCVDraw, math.min(oCVD, cCVD))
+
+cvdIsBull = currCumRaw >= nz(currCumRaw[1], currCumRaw)
+bT = math.max(0, math.min(100, cvdTransparency - 20))
+wT = math.max(0, math.min(100, cvdTransparency - 30))
+cvdBodyColor   = cvdIsBull ? color.new(cvdBullColor, cvdTransparency) : color.new(cvdBearColor, cvdTransparency)
+cvdBorderColor = showCVDBorders ? (cvdIsBull ? color.new(cvdBullColor, bT) : color.new(cvdBearColor, bT)) : na
+cvdWickColor   = showCVDWicks ? (cvdIsBull ? color.new(cvdBullColor, wT) : color.new(cvdBearColor, wT)) : na
+
+plotcandle(oCVD, hCVD, lCVD, cCVD, title="CVD Cumulative Overlay", color=cvdBodyColor, bordercolor=cvdBorderColor, wickcolor=cvdWickColor)
+hline(0, title="Volume Baseline", color=color.new(color.white, 80), linestyle=hline.style_dashed)
+plot(cvdZeroOffset, title="CVD Zero-line (offset)", color=color.new(color.white, 65), style=plot.style_line)
+
+// Status line
+plot(nz(volume),                 title="Vol_status",              color=color.gray, display=display.status_line)
+plot(nz(cvd_delta_perbar),       title="ΔCVD/bar",                color=color.gray, display=display.status_line)
+plot(nz(cvd_delta_since_anchor), title="ΔCVD since anchor",       color=color.gray, display=display.status_line)
+
+// Final Error Check
+var cumVol = 0.0
+cumVol += nz(volume)
+if barstate.islast and cumVol == 0
+    runtime.error("The data vendor doesn't provide volume data for this symbol.")
+// ALERTS
+alertcondition(isAccumulationBar and isUltraHigh, "★★ Accumulation (ULTRA)", "Accumulation | ULTRA HIGH")
+alertcondition(isAccumulationBar and isVeryHigh,  "★ Accumulation (VERY HIGH)", "Accumulation | VERY HIGH")
+alertcondition(isDistributionBar and isUltraHigh, "★★ Distribution (ULTRA)", "Distribution | ULTRA HIGH")
+alertcondition(isDistributionBar and isVeryHigh,  "★ Distribution (VERY HIGH)", "Distribution | VERY HIGH")
+
+alertcondition(bullDivSignal, "Bullish Divergence", "Bullish Divergence (Price LL vs CVD HL)")
+alertcondition(bearDivSignal, "Bearish Divergence", "Bearish Divergence (Price HH vs CVD LH)")
+
+bool bullDiv_Accum   = bullDivSignal and isAccumulationBar
+bool bullDiv_BuyAbs  = bullDivSignal and buy_absorption_signal
+bool bearDiv_Dist    = bearDivSignal and isDistributionBar
+bool bearDiv_SellAbs = bearDivSignal and sell_absorption_signal
+alertcondition(bullDiv_Accum,   "★★★ Confluence: Bull Div + Accumulation",   "A+ Confluence: Bullish Div + Accumulation")
+alertcondition(bullDiv_BuyAbs,  "★★★ Confluence: Bull Div + Buy Absorption", "A+ Confluence: Bullish Div + Buying Absorption")
+alertcondition(bearDiv_Dist,    "★★★ Confluence: Bear Div + Distribution",   "A+ Confluence: Bearish Div + Distribution")
+alertcondition(bearDiv_SellAbs, "★★★ Confluence: Bear Div + Sell Absorption","A+ Confluence: Bearish Div + Selling Absorption")
+
+bool bullDiv_SC = bullDivSignal and isSellingClimax
+bool bearDiv_BC = bearDivSignal and isBuyingClimax
+alertcondition(bullDiv_SC, "★★★ Confluence: Bull Div + SC", "A+ Confluence: Bullish Div + Selling Climax")
+alertcondition(bearDiv_BC, "★★★ Confluence: Bear Div + BC", "A+ Confluence: Bearish Div + Buying Climax")

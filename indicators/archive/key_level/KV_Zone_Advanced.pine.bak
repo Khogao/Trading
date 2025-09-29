@@ -1,0 +1,342 @@
+//@version=5
+indicator("Eclaude", overlay=true, max_boxes_count=100)
+
+// ======================================================================
+//                          INPUTS - ĐƠN GIẢN HÓA
+// ======================================================================
+
+// --- Core Settings ---
+grp_core = "Core Settings"
+vol_multiplier = input.float(2.0, "Volume Spike Multiplier", minval=1.0, group=grp_core)
+lookback = input.int(20, "Volume MA Period", group=grp_core)
+
+// --- KV Zone Settings ---
+grp_kv = "KV Zone Settings"
+kv_enabled = input.bool(true, "Enable KV Zones", group=grp_kv)
+kv_swing_len = input.int(3, "Swing Detection Length", minval=1, maxval=10, group=grp_kv)
+kv_zone_height = input.float(0.8, "Zone Height (× ATR)", minval=0.1, step=0.1, group=grp_kv)
+kv_zone_extend = input.int(100, "Extend Zones (bars)", minval=10, maxval=500, group=grp_kv)
+kv_padding = input.float(0.2, "Zone Padding (× ATR)", minval=0, step=0.05, group=grp_kv)
+kv_min_wick_ratio = input.float(1.5, "Min Wick/Body Ratio", minval=0.5, step=0.1, group=grp_kv)
+kv_min_body_atr = input.float(0.1, "Min Body Size (× ATR)", minval=0, step=0.01, group=grp_kv)
+kv_throttle = input.int(5, "Min Bars Between Zones", minval=1, group=grp_kv)
+kv_max_age = input.int(200, "Max Zone Age (bars)", minval=0, tooltip="0 = unlimited", group=grp_kv)
+
+// --- Multi-Timeframe Settings (chỉ cho 1m chart) ---
+grp_mtf = "Multi-Timeframe (1m only)"
+kv_show_5m = input.bool(true, "Show 5m Zones on 1m", group=grp_mtf)
+kv_show_15m = input.bool(true, "Show 15m Zones on 1m", group=grp_mtf)
+
+// --- Visual Settings ---
+grp_visual = "Visual Settings"
+kv_bull_color = input.color(color.new(color.green, 80), "Bull Zone Color", group=grp_visual)
+kv_bear_color = input.color(color.new(color.red, 80), "Bear Zone Color", group=grp_visual)
+kv_5m_opacity = input.int(70, "5m Zone Opacity (1-100)", minval=1, maxval=100, group=grp_visual)
+kv_15m_opacity = input.int(60, "15m Zone Opacity (1-100)", minval=1, maxval=100, group=grp_visual)
+kv_show_labels = input.bool(true, "Show Zone Labels", group=grp_visual)
+kv_label_size = input.string("small", "Label Size", options=["tiny", "small", "normal"], group=grp_visual)
+
+// --- Signal Settings ---
+grp_sig = "Trading Signals"
+sig_enabled = input.bool(true, "Enable Buy/Sell Signals", group=grp_sig)
+sig_retest_only = input.bool(true, "Retest Only Mode", group=grp_sig)
+sig_require_volume = input.bool(true, "Require Volume Confirmation", group=grp_sig)
+sig_min_wick_ratio = input.float(1.5, "Signal Wick/Body Ratio", minval=0.5, step=0.1, group=grp_sig)
+sig_throttle = input.int(6, "Signal Throttle (bars)", minval=1, group=grp_sig)
+
+// ======================================================================
+//                          HELPER FUNCTIONS
+// ======================================================================
+
+// ATR với fallback
+f_atr(len) =>
+    atr_val = ta.atr(len)
+    na(atr_val) ? ta.sma(ta.tr, len) : atr_val
+
+// Detect KV trigger - SIMPLIFIED
+f_kv_trigger(is_bull) =>
+    atr = f_atr(14)
+    body = math.abs(close - open)
+    
+    if is_bull
+        // Bull: Break below low + rejection up
+        swing_low = ta.lowest(low, kv_swing_len)[1]
+        break_down = low < swing_low
+        lower_wick = math.min(open, close) - low
+        wick_ratio = lower_wick / math.max(body, syminfo.mintick)
+        
+        break_down and (body >= kv_min_body_atr * atr or wick_ratio >= kv_min_wick_ratio * 0.75)
+    else
+        // Bear: Break above high + rejection down
+        swing_high = ta.highest(high, kv_swing_len)[1]
+        break_up = high > swing_high
+        upper_wick = high - math.max(open, close)
+        wick_ratio = upper_wick / math.max(body, syminfo.mintick)
+        
+        break_up and (body >= kv_min_body_atr * atr or wick_ratio >= kv_min_wick_ratio * 0.75)
+
+// Create zone với label rõ ràng
+f_create_zone(is_bull, tf_label) =>
+    atr = f_atr(14)
+    
+    // Tính zone boundaries
+    if is_bull
+        zone_bottom = low - kv_padding * atr
+        zone_top = zone_bottom + kv_zone_height * atr
+        [zone_top, zone_bottom]
+    else
+        zone_top = high + kv_padding * atr
+        zone_bottom = zone_top - kv_zone_height * atr
+        [zone_top, zone_bottom]
+
+// ======================================================================
+//                     ZONE MANAGEMENT - ĐƠN GIẢN
+// ======================================================================
+
+// Type định nghĩa zone
+type KVZone
+    box    zone_box
+    label  zone_label
+    float  top
+    float  bottom
+    int    created_bar
+    bool   is_bull
+    string tf_label
+
+// Arrays lưu zones
+var array<KVZone> current_zones = array.new<KVZone>()
+var array<KVZone> mtf_5m_zones = array.new<KVZone>()
+var array<KVZone> mtf_15m_zones = array.new<KVZone>()
+
+// Biến throttle
+var int last_bull_zone = 0
+var int last_bear_zone = 0
+
+// Function vẽ zone
+f_draw_zone(is_bull, tf_label, zones_array, opacity_override) =>
+    [zone_top, zone_bottom] = f_create_zone(is_bull, tf_label)
+    
+    // Tạo zone object
+    zone = KVZone.new()
+    zone.top := zone_top
+    zone.bottom := zone_bottom
+    zone.created_bar := bar_index
+    zone.is_bull := is_bull
+    zone.tf_label := tf_label
+    
+    // Chọn màu với opacity
+    base_color = is_bull ? kv_bull_color : kv_bear_color
+    zone_color = na(opacity_override) ? base_color : color.new(color.rgb(color.r(base_color), color.g(base_color), color.b(base_color)), opacity_override)
+    border_color = is_bull ? color.green : color.red
+    
+    // Vẽ box
+    zone.zone_box := box.new(
+        left=bar_index, 
+        top=zone_top, 
+        right=bar_index + kv_zone_extend, 
+        bottom=zone_bottom,
+        border_color=border_color,
+        border_width=1,
+        bgcolor=zone_color
+    )
+    
+    // Vẽ label nếu cần
+    if kv_show_labels
+        label_style = is_bull ? label.style_label_up : label.style_label_down
+        label_color = is_bull ? color.green : color.red
+        label_text = tf_label != "" ? "KV " + tf_label + (is_bull ? " Bull" : " Bear") : (is_bull ? "KV Bull" : "KV Bear")
+        
+        zone.zone_label := label.new(
+            x=bar_index,
+            y=is_bull ? zone_bottom : zone_top,
+            text=label_text,
+            style=label_style,
+            color=color.new(label_color, 90),
+            textcolor=label_color,
+            size=kv_label_size == "tiny" ? size.tiny : kv_label_size == "small" ? size.small : size.normal
+        )
+    
+    // Thêm vào array
+    array.push(zones_array, zone)
+    
+    // Giới hạn số zones
+    if array.size(zones_array) > 20
+        old_zone = array.shift(zones_array)
+        box.delete(old_zone.zone_box)
+        if not na(old_zone.zone_label)
+            label.delete(old_zone.zone_label)
+
+// Function update zones
+f_update_zones(zones_array) =>
+    for i = array.size(zones_array) - 1 to 0
+        zone = array.get(zones_array, i)
+        
+        // Xóa zone quá cũ
+        if kv_max_age > 0 and (bar_index - zone.created_bar) > kv_max_age
+            box.delete(zone.zone_box)
+            if not na(zone.zone_label)
+                label.delete(zone.zone_label)
+            array.remove(zones_array, i)
+            continue
+        
+        // Update box right edge
+        box.set_right(zone.zone_box, bar_index + kv_zone_extend)
+        
+        // Update label position
+        if not na(zone.zone_label)
+            label.set_x(zone.zone_label, bar_index)
+
+// ======================================================================
+//                     CURRENT TF ZONES
+// ======================================================================
+
+if kv_enabled
+    // Detect triggers cho current TF
+    bull_trigger = f_kv_trigger(true)
+    bear_trigger = f_kv_trigger(false)
+    
+    // Create zones với throttle
+    if bull_trigger and (bar_index - last_bull_zone) >= kv_throttle
+        f_draw_zone(true, "", current_zones, na)
+        last_bull_zone := bar_index
+        
+    if bear_trigger and (bar_index - last_bear_zone) >= kv_throttle
+        f_draw_zone(false, "", current_zones, na)
+        last_bear_zone := bar_index
+    
+    // Update current zones
+    f_update_zones(current_zones)
+
+// ======================================================================
+//                     MULTI-TIMEFRAME ZONES (1m only)
+// ======================================================================
+
+// Check if current chart is 1m
+is_1m_chart = timeframe.period == "1"
+
+// 5m Zones on 1m chart
+if kv_enabled and is_1m_chart and kv_show_5m
+    // Get 5m data
+    [bull_5m, bear_5m] = request.security(syminfo.tickerid, "5", [f_kv_trigger(true), f_kv_trigger(false)])
+    
+    // Track để không duplicate
+    var int last_5m_bull = 0
+    var int last_5m_bear = 0
+    
+    if bull_5m and (bar_index - last_5m_bull) >= kv_throttle * 5  // 5x throttle cho 5m
+        f_draw_zone(true, "5m", mtf_5m_zones, kv_5m_opacity)
+        last_5m_bull := bar_index
+        
+    if bear_5m and (bar_index - last_5m_bear) >= kv_throttle * 5
+        f_draw_zone(false, "5m", mtf_5m_zones, kv_5m_opacity)
+        last_5m_bear := bar_index
+    
+    f_update_zones(mtf_5m_zones)
+
+// 15m Zones on 1m chart
+if kv_enabled and is_1m_chart and kv_show_15m
+    // Get 15m data
+    [bull_15m, bear_15m] = request.security(syminfo.tickerid, "15", [f_kv_trigger(true), f_kv_trigger(false)])
+    
+    // Track để không duplicate
+    var int last_15m_bull = 0
+    var int last_15m_bear = 0
+    
+    if bull_15m and (bar_index - last_15m_bull) >= kv_throttle * 15  // 15x throttle cho 15m
+        f_draw_zone(true, "15m", mtf_15m_zones, kv_15m_opacity)
+        last_15m_bull := bar_index
+        
+    if bear_15m and (bar_index - last_15m_bear) >= kv_throttle * 15
+        f_draw_zone(false, "15m", mtf_15m_zones, kv_15m_opacity)
+        last_15m_bear := bar_index
+    
+    f_update_zones(mtf_15m_zones)
+
+// ======================================================================
+//                     TRADING SIGNALS
+// ======================================================================
+
+// Helper: Check if price in any zone
+f_check_zones() =>
+    in_bull_zone = false
+    in_bear_zone = false
+    
+    // Check current TF zones
+    for zone in current_zones
+        if high >= zone.bottom and low <= zone.top
+            if zone.is_bull
+                in_bull_zone := true
+            else
+                in_bear_zone := true
+    
+    // Check MTF zones if on 1m
+    if is_1m_chart
+        for zone in mtf_5m_zones
+            if high >= zone.bottom and low <= zone.top
+                if zone.is_bull
+                    in_bull_zone := true
+                else
+                    in_bear_zone := true
+                    
+        for zone in mtf_15m_zones
+            if high >= zone.bottom and low <= zone.top
+                if zone.is_bull
+                    in_bull_zone := true
+                else
+                    in_bear_zone := true
+    
+    [in_bull_zone, in_bear_zone]
+
+// Signal logic
+var int last_buy_signal = 0
+var int last_sell_signal = 0
+
+if sig_enabled
+    [in_bull, in_bear] = f_check_zones()
+    
+    // Volume check
+    vol_ma = ta.sma(volume, lookback)
+    vol_spike = volume > vol_ma * vol_multiplier
+    vol_ok = not sig_require_volume or vol_spike
+    
+    // Rejection patterns
+    body = math.abs(close - open)
+    bull_reject = close > open and (math.min(open, close) - low) / math.max(body, syminfo.mintick) >= sig_min_wick_ratio
+    bear_reject = close < open and (high - math.max(open, close)) / math.max(body, syminfo.mintick) >= sig_min_wick_ratio
+    
+    // Generate signals
+    buy_setup = in_bull and bull_reject and vol_ok
+    sell_setup = in_bear and bear_reject and vol_ok
+    
+    // Apply throttle
+    if buy_setup and (bar_index - last_buy_signal) >= sig_throttle
+        label.new(bar_index, low, "BUY", style=label.style_label_up, color=color.lime, textcolor=color.white, size=size.small)
+        last_buy_signal := bar_index
+        alert("Buy Signal", alert.freq_once_per_bar)
+    
+    if sell_setup and (bar_index - last_sell_signal) >= sig_throttle
+        label.new(bar_index, high, "SELL", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
+        last_sell_signal := bar_index
+        alert("Sell Signal", alert.freq_once_per_bar)
+
+// ======================================================================
+//                     INFO DISPLAY
+// ======================================================================
+
+// Table hiển thị thông tin
+var table info_table = table.new(position.top_right, 2, 5, bgcolor=color.new(color.black, 80))
+
+if barstate.islast
+    // Update table
+    table.cell(info_table, 0, 0, "Timeframe:", text_color=color.white, text_size=size.small)
+    table.cell(info_table, 1, 0, timeframe.period, text_color=color.yellow, text_size=size.small)
+    
+    table.cell(info_table, 0, 1, "Current Zones:", text_color=color.white, text_size=size.small)
+    table.cell(info_table, 1, 1, str.tostring(array.size(current_zones)), text_color=color.aqua, text_size=size.small)
+    
+    if is_1m_chart
+        table.cell(info_table, 0, 2, "5m Zones:", text_color=color.white, text_size=size.small)
+        table.cell(info_table, 1, 2, str.tostring(array.size(mtf_5m_zones)), text_color=color.aqua, text_size=size.small)
+        
+        table.cell(info_table, 0, 3, "15m Zones:", text_color=color.white, text_size=size.small)
+        table.cell(info_table, 1, 3, str.tostring(array.size(mtf_15m_zones)), text_color=color.aqua, text_size=size.small)
