@@ -17,7 +17,8 @@ Push-Location $repoRoot
 # Ensure we're on the restructure branch
 if (git branch --list restructure/by-family) {
     git checkout restructure/by-family
-} else {
+}
+else {
     git checkout -b restructure/by-family
 }
 
