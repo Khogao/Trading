@@ -6,10 +6,10 @@ D:\Work\Coding\Trading\VPP41.pine,VPP41.pine,Volume Profile,Phiên bản lặp l
 D:\Work\Coding\Trading\VPP42.pine,VPP42.pine,Volume Profile,"Phiên bản quan trọng, tiền thân của v5.",D:\Work\Coding\Trading\indicators\volume_profile\VPP_v4_2_Final.pine
 D:\Work\Coding\Trading\vsa-functions.pine,vsa-functions.pine,Library,Thư viện hàm VSA.,D:\Work\Coding\Trading\libraries\vsa-functions.pine
 D:\Work\Coding\Trading\WSH Velo.pine,WSH Velo.pine,Composite (Wyckoff+SMC),Bản sao WSH v5.2.,D:\Work\Coding\Trading\indicators\hybrid\wyckoff_smc\archive\WSH_Velo_v5_2_copy.pine
-D:\Work\Coding\Trading\indicators\cvd\BETTE-01.pine,BETTE-01.pine,Composite (VSA+CVD),BETTE-01,D:\Work\Coding\Trading\indicators\order_flow\archive\bette_series\BETTE-01.pine
-D:\Work\Coding\Trading\indicators\cvd\BETTE-02.pine,BETTE-02.pine,Composite (VSA+CVD),BETTE-02,D:\Work\Coding\Trading\indicators\order_flow\archive\bette_series\BETTE-02.pine
-D:\Work\Coding\Trading\indicators\cvd\BETTE-03.pine,BETTE-03.pine,Composite (VSA+CVD),BETTE-03,D:\Work\Coding\Trading\indicators\order_flow\archive\bette_series\BETTE-03.pine
-D:\Work\Coding\Trading\indicators\cvd\BETTE-04.pine,BETTE-04.pine,Composite (VSA+CVD),BETTE-04,D:\Work\Coding\Trading\indicators\order_flow\Better_CVD_v4.pine
+D:\Work\Coding\Trading\indicators\cvd\Better-01.pine,Better-01.pine,Composite (VSA+CVD),Better-01,D:\Work\Coding\Trading\indicators\order_flow\archive\bette_series\Better-01.pine
+D:\Work\Coding\Trading\indicators\cvd\Better-02.pine,Better-02.pine,Composite (VSA+CVD),Better-02,D:\Work\Coding\Trading\indicators\order_flow\archive\bette_series\Better-02.pine
+D:\Work\Coding\Trading\indicators\cvd\Better-03.pine,Better-03.pine,Composite (VSA+CVD),Better-03,D:\Work\Coding\Trading\indicators\order_flow\archive\bette_series\Better-03.pine
+D:\Work\Coding\Trading\indicators\cvd\Better-04.pine,Better-04.pine,Composite (VSA+CVD),Better-04,D:\Work\Coding\Trading\indicators\order_flow\Better_CVD_v4.pine
 D:\Work\Coding\Trading\indicators\cvd\C+V+D.pine,C+V+D.pine,Composite (VSA+CVD),C+V+D,D:\Work\Coding\Trading\indicators\order_flow\archive\C+V+D_legacy.pine
 D:\Work\Coding\Trading\indicators\cvd\CVD Pro.pine,CVD Pro.pine,Composite (VSA+CVD),CVD Pro,D:\Work\Coding\Trading\indicators\order_flow\CVD_Pro.pine
 D:\Work\Coding\Trading\indicators\cvd\Vol+CVD.pine,Vol+CVD.pine,Composite (VSA+CVD),Vol+CVD,D:\Work\Coding\Trading\indicators\order_flow\archive\Vol+CVD_legacy.pine
