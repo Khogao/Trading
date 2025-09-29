@@ -1,0 +1,648 @@
+//@version=6
+// TITLE: CVD+VSA Pro
+// DESC: Fork từ Better CVD + (plotdiv-fork) với tích hợp 16 tín hiệu VSA cơ bản, absorption, UI tối giản, marker ký tự viết tắt, đúng màu/vị trí.
+// Author: Khogao, 2025
+
+indicator("CVD+VSA Pro", "CVP", overlay=false)
+import TradingView/ta/8
+
+// === GROUP: CVD CALCULATION SETTINGS ===
+const string GRP_CVD = "CVD Calculation"
+anchorInput = input.timeframe("D", "CVD Anchor Period", group = GRP_CVD, tooltip = "The timeframe at which the CVD calculation resets. 'D' is recommended for intraday.")
+useCustomTimeframeInput = input.bool(false, "Use Custom Lower Timeframe", group = GRP_CVD, tooltip = "Overrides the automatic selection of a lower timeframe for delta calculation. Use with caution.")
+lowerTimeframeInput = input.timeframe("1", "Lower Timeframe", group = GRP_CVD)
+
+// === GROUP: MA & BOLLINGER BANDS SETTINGS ===
+const string GRP_MA_BB = "MA & BB Settings"
+maTypeInput = input.string("SMA", "MA Type", options=["SMA", "EMA", "WMA", "VWMA"], group = GRP_MA_BB)
+maLengthInput = input.int(20, "MA Length", group = GRP_MA_BB)
+bbMultInput = input.float(2.0, "BB StdDev", minval=0.001, maxval=50, group = GRP_MA_BB)
+showBollingerBands = input.bool(true, "Show Bollinger Bands", group = GRP_MA_BB, tooltip="Shows Bollinger Bands on the CVD, acting as dynamic overbought/oversold levels.")
+
+// === GROUP: DIVERGENCE ENGINE SETTINGS ===
+const string GRP_DIVERGENCE = "Divergence Engine"
+showRegular = input.bool(true, "Show Regular Divergence (CVD+Price)", group = GRP_DIVERGENCE)
+showHidden = input.bool(true, "Show Hidden Divergence (CVD+Price)", group = GRP_DIVERGENCE)
+showCvdVolDiv = input.bool(true, "Show CVD+Volume Divergence", group = GRP_DIVERGENCE)
+lookbackLeft = input.int(5, "Pivot Lookback Left", group = GRP_DIVERGENCE)
+lookbackRight = input.int(5, "Pivot Lookback Right", group = GRP_DIVERGENCE)
+rangeLower = input.int(5, "Min Bars Between Pivots", group = GRP_DIVERGENCE)
+rangeUpper = input.int(60, "Max Bars Between Pivots", group = GRP_DIVERGENCE)
+
+// === GROUP: DISPLAY & TABLE ===
+const string GRP_DISPLAY = "Display & Table"
+plotStyle = input.string("Line with MA", "Plot Style", options=["Line with MA", "Candles"], group = GRP_DISPLAY)
+showCandleColors = input.bool(true, title="Color Price Candles on BB Breakout", group = GRP_DISPLAY, tooltip="Colors the main price candles when CVD breaks its Bollinger Bands.")
+showTable = input.bool(true, 'Show Multi-TF Table', group = GRP_DISPLAY)
+tablePosition = input.string("top_right", "Table Location", options=['top_left','top_right'], group = GRP_DISPLAY)
+
+// === CONSTANTS for Styling ===
+const color BULL_COLOR = color.new(color.green, 20)
+const color BEAR_COLOR = color.new(color.red, 20)
+const color HIDDEN_BULL_COLOR = color.new(color.green, 20)
+const color HIDDEN_BEAR_COLOR = color.new(color.red, 20)
+const color BULL_BG_COLOR = color.new(color.green, 80)
+const color BEAR_BG_COLOR = color.new(color.red, 80)
+
+// === MA helper ===
+ma(s, l, t) =>
+    switch t
+        "SMA" => ta.sma(s, l)
+        "EMA" => ta.ema(s, l)
+        "WMA" => ta.wma(s, l)
+        => ta.vwma(s, l)  // default VWMA
+
+// Lower TF resolver (works both in main scope and inside request.security)
+f_lowerTf() =>
+    if useCustomTimeframeInput
+        lowerTimeframeInput
+    else
+        switch
+            timeframe.isseconds => "1S"
+            timeframe.isintraday => "1" 
+            timeframe.isdaily => "5"
+            => "60"
+
+// Return CVD "close" from requestVolumeDelta
+f_cvdClose() =>
+    [_o, _h, _l, _c] = ta.requestVolumeDelta(f_lowerTf(), anchorInput)
+    _c 
+
+// === CVD CALCULATION ENGINE ===
+[openVolume, maxVolume, minVolume, lastVolume] = ta.requestVolumeDelta(f_lowerTf(), anchorInput)
+cvdSource = f_cvdClose()
+
+var float cumVol = 0.0
+cumVol += nz(volume)
+if barstate.islast and cumVol == 0
+    runtime.error("This symbol has no volume data, CVD cannot be calculated.")
+
+// === DIVERGENCE ENGINE ===
+plVal = ta.pivotlow(cvdSource, lookbackLeft, lookbackRight)
+phVal = ta.pivothigh(cvdSource, lookbackLeft, lookbackRight)
+plFound = not na(plVal)
+phFound = not na(phVal)
+plSince = ta.barssince(plFound)
+phSince = ta.barssince(phFound)
+inRangePL_now = plSince[1] >= rangeLower and plSince[1] <= rangeUpper
+inRangePH_now = phSince[1] >= rangeLower and phSince[1] <= rangeUpper
+
+priceLL = low[lookbackRight] < ta.valuewhen(plFound, low[lookbackRight], 1)
+cvdHL   = plVal > ta.valuewhen(plFound, plVal, 1) and inRangePL_now
+bullCond = showRegular and priceLL and cvdHL and plFound
+
+priceHH = high[lookbackRight] > ta.valuewhen(phFound, high[lookbackRight], 1)
+cvdLH   = phVal < ta.valuewhen(phFound, phVal, 1) and inRangePH_now
+bearCond = showRegular and priceHH and cvdLH and phFound
+
+priceHL = low[lookbackRight] > ta.valuewhen(plFound, low[lookbackRight], 1)
+cvdLL   = plVal < ta.valuewhen(plFound, plVal, 1) and inRangePL_now
+hiddenBullCond = showHidden and priceHL and cvdLL and plFound
+
+priceLH = high[lookbackRight] < ta.valuewhen(phFound, high[lookbackRight], 1)
+cvdHH   = phVal > ta.valuewhen(phFound, phVal, 1) and inRangePH_now
+hiddenBearCond = showHidden and priceLH and cvdHH and phFound
+
+// === CVD + VOLUME DIVERGENCE ENGINE ===
+vol_plVal = ta.pivotlow(volume, lookbackLeft, lookbackRight)
+vol_phVal = ta.pivothigh(volume, lookbackLeft, lookbackRight)
+vol_plFound = not na(vol_plVal)
+vol_phFound = not na(vol_phVal)
+vol_plSince = ta.barssince(vol_plFound)
+vol_phSince = ta.barssince(vol_phFound)
+vol_inRangePL_now = vol_plSince[1] >= rangeLower and vol_plSince[1] <= rangeUpper
+vol_inRangePH_now = vol_phSince[1] >= rangeLower and vol_phSince[1] <= rangeUpper
+prev_plVal = ta.valuewhen(plFound, plVal, 1)
+prev_vol_plVal = ta.valuewhen(vol_plFound, vol_plVal, 1)
+prev_phVal = ta.valuewhen(phFound, phVal, 1)
+prev_vol_phVal = ta.valuewhen(vol_phFound, vol_phVal, 1)
+cvdVolBull = showCvdVolDiv and plFound and vol_plFound and inRangePL_now and vol_inRangePL_now and plVal > prev_plVal and vol_plVal < prev_vol_plVal
+cvdVolBear = showCvdVolDiv and phFound and vol_phFound and inRangePH_now and vol_inRangePH_now and phVal < prev_phVal and vol_phVal > prev_vol_phVal
+
+// Plot divergence lines for CVD+Volume (dotted, blue/orange)
+var line lineVolBull = na
+var line lineVolBear = na
+f_plotVolDivLine(line lnIn, bool cond, bool isBear) =>
+    ln = lnIn
+    found  = isBear ? vol_phFound : vol_plFound
+    pivVal = isBear ? vol_phVal   : vol_plVal
+    x2 = na(pivVal) ? na : (bar_index - lookbackRight)
+    y2 = pivVal
+    x1 = ta.valuewhen(found, bar_index - lookbackRight, 1)
+    // avoid inline ternary inside function call (Pine parser quirk)
+    _volpiv_for_valuewhen = isBear ? vol_phVal : vol_plVal
+    y1 = ta.valuewhen(found, _volpiv_for_valuewhen, 1)
+    if cond and not na(x1) and not na(y1) and not na(x2) and not na(y2)
+        col = isBear ? color.orange : color.blue
+        line.delete(ln)
+        ln := line.new(x1, y1, x2, y2, color=col, width=2, style=line.style_dotted)
+    ln
+lineVolBull := f_plotVolDivLine(lineVolBull, cvdVolBull, false)
+lineVolBear := f_plotVolDivLine(lineVolBear, cvdVolBear, true)
+
+// Plot CVD+Volume divergence markers on the CVD chart at CVD pivots (like CVD+Price divergences)
+// helper: return true if integer array contains value (safe when array is empty)
+f_array_has_int(_arr, _val) =>
+    _n = array.size(_arr)
+    // fast-path: empty array -> not found
+    if _n == 0
+        false
+    else
+        found = false
+        for _i = 0 to _n - 1
+            if array.get(_arr, _i) == _val
+                found := true
+        found
+// declare vol label lifecycle arrays before use
+var label[] volLabels = array.new<label>()
+var int[] volLabelXs = array.new_int()
+
+f_tagCvdVolDiv(cond, isBear, isHidden) =>
+    if cond
+        x = bar_index - lookbackRight
+        y = isBear ? phVal : plVal
+        if not na(y)
+                // avoid duplicate Vol labels at same pivot x
+            if not na(x)
+                // arrays are always initialized with var, no need to check existence
+                // simple uniqueness check using volLabelXs to prevent duplicates at same pivot
+                // create label only if volLabelXs is empty or head != x
+                if array.size(volLabelXs) == 0
+                    txt = isHidden ? (isBear ? "Hidden VolBear" : "Hidden VolBull") : (isBear ? "VolBear" : "VolBull")
+                    bg  = isHidden ? (isBear ? color.new(color.orange, 60) : color.new(color.blue, 60)) : (isBear ? color.orange : color.blue)
+                    sty = isBear ? label.style_label_down : label.style_label_up
+                    lb = label.new(x=x, y=y, text=txt, style=sty, color=bg, textcolor=color.white, size=isHidden ? size.tiny : size.small)
+                    array.unshift(volLabels, lb)
+                    array.unshift(volLabelXs, x)
+                    if array.size(volLabels) > 100
+                        label.delete(array.get(volLabels, -1))
+                        array.pop(volLabels)
+                        array.pop(volLabelXs)
+                else
+                    // safe to read head now -> use helper to check for existing x
+                    if not f_array_has_int(volLabelXs, x)
+                        txt = isHidden ? (isBear ? "Hidden VolBear" : "Hidden VolBull") : (isBear ? "VolBear" : "VolBull")
+                        bg  = isHidden ? (isBear ? color.new(color.orange, 60) : color.new(color.blue, 60)) : (isBear ? color.orange : color.blue)
+                        sty = isBear ? label.style_label_down : label.style_label_up
+                        lb = label.new(x=x, y=y, text=txt, style=sty, color=bg, textcolor=color.white, size=isHidden ? size.tiny : size.small)
+                        array.unshift(volLabels, lb)
+                        array.unshift(volLabelXs, x)
+                        if array.size(volLabels) > 100
+                            label.delete(array.get(volLabels, -1))
+                            array.pop(volLabels)
+                            array.pop(volLabelXs)
+f_tagCvdVolDiv(cvdVolBull, false, false)
+f_tagCvdVolDiv(cvdVolBear, true, false)
+f_tagCvdVolDiv(cvdVolBull and not (bullCond or hiddenBullCond), false, true)
+f_tagCvdVolDiv(cvdVolBear and not (bearCond or hiddenBearCond), true, true)
+
+// === ARRAY-BASED PERSISTENT CVD+VOLUME DIVERGENCE LINES ===
+var float[] bull_xs = array.new_float()
+var float[] bull_ys = array.new_float()
+var float[] bear_xs = array.new_float()
+var float[] bear_ys = array.new_float()
+if cvdVolBull and plFound
+    array.unshift(bull_xs, bar_index - lookbackRight)
+    array.unshift(bull_ys, plVal)
+    if array.size(bull_xs) > 50
+        array.pop(bull_xs)
+        array.pop(bull_ys)
+if cvdVolBear and phFound
+    array.unshift(bear_xs, bar_index - lookbackRight)
+    array.unshift(bear_ys, phVal)
+    if array.size(bear_xs) > 50
+        array.pop(bear_xs)
+        array.pop(bear_ys)
+if array.size(bull_xs) > 1 and array.size(bull_ys) > 1
+    for i = 1 to math.min(array.size(bull_xs), array.size(bull_ys)) - 1
+        x1 = int(array.get(bull_xs, i))
+        y1 = array.get(bull_ys, i)
+        x2 = int(array.get(bull_xs, i - 1))
+        y2 = array.get(bull_ys, i - 1)
+        // Only draw if x1, x2 are within 500 bars of bar_index (TradingView's limit)
+        // and the gap between the two pivots is not larger than rangeUpper (prevents linking points across weeks)
+        gap = math.abs(x2 - x1)
+        if math.abs(bar_index - x1) <= 500 and math.abs(bar_index - x2) <= 500 and gap <= rangeUpper
+            line.new(x1, y1, x2, y2, color=color.blue, width=2, style=line.style_dotted)
+if array.size(bear_xs) > 1 and array.size(bear_ys) > 1
+    for i = 1 to math.min(array.size(bear_xs), array.size(bear_ys)) - 1
+        x1 = int(array.get(bear_xs, i))
+        y1 = array.get(bear_ys, i)
+        x2 = int(array.get(bear_xs, i - 1))
+        y2 = array.get(bear_ys, i - 1)
+        // enforce maximum allowed gap between consecutive pivots to avoid long-crossing lines
+        gap = math.abs(x2 - x1)
+        if math.abs(bar_index - x1) <= 500 and math.abs(bar_index - x2) <= 500 and gap <= rangeUpper
+            line.new(x1, y1, x2, y2, color=color.orange, width=2, style=line.style_dotted)
+plot(cvdVolBull and plFound ? plVal : na, offset=-lookbackRight, title="Phân kỳ CVD+Vol tăng (plot)", linewidth=2, color=color.blue)
+plot(cvdVolBear and phFound ? phVal : na, offset=-lookbackRight, title="Phân kỳ CVD+Vol giảm (plot)", linewidth=2, color=color.orange)
+plot(cvdVolBull and not (bullCond or hiddenBullCond) and plFound ? plVal : na, offset=-lookbackRight, title="Phân kỳ ẩn CVD+Vol tăng (plot)", linewidth=1, color=color.new(color.blue, 60))
+plot(cvdVolBear and not (bearCond or hiddenBearCond) and phFound ? phVal : na, offset=-lookbackRight, title="Phân kỳ ẩn CVD+Vol giảm (plot)", linewidth=1, color=color.new(color.orange, 60))
+
+// === PLOTTING ===
+hline(0, "Zero Line", color.gray, linestyle=hline.style_dashed)
+isLinePlot   = plotStyle == "Line with MA"
+isCandlePlot = plotStyle == "Candles"
+cvdMA = ma(cvdSource, maLengthInput, maTypeInput)
+cvdLineColor = cvdSource > cvdSource[1] ? color.blue : color.orange
+pCVD = plot(cvdSource, "CVD", color=cvdLineColor, linewidth=2, display=isLinePlot ? display.all : display.none)
+pMA  = plot(cvdMA, "CVD MA", color=color.gray, linewidth=1, display=isLinePlot ? display.all : display.none)
+fill(pCVD, pMA, color=isLinePlot ? (cvdSource > cvdMA ? color.new(color.blue, 80) : color.new(color.orange, 80)) : na)
+cCol = lastVolume >= openVolume ? color.teal : color.red
+plotcandle(openVolume, maxVolume, minVolume, lastVolume, "CVD", color=cCol, bordercolor=cCol, wickcolor=cCol, display=isCandlePlot ? display.all : display.none)
+cvdMA_bb = ta.sma(cvdSource, maLengthInput)
+bbUpper = cvdMA_bb + ta.stdev(cvdSource, maLengthInput) * bbMultInput
+bbLower = cvdMA_bb - ta.stdev(cvdSource, maLengthInput) * bbMultInput
+plot(bbUpper, "BB Trên", color.gray, style=plot.style_line, display=showBollingerBands ? display.all : display.none)
+plot(bbLower, "BB Dưới", color.gray, style=plot.style_line, display=showBollingerBands ? display.all : display.none)
+
+// Divergence lines/labels
+var line lineBull  = na
+var line lineBear  = na
+var line lineHBull = na
+var line lineHBear = na
+// Array lưu id label divergence để xóa label cũ khi vượt quá 100
+var label[] divLabels = array.new<label>()
+divLabelLimit = 100
+// companion array to track label x positions and avoid duplicates at same pivot
+var int[] divLabelXs = array.new_int()
+// CVD+Volume labels (separate lifecycle from price divergence labels)
+// ...existing code... (volLabels/volLabelXs declared earlier)
+f_plotDivLine(line lnIn, bool cond, bool isBear, bool isHidden) =>
+    ln = lnIn
+    found  = isBear ? phFound : plFound
+    pivVal = isBear ? phVal   : plVal
+    x2 = na(pivVal) ? na : (bar_index - lookbackRight)
+    y2 = pivVal
+    x1 = ta.valuewhen(found, bar_index - lookbackRight, 1)
+    // avoid inline ternary inside function call (Pine parser quirk)
+    _piv_for_valuewhen = isBear ? phVal : plVal
+    y1 = ta.valuewhen(found, _piv_for_valuewhen, 1)
+    if cond and not na(x1) and not na(y1) and not na(x2) and not na(y2)
+        // avoid drawing lines that span very large gaps (e.g., across weeks)
+        gap = math.abs(x2 - x1)
+        // also ensure pivots are within TradingView's 500-bar line limit
+        if math.abs(bar_index - x1) <= 500 and math.abs(bar_index - x2) <= 500 and gap <= rangeUpper
+            col = isHidden ? (isBear ? HIDDEN_BEAR_COLOR : HIDDEN_BULL_COLOR) : (isBear ? BEAR_COLOR : BULL_COLOR)
+            line.delete(ln)
+            ln := line.new(x1, y1, x2, y2, color=col, width=isHidden ? 1 : 3, style=isHidden ? line.style_dotted : line.style_solid)
+    ln
+lineBull  := f_plotDivLine(lineBull,  bullCond,        false, false)
+lineBear  := f_plotDivLine(lineBear,  bearCond,        true,  false)
+lineHBull := f_plotDivLine(lineHBull, hiddenBullCond,  false, true)
+lineHBear := f_plotDivLine(lineHBear, hiddenBearCond,  true,  true)
+f_tagDiv(cond, isBear, isHidden) =>
+    if cond
+        x = bar_index - lookbackRight
+        y = isBear ? phVal : plVal
+        if not na(y)
+            // avoid duplicate label at same pivot x
+            if array.size(divLabelXs) == 0
+                txt = isHidden ? (isBear ? "Hidden Bear" : "Hidden Bull") : (isBear ? "Bear" : "Bull")
+                bg  = isBear ? color.new(color.red, 0) : color.new(color.green, 0)
+                sty = isBear ? label.style_label_down : label.style_label_up
+                lb = label.new(x=x, y=y, text=txt, style=sty, color=bg, textcolor=color.white, size=size.tiny)
+                array.unshift(divLabels, lb)
+                array.unshift(divLabelXs, x)
+                if array.size(divLabels) > divLabelLimit
+                    label.delete(array.get(divLabels, -1))
+                    array.pop(divLabels)
+                    array.pop(divLabelXs)
+            else
+                if not f_array_has_int(divLabelXs, x)
+                    txt = isHidden ? (isBear ? "Hidden Bear" : "Hidden Bull") : (isBear ? "Bear" : "Bull")
+                    bg  = isBear ? color.new(color.red, 0) : color.new(color.green, 0)
+                    sty = isBear ? label.style_label_down : label.style_label_up
+                    lb = label.new(x=x, y=y, text=txt, style=sty, color=bg, textcolor=color.white, size=size.tiny)
+                    array.unshift(divLabels, lb)
+                    array.unshift(divLabelXs, x)
+                    if array.size(divLabels) > divLabelLimit
+                        label.delete(array.get(divLabels, -1))
+                        array.pop(divLabels)
+                        array.pop(divLabelXs)
+f_tagDiv(bullCond, false, false)
+f_tagDiv(bearCond, true,  false)
+f_tagDiv(hiddenBullCond, false, true)
+f_tagDiv(hiddenBearCond, true,  true)
+bgcolor(bullCond or hiddenBullCond ? BULL_BG_COLOR : na, title="Bullish Divergence BG Alert")
+bgcolor(bearCond or hiddenBearCond ? BEAR_BG_COLOR : na, title="Bearish Divergence BG Alert")
+cvd_is_overbought = cvdSource > bbUpper
+cvd_is_oversold = cvdSource < bbLower
+barcolor(showCandleColors and cvd_is_overbought ? color.new(color.red, 75) : na, title="CVD Overbought")
+barcolor(showCandleColors and cvd_is_oversold ? color.new(color.green, 75) : na, title="CVD Oversold")
+
+// === MULTI-TF TABLE (COMPACT DASHBOARD) ===
+cvd_15  = request.security(syminfo.tickerid, "15",  f_cvdClose())
+ma_15   = request.security(syminfo.tickerid, "15",  ta.sma(f_cvdClose(), maLengthInput))
+cvd_60  = request.security(syminfo.tickerid, "60",  f_cvdClose())
+ma_60   = request.security(syminfo.tickerid, "60",  ta.sma(f_cvdClose(), maLengthInput))
+cvd_240 = request.security(syminfo.tickerid, "240", f_cvdClose())
+ma_240  = request.security(syminfo.tickerid, "240", ta.sma(f_cvdClose(), maLengthInput))
+cell_col_15  = cvd_15  > ma_15  ? color.new(color.green, 70) : color.new(color.red, 70)
+cell_col_60  = cvd_60  > ma_60  ? color.new(color.green, 70) : color.new(color.red, 70)
+cell_col_240 = cvd_240 > ma_240 ? color.new(color.green, 70) : color.new(color.red, 70)
+if showTable and barstate.islast
+    // Map string -> position enum (safer for table.new)
+    table_pos = tablePosition == "top_right" ? position.top_right : position.top_left
+    var table cvdTable = table.new(position=table_pos, columns=2, rows=4, bgcolor=color.new(color.gray, 80), border_width=1, frame_color=color.new(color.gray, 60))
+    table.cell(cvdTable, 0, 0, "TF", text_size=size.tiny, bgcolor=color.new(color.gray, 60), text_color=color.white)
+    table.cell(cvdTable, 1, 0, "CVD", text_size=size.tiny, bgcolor=color.new(color.gray, 60), text_color=color.white)
+    table.cell(cvdTable, 0, 1, "15m", text_size=size.tiny)
+    table.cell(cvdTable, 1, 1, str.tostring(cvd_15, format.mintick), bgcolor=cell_col_15, text_color=color.white, text_size=size.tiny)
+    table.cell(cvdTable, 0, 2, "1H", text_size=size.tiny)
+    table.cell(cvdTable, 1, 2, str.tostring(cvd_60, format.mintick), bgcolor=cell_col_60, text_color=color.white, text_size=size.tiny)
+    table.cell(cvdTable, 0, 3, "4H", text_size=size.tiny)
+    table.cell(cvdTable, 1, 3, str.tostring(cvd_240, format.mintick), bgcolor=cell_col_240, text_color=color.white, text_size=size.tiny)
+
+// alerts are declared later after VSA logic to ensure volume guards are available
+
+// === VOLUME COLOR CODING (VSA Wyckoff style) ===
+showVolume = input.bool(true, "Show Volume Chart", group="Volume Color")
+lengthVolumeMA = input.int(20, title="Length of Volume MA", minval=1, group="Volume Color")
+ratioUltraVolume = input.float(2.2, title="Ultra High Volume Ratio", minval=0, group="Volume Color")
+ratioVeryHighVolume = input.float(1.8, title="Very High Volume Ratio", minval=0, group="Volume Color")
+ratioHighVolume = input.float(1.2, title="High Volume Ratio", minval=0, group="Volume Color")
+ratioNormalVolume = input.float(0.8, title="Normal Volume Ratio", minval=0, group="Volume Color")
+ratioLowVolume = input.float(0.4, title="Low Volume Ratio", minval=0, group="Volume Color")
+volumeMA_vsa = ta.rma(volume, lengthVolumeMA)
+ultraHighVolumeMin = volumeMA_vsa * ratioUltraVolume
+veryHighVolumeMin = volumeMA_vsa * ratioVeryHighVolume
+highVolumeMin = volumeMA_vsa * ratioHighVolume
+normalVolumeMin = volumeMA_vsa * ratioNormalVolume
+lowVolumeMin = volumeMA_vsa * ratioLowVolume
+isUltraHigh = volume >= ultraHighVolumeMin
+isVeryHigh = volume >= veryHighVolumeMin and volume < ultraHighVolumeMin
+isHigh = volume >= highVolumeMin and volume < veryHighVolumeMin
+isNormal = volume >= normalVolumeMin and volume < highVolumeMin
+isLow = volume >= lowVolumeMin and volume < normalVolumeMin
+isVeryLow = volume < lowVolumeMin
+paletteColor = isUltraHigh ? color.new(color.purple, 20) :
+               isVeryHigh  ? color.new(color.red, 20) :
+               isHigh      ? color.new(color.orange, 20) :
+               isNormal    ? color.new(color.green, 20) :
+               isLow       ? color.new(color.blue, 20) :
+                             color.new(color.gray, 20)
+plot(volume, title="Volume", color=paletteColor, style=plot.style_columns, linewidth=1, display=showVolume ? display.all : display.none)
+
+// === VSA SIGNAL PLOTTING ===
+// === VSA SIGNALS INPUT ===
+var string GRP_VSA = "VSA Signals"
+showVSASignals = input.bool(true, "Hiển thị tín hiệu VSA", group=GRP_VSA)
+showSC = input.bool(true, "Selling Climax (SC)", group=GRP_VSA)
+showBC = input.bool(true, "Buying Climax (BC)", group=GRP_VSA)
+showND = input.bool(true, "No Demand (ND)", group=GRP_VSA)
+showNS = input.bool(true, "No Supply (NS)", group=GRP_VSA)
+showEF = input.bool(true, "Effort to Fall (EF)", group=GRP_VSA)
+showER = input.bool(true, "Effort to Rise (ER)", group=GRP_VSA)
+showNE = input.bool(true, "No Effort Down (NE)", group=GRP_VSA)
+showNU = input.bool(true, "No Effort Up (NU)", group=GRP_VSA)
+showBH = input.bool(true, "Bag Holding (BH)", group=GRP_VSA)
+showUT = input.bool(true, "Upthrust (UT)", group=GRP_VSA)
+showSP = input.bool(true, "Spring (SP)", group=GRP_VSA)
+showTE = input.bool(true, "Test (TE)", group=GRP_VSA)
+showSV = input.bool(true, "Stopping Volume (SV)", group=GRP_VSA)
+showWK = input.bool(true, "Weakness (WK)", group=GRP_VSA)
+showST = input.bool(true, "Strength (ST)", group=GRP_VSA)
+showSO = input.bool(true, "Shakeout (SO)", group=GRP_VSA)
+showVSALegend = input.bool(true, "Hiển thị chú giải VSA (legend)", group=GRP_VSA)
+legendPosition = input.string("bottom_right", "Vị trí legend", options=["top_left","top_right","bottom_left","bottom_right"], group=GRP_VSA)
+vsaVolumeLength = input.int(20, "Độ dài MA Volume cho VSA", minval=5, maxval=100, group=GRP_VSA)
+vsaSensitivity = input.float(1.5, "Độ nhạy VSA", minval=1.0, maxval=3.0, step=0.1, group=GRP_VSA)
+// Optional volume classifier method: keep "ratio" for backward compatibility
+vsaClassifierMethod = input.string("zscore", "Volume classifier method", options=["ratio", "zscore"], group=GRP_VSA)
+// Z-score thresholds: separate for lower-timeframe (LTF: 1-15m) and higher-timeframe (HTF: 1H+)
+vsa_zscore_sensitivity_ltf = input.float(2.5, "VSA Z-score Sensitivity (LTF 1-15m)", minval=0.5, maxval=6.0, step=0.1, group=GRP_VSA, tooltip="Start higher on LTF to reduce noise")
+vsa_zscore_sensitivity_htf = input.float(1.6, "VSA Z-score Sensitivity (HTF 1H+)", minval=0.5, maxval=6.0, step=0.1, group=GRP_VSA, tooltip="Lower on HTF where signals are cleaner")
+
+// compute effective sensitivity depending on chart timeframe
+mult_num = timeframe.multiplier
+isLTF = timeframe.isintraday and mult_num <= 15
+isHTF = timeframe.isdaily or timeframe.isweekly or (timeframe.isintraday and mult_num >= 60)
+vsa_zscore_sensitivity = isLTF ? vsa_zscore_sensitivity_ltf : (isHTF ? vsa_zscore_sensitivity_htf : vsa_zscore_sensitivity_htf)
+// Optional confirmation and label throttling
+vsaRequireCvdConfirm = input.bool(false, "Require CVD confirmation (bull -> CVD>MA, bear -> CVD<MA)", group=GRP_VSA)
+vsaLabelLimit = input.int(200, "Max VSA Labels", minval=10, maxval=2000, group=GRP_VSA)
+
+// === VSA LOGIC ===
+// compute moving average and basic spreads
+volumeMA_vsa2 = ta.sma(volume, vsaVolumeLength)
+atr_vsa = ta.atr(14)
+spread_vsa = high - low
+wideSpread_vsa = spread_vsa > atr_vsa * 1.2
+narrowSpread_vsa = spread_vsa < atr_vsa * 0.5
+
+// safety helpers for ratio and z-score classification
+f_safe_ratio(num, den, defVal) => den == 0 ? defVal : num / den
+f_zscore(series, length) =>
+    _ma = ta.sma(series, length)
+    _sd = ta.stdev(series, length)
+    _sd == 0 ? 0.0 : (series - _ma) / _sd
+
+// compute both ratio and z-score candidates
+vol_z = f_zscore(volume, vsaVolumeLength)
+volRatio = f_safe_ratio(volume, volumeMA_vsa2, 1.0)
+
+isHigh_ratio = volRatio >= vsaSensitivity
+isVeryHigh_ratio = volRatio >= (vsaSensitivity * 1.5)
+isUltraHigh_ratio = volRatio >= (vsaSensitivity * 2.0)
+
+isHigh_zscore = vol_z >= vsa_zscore_sensitivity
+isVeryHigh_zscore = vol_z >= (vsa_zscore_sensitivity + 1.0)
+isUltraHigh_zscore = vol_z >= (vsa_zscore_sensitivity + 2.0)
+
+// final flags chosen by method (keeps ratio as default for compatibility)
+isHigh_final = vsaClassifierMethod == "zscore" ? isHigh_zscore : isHigh_ratio
+isVeryHigh_final = vsaClassifierMethod == "zscore" ? isVeryHigh_zscore : isVeryHigh_ratio
+isUltraHigh_final = vsaClassifierMethod == "zscore" ? isUltraHigh_zscore : isUltraHigh_ratio
+
+// low-volume remains ratio-based
+lowVolume_vsa = volume < volumeMA_vsa2 * 0.7
+
+// expose VSA booleans for signals
+highVolume_vsa = isHigh_final
+veryHighVolume_vsa = isVeryHigh_final
+ultraHighVolume_vsa = isUltraHigh_final
+
+// reliable volume guard: ensure there is meaningful historical volume
+volumeMax_vsa = ta.highest(volume, vsaVolumeLength)
+hasReliableVolume = not na(volume) and volumeMax_vsa > 0
+// small epsilon to avoid divide-by-zero when high==low
+_range_eps = 1e-8
+normClosePos = (close - low) / math.max(high - low, _range_eps)
+
+// 16 tín hiệu VSA cơ bản nhất (có thể bật/tắt từng tín hiệu)
+sellingClimax = showSC and veryHighVolume_vsa and close < open and normClosePos < 0.3
+buyingClimax = showBC and veryHighVolume_vsa and close > open and normClosePos > 0.7
+noDemand = showND and lowVolume_vsa and close > open and normClosePos < 0.6 and close[1] < close[2]
+noSupply = showNS and lowVolume_vsa and close < open and normClosePos > 0.4 and close[1] > close[2]
+effortToFall = showEF and highVolume_vsa and wideSpread_vsa and close < open and normClosePos > 0.7
+effortToRise = showER and highVolume_vsa and wideSpread_vsa and close > open and normClosePos < 0.3
+noEffortDown = showNE and lowVolume_vsa and narrowSpread_vsa and close < open
+noEffortUp = showNU and lowVolume_vsa and narrowSpread_vsa and close > open
+bagHolding = showBH and ultraHighVolume_vsa and wideSpread_vsa and normClosePos < 0.2
+upthrust = showUT and highVolume_vsa and high > high[1] and close < close[1] and normClosePos < 0.5
+spring = showSP and lowVolume_vsa and low < low[1] and close > low and normClosePos > 0.5
+test = showTE and lowVolume_vsa and narrowSpread_vsa and normClosePos > 0.7 and close[1] < close[2]
+stoppingVolume = showSV and ultraHighVolume_vsa and narrowSpread_vsa and ((close > open and close[1] < open[1]) or (close < open and close[1] > open[1]))
+// NOTE: weakness should be a bearish signal (down close on high volume) and strength a bullish one
+weakness = showWK and highVolume_vsa and wideSpread_vsa and close < open and normClosePos < 0.5
+strength = showST and highVolume_vsa and wideSpread_vsa and close > open and normClosePos > 0.5
+shakeout = showSO and highVolume_vsa and low < low[1] and close > close[1] and normClosePos > 0.6
+
+
+// Gom tín hiệu VSA trên 1 candle thành 1 marker duy nhất
+
+// Gom tín hiệu VSA trên 1 candle thành 1 marker duy nhất (dùng label.new để text động)
+var string[] vsaNames = array.new_string()
+var string vsaText = ""
+var label[] vsaLabels = array.new<label>()
+// companion array to track label x positions for de-duplication
+var int[] vsaLabelXs = array.new_int()
+// compute simple CVD confirmation flags (uses cvdMA from above)
+cvdConfirmBull = cvdSource > cvdMA
+cvdConfirmBear = cvdSource < cvdMA
+if showVSASignals
+    vsaText := ""
+    array.clear(vsaNames)
+    // count bull / bear signals
+    bullCount = 0
+    bearCount = 0
+    // Bearish signals (only push if confirmation not required or CVD confirms)
+    if sellingClimax and (not vsaRequireCvdConfirm or cvdConfirmBear)
+        array.push(vsaNames, "SC")
+        bearCount += 1
+    if noDemand and (not vsaRequireCvdConfirm or cvdConfirmBear)
+        array.push(vsaNames, "ND")
+        bearCount += 1
+    if effortToFall and (not vsaRequireCvdConfirm or cvdConfirmBear)
+        array.push(vsaNames, "EF")
+        bearCount += 1
+    if noEffortDown and (not vsaRequireCvdConfirm or cvdConfirmBear)
+        array.push(vsaNames, "NE")
+        bearCount += 1
+    if bagHolding and (not vsaRequireCvdConfirm or cvdConfirmBear)
+        array.push(vsaNames, "BH")
+        bearCount += 1
+    if upthrust and (not vsaRequireCvdConfirm or cvdConfirmBear)
+        array.push(vsaNames, "UT")
+        bearCount += 1
+    if weakness and (not vsaRequireCvdConfirm or cvdConfirmBear)
+        array.push(vsaNames, "WK")
+        bearCount += 1
+    // Bullish signals (only push if confirmation not required or CVD confirms)
+    if buyingClimax and (not vsaRequireCvdConfirm or cvdConfirmBull)
+        array.push(vsaNames, "BC")
+        bullCount += 1
+    if noSupply and (not vsaRequireCvdConfirm or cvdConfirmBull)
+        array.push(vsaNames, "NS")
+        bullCount += 1
+    if effortToRise and (not vsaRequireCvdConfirm or cvdConfirmBull)
+        array.push(vsaNames, "ER")
+        bullCount += 1
+    if noEffortUp and (not vsaRequireCvdConfirm or cvdConfirmBull)
+        array.push(vsaNames, "NU")
+        bullCount += 1
+    if spring and (not vsaRequireCvdConfirm or cvdConfirmBull)
+        array.push(vsaNames, "SP")
+        bullCount += 1
+    if test and (not vsaRequireCvdConfirm or cvdConfirmBull)
+        array.push(vsaNames, "TE")
+        bullCount += 1
+    if stoppingVolume and (not vsaRequireCvdConfirm or cvdConfirmBull)
+        array.push(vsaNames, "SV")
+        bullCount += 1
+    if strength and (not vsaRequireCvdConfirm or cvdConfirmBull)
+        array.push(vsaNames, "ST")
+        bullCount += 1
+    if shakeout and (not vsaRequireCvdConfirm or cvdConfirmBull)
+        array.push(vsaNames, "SO")
+        bullCount += 1
+    // Tạo text dạng A+B+C nếu có tín hiệu
+    if array.size(vsaNames) > 0
+        for i = 0 to array.size(vsaNames) - 1
+            vsaText := vsaText == "" ? array.get(vsaNames, i) : vsaText + "+" + array.get(vsaNames, i)
+        // Chỉ plot nếu có ít nhất 1 tín hiệu và ở bar confirmed
+        if vsaText != "" and barstate.isconfirmed
+            // Determine overall type by difference in counts
+            diff = bullCount - bearCount
+            vsaType = math.sign(diff)
+            // Chọn màu: bull (xanh), bear (đỏ), neutral (xanh dương)
+            vsaColor = vsaType == 1 ? color.green : vsaType == -1 ? color.red : color.blue
+            vsaY = cvdSource
+            vsaStyle = vsaType == 1 ? label.style_label_up : vsaType == -1 ? label.style_label_down : label.style_label_down
+            // avoid duplicate labels at the same bar
+            if array.size(vsaLabelXs) == 0
+                lb = label.new(x=bar_index, y=vsaY, text=vsaText, style=vsaStyle, color=vsaColor, textcolor=color.white, size=size.tiny)
+                // manage lifecycle: keep labels bounded
+                array.unshift(vsaLabels, lb)
+                array.unshift(vsaLabelXs, bar_index)
+                if array.size(vsaLabels) > vsaLabelLimit
+                    label.delete(array.get(vsaLabels, -1))
+                    array.pop(vsaLabels)
+                    array.pop(vsaLabelXs)
+            else
+                if not f_array_has_int(vsaLabelXs, bar_index)
+                    lb = label.new(x=bar_index, y=vsaY, text=vsaText, style=vsaStyle, color=vsaColor, textcolor=color.white, size=size.tiny)
+                    // manage lifecycle: keep labels bounded
+                    array.unshift(vsaLabels, lb)
+                    array.unshift(vsaLabelXs, bar_index)
+                    if array.size(vsaLabels) > vsaLabelLimit
+                        label.delete(array.get(vsaLabels, -1))
+                        array.pop(vsaLabels)
+                        array.pop(vsaLabelXs)
+
+// === VSA LEGEND TABLE ===
+if showVSALegend and barstate.islast
+    // Map legendPosition string to position enum
+    legend_pos = legendPosition == "bottom_right" ? position.bottom_right : legendPosition == "bottom_left" ? position.bottom_left : legendPosition == "top_right" ? position.top_right : position.top_left
+    var table vsaLegend = table.new(position=legend_pos, columns=2, rows=16, bgcolor=color.new(color.gray, 90), border_width=1, frame_color=color.new(color.gray, 60))
+    table.cell(vsaLegend, 0, 0, "SC", text_size=size.tiny, text_color=color.red, bgcolor=color.new(color.red, 90))
+    table.cell(vsaLegend, 1, 0, "Selling Climax", text_size=size.tiny)
+    table.cell(vsaLegend, 0, 1, "BC", text_size=size.tiny, text_color=color.green, bgcolor=color.new(color.green, 90))
+    table.cell(vsaLegend, 1, 1, "Buying Climax", text_size=size.tiny)
+    table.cell(vsaLegend, 0, 2, "ND", text_size=size.tiny, text_color=color.red, bgcolor=color.new(color.red, 90))
+    table.cell(vsaLegend, 1, 2, "No Demand", text_size=size.tiny)
+    table.cell(vsaLegend, 0, 3, "NS", text_size=size.tiny, text_color=color.green, bgcolor=color.new(color.green, 90))
+    table.cell(vsaLegend, 1, 3, "No Supply", text_size=size.tiny)
+    table.cell(vsaLegend, 0, 4, "EF", text_size=size.tiny, text_color=color.red, bgcolor=color.new(color.red, 90))
+    table.cell(vsaLegend, 1, 4, "Effort to Fall", text_size=size.tiny)
+    table.cell(vsaLegend, 0, 5, "ER", text_size=size.tiny, text_color=color.green, bgcolor=color.new(color.green, 90))
+    table.cell(vsaLegend, 1, 5, "Effort to Rise", text_size=size.tiny)
+    table.cell(vsaLegend, 0, 6, "NE", text_size=size.tiny, text_color=color.blue, bgcolor=color.new(color.blue, 90))
+    table.cell(vsaLegend, 1, 6, "No Effort Down", text_size=size.tiny)
+    table.cell(vsaLegend, 0, 7, "NU", text_size=size.tiny, text_color=color.blue, bgcolor=color.new(color.blue, 90))
+    table.cell(vsaLegend, 1, 7, "No Effort Up", text_size=size.tiny)
+    table.cell(vsaLegend, 0, 8, "BH", text_size=size.tiny, text_color=color.red, bgcolor=color.new(color.red, 90))
+    table.cell(vsaLegend, 1, 8, "Bag Holding", text_size=size.tiny)
+    table.cell(vsaLegend, 0, 9, "UT", text_size=size.tiny, text_color=color.red, bgcolor=color.new(color.red, 90))
+    table.cell(vsaLegend, 1, 9, "Upthrust", text_size=size.tiny)
+    table.cell(vsaLegend, 0, 10, "SP", text_size=size.tiny, text_color=color.green, bgcolor=color.new(color.green, 90))
+    table.cell(vsaLegend, 1, 10, "Spring", text_size=size.tiny)
+    table.cell(vsaLegend, 0, 11, "TE", text_size=size.tiny, text_color=color.green, bgcolor=color.new(color.green, 90))
+    table.cell(vsaLegend, 1, 11, "Test", text_size=size.tiny)
+    table.cell(vsaLegend, 0, 12, "SV", text_size=size.tiny, text_color=color.green, bgcolor=color.new(color.green, 90))
+    table.cell(vsaLegend, 1, 12, "Stopping Volume", text_size=size.tiny)
+    table.cell(vsaLegend, 0, 13, "WK", text_size=size.tiny, text_color=color.red, bgcolor=color.new(color.red, 90))
+    table.cell(vsaLegend, 1, 13, "Weakness", text_size=size.tiny)
+    table.cell(vsaLegend, 0, 14, "ST", text_size=size.tiny, text_color=color.green, bgcolor=color.new(color.green, 90))
+    table.cell(vsaLegend, 1, 14, "Strength", text_size=size.tiny)
+    table.cell(vsaLegend, 0, 15, "SO", text_size=size.tiny, text_color=color.blue, bgcolor=color.new(color.blue, 90))
+    table.cell(vsaLegend, 1, 15, "Shakeout", text_size=size.tiny)
+
+// classify regular vs hidden CVD+Volume divergence flags used by alerts
+regCvdVolBull = cvdVolBull and plFound
+regCvdVolBear = cvdVolBear and phFound
+hiddenCvdVolBull = cvdVolBull and not (bullCond or hiddenBullCond) and plFound
+hiddenCvdVolBear = cvdVolBear and not (bearCond or hiddenBearCond) and phFound
+
+// === ALERTS (declared after VSA logic to ensure guards are available) ===
+alertcondition(bullCond, 'Regular Bullish CVD Divergence', 'BetterCVD: Regular Bullish')
+alertcondition(bearCond, 'Regular Bearish CVD Divergence', 'BetterCVD: Regular Bearish')
+alertcondition(hiddenBullCond, 'Hidden Bullish CVD Divergence', 'BetterCVD: Hidden Bullish')
+alertcondition(hiddenBearCond, 'Hidden Bearish CVD Divergence', 'BetterCVD: Hidden Bearish')
+alertcondition(cvd_is_overbought, 'CVD Overbought (BB Break)', 'BetterCVD: CVD Overbought')
+alertcondition(cvd_is_oversold, 'CVD Oversold (BB Break)', 'BetterCVD: CVD Oversold')
+alertcondition(regCvdVolBull and hasReliableVolume, 'Regular Bullish CVD+Volume Divergence', 'BetterCVD: Regular CVD+Volume Bullish')
+alertcondition(regCvdVolBear and hasReliableVolume, 'Regular Bearish CVD+Volume Divergence', 'BetterCVD: Regular CVD+Volume Bearish')
+alertcondition(hiddenCvdVolBull and hasReliableVolume, 'Hidden Bullish CVD+Volume Divergence', 'BetterCVD: Hidden CVD+Volume Bullish')
+alertcondition(hiddenCvdVolBear and hasReliableVolume, 'Hidden Bearish CVD+Volume Divergence', 'BetterCVD: Hidden CVD+Volume Bearish')
