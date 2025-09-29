@@ -1,0 +1,450 @@
+//@version=5
+// TITLE: VP Production v4.3 (VPP43) + HTF Lines
+// DESC: Giữ nguyên engine VP của VPP43, bổ sung 3 đường HTF POC/VAH/VAL qua request.security (no repaint).
+indicator(title='VP Production v4.3 + HTF Lines', shorttitle='VP Prod v4.3 HTF', overlay=true, max_bars_back=5000, max_boxes_count=500, max_lines_count=500, dynamic_requests=true)
+
+// === INPUTS ===
+var GRP_PROFILE = "🔥 1. Master Profile"
+profile_selector = input.string("LTF Sniper", "Setting Profile", options=["HTF Strategist", "LTF Sniper", "Custom"], group=GRP_PROFILE, tooltip="Chọn preset hoặc Custom.")
+
+var GRP_CORE = "2. Core Settings (Custom)"
+vp_lookback_depth_custom   = input.int(200, 'Lookback Bars', minval=20, maxval=1000, group=GRP_CORE)
+intraday_mode_custom       = input.bool(true, 'Intraday Mode', group=GRP_CORE)
+session_focus_custom       = input.bool(true, 'Focus on Current Session', group=GRP_CORE)
+intraday_lookback_days_custom = input.int(4, 'Intraday Lookback (days)', minval=1, maxval=30, group=GRP_CORE)
+vp_num_levels              = input.int(120, 'Price Levels', minval=20, maxval=200, group=GRP_CORE)
+
+var GRP_EXEC = "3. Execution & Display"
+execution_sensitivity = input.string("Medium", "Execution Sensitivity", options=["Ultra","High","Medium","Low"], group=GRP_EXEC)
+auto_adjust_tf        = input.bool(true, "Auto-adjust TF Mapping", group=GRP_EXEC)
+vp_bar_width          = input.int(40, "Bar Max Width (px)", minval=1, maxval=500, group=GRP_EXEC)
+vp_right_offset       = input.int(20, "Right Offset (bars)", minval=0, maxval=300, group=GRP_EXEC)
+show_status_label     = input.bool(false, "Show 'Calculating' Status", group=GRP_EXEC)
+
+// HTF (đặt trong Execution giống VPP43)
+enable_htf_vp  = input.bool(true, "Show HTF VP (request.security)", group=GRP_EXEC)
+htf_tf         = input.string("240", "HTF timeframe (e.g. D, 240, 60)", group=GRP_EXEC)
+htf_lookback   = input.int(30, "HTF lookback (bars on HTF)", minval=5, maxval=200, group=GRP_EXEC)
+htf_levels     = input.int(60, "HTF Price Levels", minval=20, maxval=200, group=GRP_EXEC)
+htf_va_percent = input.int(70, "HTF Value Area %", minval=10, maxval=99, group=GRP_EXEC)
+htf_color_poc  = input.color(color.new(color.orange, 0), "HTF POC Color", group=GRP_EXEC, inline="htfc")
+htf_color_va   = input.color(color.new(color.teal,   0), "HTF VA Color",  group=GRP_EXEC, inline="htfc")
+
+var GRP_VP = "4. Volume Profile Styling"
+vp_volume_type   = input.string("Both","Volume Type", options=["Both","Bullish","Bearish"], group=GRP_VP)
+vp_va_percent    = input.int(70, "Value Area % (Swing)", minval=10, maxval=99, group=GRP_VP)
+intraday_va_percent = input.int(70, "Value Area % (Intraday)", minval=10, maxval=99, group=GRP_VP)
+vp_vol_color     = input.color(color.new(color.gray, 70), "Volume Bar Color", group=GRP_VP, inline="1")
+vp_show_poc      = input.bool(true, "Show POC Box", group=GRP_VP)
+vp_poc_color     = input.color(color.new(color.orange, 0), "POC Color", group=GRP_VP, inline="1")
+vp_show_va       = input.bool(true, "Shade Value Area", group=GRP_VP)
+vp_va_color      = input.color(color.new(color.teal, 70), "VA Fill Color", group=GRP_VP, inline="2")
+vp_show_hva      = input.bool(false, "Highlight HVA Bars", group=GRP_VP)
+vp_hva_threshold = input.int(70, "HVA Threshold (%)", minval=1, maxval=100, group=GRP_VP)
+vp_hva_color     = input.color(color.new(color.blue, 60), "HVA Fill Color", group=GRP_VP, inline="2")
+vp_show_va_lines = input.bool(true, "Draw VA Lines", group=GRP_VP)
+vp_va_line_color = input.color(color.new(color.teal, 0), "VA Line Color", group=GRP_VP)
+vp_va_line_width = input.int(1, "VA Line Width", minval=1, maxval=4, group=GRP_VP)
+
+var GRP_ADV_SESSION = "5. Advanced: Session"
+session_weight_custom = input.float(1.2, "Session Weight Factor", minval=0.1, maxval=5.0, step=0.1, group=GRP_ADV_SESSION)
+intraday_start_hour   = input.int(9,  "Intraday Start Hour",  minval=0, maxval=23, group=GRP_ADV_SESSION)
+intraday_end_hour     = input.int(17, "Intraday End Hour",    minval=0, maxval=23, group=GRP_ADV_SESSION)
+
+var GRP_STRUCT = "6. Structure Nodes"
+structure_show_nodes   = input.bool(false, "Show HVN/LVN Zones", group=GRP_STRUCT)
+structure_hvn_threshold= input.int(80, "HVN Threshold (% of Max Vol)", minval=1, maxval=100, group=GRP_STRUCT)
+structure_lvn_threshold= input.int(20, "LVN Threshold (% of Max Vol)", minval=0, maxval=100, group=GRP_STRUCT)
+structure_hvn_color    = input.color(color.new(color.gray, 85), "HVN Fill", group=GRP_STRUCT)
+structure_lvn_color    = input.color(color.new(color.gray, 92), "LVN Fill", group=GRP_STRUCT)
+
+var GRP_TABLE = "7. Info Table"
+table_pos = input.string("Top Right", "Table Position", options=["Top Right","Top Left","Bottom Right","Bottom Left"], group=GRP_TABLE)
+
+// === PROFILE LOGIC (preset) ===
+var int   vp_lookback_depth   = na
+var int   intraday_lookback_days = na
+var bool  intraday_mode       = na
+var bool  session_focus       = na
+if profile_selector == "HTF Strategist"
+    vp_lookback_depth := 400
+    intraday_mode := false
+    session_focus := false
+    intraday_lookback_days := 30
+else if profile_selector == "LTF Sniper"
+    vp_lookback_depth := 200
+    intraday_mode := true
+    session_focus := true
+    intraday_lookback_days := 4
+else
+    vp_lookback_depth := vp_lookback_depth_custom
+    intraday_mode := intraday_mode_custom
+    session_focus := session_focus_custom
+    intraday_lookback_days := intraday_lookback_days_custom
+
+// === VARIABLES ===
+var float[] volume_at_price = array.new_float(0)
+var box[]   volume_boxes    = array.new_box(0)
+var box[]   node_boxes      = array.new_box(0)
+var box     poc_box         = na
+var int     last_calc_bar   = 0
+var float   price_high      = na
+var float   price_low       = na
+var float   price_step      = na
+var float   prev_poc_price  = na
+var line    vah_line        = na
+var line    val_line        = na
+var table   info_table      = na
+var label   status_label    = na
+var string  last_table_pos  = na
+
+// HTF line handles
+var line htf_poc_line = na
+var line htf_vah_line = na
+var line htf_val_line = na
+var float poc_htf = na, var float vah_htf = na, var float val_htf = na
+
+// === HELPERS ===
+f_get_timeframe_mode() =>
+    string tf_str = 'Other'
+    if not auto_adjust_tf
+        tf_str := 'Manual'
+    else if timeframe.isdaily
+        tf_str := '1D'
+    else if timeframe.isintraday
+        if timeframe.multiplier >= 240
+            tf_str := '4H'
+        else if timeframe.multiplier >= 60
+            tf_str := '1H'
+        else if timeframe.multiplier >= 15
+            tf_str := '15m'
+        else if timeframe.multiplier >= 5
+            tf_str := '5m'
+        else
+            tf_str := '1m'
+    tf_str
+
+f_price_to_index(price, local_price_low, local_price_step) =>
+    local_price_step > 0 ? int(math.max(0, math.min(vp_num_levels - 1, math.floor((price - local_price_low) / local_price_step)))) : 0
+
+f_calculate_value_area(poc_idx, total_vol, local_price_low, local_price_step, va_percentage) =>
+    if poc_idx < 0 or total_vol <= 0
+        [na, na]
+    else
+        target_volume = total_vol * va_percentage / 100
+        va_volume = array.get(volume_at_price, poc_idx)
+        va_upper = poc_idx
+        va_lower = poc_idx
+        while va_volume < target_volume and (va_upper < vp_num_levels - 1 or va_lower > 0)
+            vol_above = va_upper < vp_num_levels - 1 ? array.get(volume_at_price, va_upper + 1) : 0.0
+            vol_below = va_lower > 0 ? array.get(volume_at_price, va_lower - 1) : 0.0
+            if vol_above >= vol_below and va_upper < vp_num_levels - 1
+                va_upper += 1
+                va_volume += vol_above
+            else if va_lower > 0
+                va_lower -= 1
+                va_volume += vol_below
+            else
+                break
+        [local_price_low + va_lower * local_price_step, local_price_low + va_upper * local_price_step]
+
+f_find_and_draw_nodes(max_vol, local_price_low, local_price_step, effective_lookback) =>
+    hvn_vol_threshold = max_vol * structure_hvn_threshold / 100
+    lvn_vol_threshold = max_vol * structure_lvn_threshold / 100
+    in_hvn_zone = false
+    hvn_start_idx = -1
+    for i = 0 to vp_num_levels - 1
+        is_hvn = array.get(volume_at_price, i) >= hvn_vol_threshold
+        if is_hvn and not in_hvn_zone
+            in_hvn_zone := true
+            hvn_start_idx := i
+        if not is_hvn and in_hvn_zone
+            in_hvn_zone := false
+            array.push(node_boxes, box.new(bar_index - effective_lookback, local_price_low + hvn_start_idx * local_price_step, bar_index + vp_right_offset, local_price_low + i * local_price_step, border_color=na, bgcolor=structure_hvn_color))
+    if in_hvn_zone
+        array.push(node_boxes, box.new(bar_index - effective_lookback, local_price_low + hvn_start_idx * local_price_step, bar_index + vp_right_offset, local_price_low + (vp_num_levels) * local_price_step, border_color=na, bgcolor=structure_hvn_color))
+    in_lvn_zone = false
+    lvn_start_idx = -1
+    for i = 0 to vp_num_levels - 1
+        is_lvn = array.get(volume_at_price, i) <= lvn_vol_threshold
+        if is_lvn and not in_lvn_zone
+            in_lvn_zone := true
+            lvn_start_idx := i
+        if not is_lvn and in_lvn_zone
+            in_lvn_zone := false
+            array.push(node_boxes, box.new(bar_index - effective_lookback, local_price_low + lvn_start_idx * local_price_step, bar_index + vp_right_offset, local_price_low + i * local_price_step, border_color=na, bgcolor=structure_lvn_color))
+    if in_lvn_zone
+        array.push(node_boxes, box.new(bar_index - effective_lookback, local_price_low + lvn_start_idx * local_price_step, bar_index + vp_right_offset, local_price_low + (vp_num_levels) * local_price_step, border_color=na, bgcolor=structure_lvn_color))
+
+// VP summary local (an toàn trong request.security)
+f_vp_summary_local(vp_levels_local, lookback_local, va_pct_local) =>
+    vol_local = array.new_float(0)
+    for _ = 0 to vp_levels_local - 1
+        array.push(vol_local, 0.0)
+    ph = ta.highest(high, lookback_local)
+    pl = ta.lowest(low, lookback_local)
+    step = (ph - pl) / vp_levels_local
+    if step <= 0
+        [na, na, na]
+    else
+        for b = 0 to int(math.min(lookback_local - 1, bar_index))
+            if volume[b] <= 0
+                continue
+            tp = (high[b] + low[b] + close[b]) / 3.0
+            idx = step > 0 ? int(math.max(0, math.min(vp_levels_local - 1, math.floor((tp - pl) / step)))) : 0
+            array.set(vol_local, idx, array.get(vol_local, idx) + volume[b])
+        maxv = array.max(vol_local)
+        if maxv <= 0
+            [na, na, na]
+        else
+            poc_i = array.indexof(vol_local, maxv)
+            total_vol = 0.0
+            for i2 = 0 to vp_levels_local - 1
+                total_vol += array.get(vol_local, i2)
+            target = total_vol * va_pct_local / 100.0
+            va_vol = array.get(vol_local, poc_i)
+            va_up = poc_i
+            va_dn = poc_i
+            while va_vol < target and (va_up < vp_levels_local - 1 or va_dn > 0)
+                vol_up = va_up < vp_levels_local - 1 ? array.get(vol_local, va_up + 1) : 0.0
+                vol_dn = va_dn > 0 ? array.get(vol_local, va_dn - 1) : 0.0
+                if vol_up >= vol_dn and va_up < vp_levels_local - 1
+                    va_up += 1
+                    va_vol += vol_up
+                else if va_dn > 0
+                    va_dn -= 1
+                    va_vol += vol_dn
+                else
+                    break
+            poc_price_local = pl + poc_i * step
+            vah_local = pl + va_up * step
+            val_local = pl + va_dn * step
+            [poc_price_local, vah_local, val_local]
+
+// === MAIN LOGIC ===
+tf_mode = f_get_timeframe_mode()
+tf_minutes = timeframe.in_seconds(timeframe.period) / 60.0
+
+base_update_freq = switch tf_mode
+    '1D'  => math.max(10, vp_lookback_depth / 20)
+    '4H'  => math.max(5, vp_lookback_depth / 30)
+    '1H'  => math.max(3, vp_lookback_depth / 40)
+    '15m' => math.max(2, vp_lookback_depth / 50)
+    => 1
+
+final_update_freq = switch execution_sensitivity
+    'Ultra'  => 1
+    'High'   => 2
+    'Medium' => int(math.max(3, base_update_freq))
+    => int(math.max(5, base_update_freq * 2))
+
+avg_len = int(math.min(50, bar_index + 1))
+avg_vol_norm = ta.sma(volume, avg_len) / tf_minutes
+cur_vol_norm = volume / tf_minutes
+
+vol_thresh = switch execution_sensitivity
+    'Ultra'  => 1.3
+    'High'   => 1.7
+    'Medium' => 2.5
+    'Low'    => 4.0
+
+move_thresh = switch execution_sensitivity
+    'Ultra'  => 0.002
+    'High'   => 0.003
+    'Medium' => 0.005
+    'Low'    => 0.01
+
+vol_spike   = cur_vol_norm > avg_vol_norm * vol_thresh and avg_vol_norm > 0
+price_move  = math.abs(close - nz(close[1])) / nz(close[1], 1) > move_thresh
+needs_update = barstate.islast or (bar_index - last_calc_bar >= final_update_freq) or vol_spike or price_move
+
+new_day_flag_series     = ta.change(time("D")) != 0
+bars_since_new_day_series = ta.barssince(new_day_flag_series)
+bars_per_day = 1440 / tf_minutes
+
+int effective_lookback = na
+if intraday_mode
+    effective_lookback := int(math.min(vp_lookback_depth, intraday_lookback_days * bars_per_day))
+else
+    tmp_look = switch tf_mode
+        '1D'  => math.min(vp_lookback_depth, 40)
+        '4H'  => math.min(vp_lookback_depth, 120)
+        '1H'  => math.min(vp_lookback_depth, 240)
+        '15m' => math.min(vp_lookback_depth, 500)
+        => math.min(vp_lookback_depth, 300)
+    effective_lookback := int(tmp_look)
+
+price_high_all = ta.highest(high, effective_lookback)
+price_low_all  = ta.lowest(low,  effective_lookback)
+price_step_all = (price_high_all - price_low_all) / vp_num_levels
+
+if show_status_label and not na(status_label)
+    label.delete(status_label)
+if needs_update and not barstate.islast and show_status_label
+    status_label := label.new(bar_index, high, "Calculating...", yloc=yloc.abovebar, color=color.new(color.gray, 50), textcolor=color.white, style=label.style_label_down)
+
+if array.size(volume_at_price) != vp_num_levels
+    array.clear(volume_at_price)
+    for i = 0 to vp_num_levels - 1
+        array.push(volume_at_price, 0.0)
+
+// --- HTF lines (độc lập với engine) ---
+if enable_htf_vp
+    [poc_htf_tmp, vah_htf_tmp, val_htf_tmp] = request.security(syminfo.tickerid, htf_tf, f_vp_summary_local(htf_levels, htf_lookback, htf_va_percent), lookahead=barmerge.lookahead_off)
+    if not na(poc_htf_tmp)
+        poc_htf := poc_htf_tmp
+        vah_htf := vah_htf_tmp
+        val_htf := val_htf_tmp
+        if na(htf_poc_line)
+            htf_poc_line := line.new(bar_index - 1, poc_htf, bar_index, poc_htf, color=htf_color_poc, width=2)
+        else
+            line.set_xy1(htf_poc_line, bar_index[1], poc_htf)
+            line.set_xy2(htf_poc_line, bar_index,   poc_htf)
+        if na(htf_vah_line)
+            htf_vah_line := line.new(bar_index - 1, vah_htf, bar_index, vah_htf, color=htf_color_va, width=1, style=line.style_dashed)
+        else
+            line.set_xy1(htf_vah_line, bar_index[1], vah_htf)
+            line.set_xy2(htf_vah_line, bar_index,   vah_htf)
+        if na(htf_val_line)
+            htf_val_line := line.new(bar_index - 1, val_htf, bar_index, val_htf, color=htf_color_va, width=1, style=line.style_dashed)
+        else
+            line.set_xy1(htf_val_line, bar_index[1], val_htf)
+            line.set_xy2(htf_val_line, bar_index,   val_htf)
+
+// --- MAIN VP CALCULATION & DRAWING ---
+if needs_update
+    // cleanup
+    if not na(vah_line)
+        line.delete(vah_line)
+        vah_line := na
+    if not na(val_line)
+        line.delete(val_line)
+        val_line := na
+    if not na(poc_box)
+        box.delete(poc_box)
+        poc_box := na
+    for bx in volume_boxes
+        box.delete(bx)
+    array.clear(volume_boxes)
+    for nb in node_boxes
+        box.delete(nb)
+    array.clear(node_boxes)
+
+    // recalc
+    array.fill(volume_at_price, 0.0)
+    price_high := price_high_all
+    price_low  := price_low_all
+    price_step := price_step_all
+
+    if price_step > 0
+        for b = 0 to int(math.min(effective_lookback - 1, bar_index))
+            if volume[b] <= 0
+                continue
+            is_bullish = close[b] >= open[b]
+            include_volume = vp_volume_type == 'Both' or (vp_volume_type == 'Bullish' and is_bullish) or (vp_volume_type == 'Bearish' and not is_bullish)
+            if not include_volume
+                continue
+
+            normalized_vol = volume[b] / tf_minutes
+            age_decay_tf = switch tf_mode
+                '1D'  => 0.002
+                '4H'  => 0.006
+                '1H'  => 0.012
+                '15m' => 0.03
+                => 0.06
+            age_decay  = intraday_mode ? 0.03 : age_decay_tf
+            age_weight = 1.0 / (1.0 + age_decay * b)
+            session_weight_factor = 1.0
+            if session_focus
+                if intraday_mode
+                    h = hour(time[b], syminfo.timezone)
+                    in_window = intraday_start_hour <= intraday_end_hour ? (h >= intraday_start_hour and h < intraday_end_hour) : (h >= intraday_start_hour or h < intraday_end_hour)
+                    if in_window
+                        session_weight_factor := session_weight_custom
+                else
+                    if bars_since_new_day_series[b] <= bars_per_day
+                        session_weight_factor := session_weight_custom
+
+            weighted_volume = normalized_vol * age_weight * session_weight_factor
+            body_ratio = math.abs(close[b] - open[b]) / math.max(high[b] - low[b], price_step)
+            typical_price = nz(body_ratio * (open[b] + close[b]) / 2 + (1 - body_ratio) * (high[b] + low[b]) / 2, close[b])
+            price_range = high[b] - low[b]
+
+            if price_range <= 0
+                idx = f_price_to_index(typical_price, price_low, price_step)
+                array.set(volume_at_price, idx, array.get(volume_at_price, idx) + weighted_volume * tf_minutes)
+            else
+                start_idx = f_price_to_index(low[b],  price_low, price_step)
+                end_idx   = f_price_to_index(high[b], price_low, price_step)
+                denom     = math.max(1, end_idx - start_idx + 1)
+                dist_denom= math.max(price_range / 2, price_step)
+                for j = start_idx to end_idx
+                    level_price = price_low + j * price_step
+                    distance_factor = math.max(0.0, 1.0 - math.abs(level_price - typical_price) / dist_denom)
+                    weight = math.max(0.05, distance_factor)
+                    distributed_vol = weighted_volume * weight / denom
+                    array.set(volume_at_price, j, array.get(volume_at_price, j) + distributed_vol * tf_minutes)
+
+        max_vol = array.max(volume_at_price)
+        if max_vol > 0
+            if structure_show_nodes
+                f_find_and_draw_nodes(max_vol, price_low, price_step, effective_lookback)
+
+            poc_idx = array.indexof(volume_at_price, max_vol)
+            poc_price = price_low + poc_idx * price_step
+            va_percentage = intraday_mode ? intraday_va_percent : vp_va_percent
+            [va_low_val, va_high_val] = f_calculate_value_area(poc_idx, array.sum(volume_at_price), price_low, price_step, va_percentage)
+
+            x_base = bar_index + vp_right_offset
+            for i = 0 to vp_num_levels - 1
+                level_volume = array.get(volume_at_price, i)
+                if level_volume > 0
+                    bar_length = int(math.round(level_volume / max_vol * vp_bar_width))
+                    if bar_length > 0
+                        level_price = price_low + i * price_step
+                        is_in_va = vp_show_va and not na(va_low_val) and level_price >= va_low_val and level_price <= va_high_val
+                        is_hva   = vp_show_hva and level_volume >= max_vol * vp_hva_threshold / 100
+                        is_poc   = i == poc_idx and vp_show_poc
+                        box_color = is_poc ? vp_poc_color : is_hva ? vp_hva_color : is_in_va ? vp_va_color : vp_vol_color
+                        array.push(volume_boxes, box.new(x_base, level_price - price_step / 2, x_base + bar_length, level_price + price_step / 2, bgcolor=box_color, border_color=na))
+
+            if vp_show_poc and not na(poc_price)
+                poc_box := box.new(bar_index - effective_lookback, poc_price - price_step / 4, bar_index + vp_right_offset - 5, poc_price + price_step / 4, bgcolor=vp_poc_color, border_color=vp_poc_color)
+            if vp_show_va_lines and not na(va_high_val)
+                vah_line := line.new(bar_index - effective_lookback, va_high_val, bar_index + vp_right_offset + vp_bar_width, va_high_val, color=vp_va_line_color, width=vp_va_line_width, style=line.style_dashed)
+                val_line := line.new(bar_index - effective_lookback, va_low_val,  bar_index + vp_right_offset + vp_bar_width, va_low_val,  color=vp_va_line_color, width=vp_va_line_width, style=line.style_dashed)
+
+            prev_poc_price := poc_price
+
+    last_calc_bar := bar_index
+
+// --- INFO TABLE ---
+if barstate.islast and not na(price_high)
+    max_vol2 = array.max(volume_at_price)
+    poc_idx2 = array.indexof(volume_at_price, max_vol2)
+    poc_price2 = poc_idx2 < 0 ? na : price_low + poc_idx2 * price_step
+    va_pct2 = intraday_mode ? intraday_va_percent : vp_va_percent
+    [va_low_info, va_high_info] = f_calculate_value_area(poc_idx2, array.sum(volume_at_price), price_low, price_step, va_pct2)
+
+    pos = switch table_pos
+        "Top Right"    => position.top_right
+        "Top Left"     => position.top_left
+        "Bottom Right" => position.bottom_right
+        => position.bottom_left
+
+    if na(info_table) or last_table_pos != table_pos
+        if not na(info_table)
+            table.delete(info_table)
+        info_table := table.new(pos, 2, 3, border_width=0, border_color=color.black)
+        last_table_pos := table_pos
+
+    mode_str = profile_selector == "Custom" ? "CUSTOM" : (intraday_mode ? "INTRADAY" : "SWING")
+    poc_color_dyn = poc_price2 > prev_poc_price ? color.green : poc_price2 < prev_poc_price ? color.red : color.gray
+    poc_display = str.tostring(poc_price2, format.mintick)
+
+    table.cell(info_table, 0, 0, "Mode", bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(info_table, 1, 0, mode_str, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(info_table, 0, 1, "POC", bgcolor=color.new(color.gray, 90), text_size=size.small)
+    table.cell(info_table, 1, 1, poc_display, bgcolor=poc_color_dyn, text_color=color.white, text_size=size.small)
+    table.cell(info_table, 0, 2, "VAH / VAL", bgcolor=color.new(color.gray, 90), text_size=size.small)
+    table.cell(info_table, 1, 2, "VAH: " + str.tostring(va_high_info, format.mintick) + "\nVAL: " + str.tostring(va_low_info, format.mintick), text_size=size.small)
