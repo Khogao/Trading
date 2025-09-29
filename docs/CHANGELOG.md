@@ -2,7 +2,6 @@
 
 All notable changes to this repository will be documented in this file.
 
-
 ## 2025-09-29
 
 - Restructure toàn bộ workspace theo chuẩn hóa thư mục (indicators, strategies, libraries, tests, examples, docs, legacy, improvements)
@@ -12,4 +11,3 @@ All notable changes to this repository will be documented in this file.
 - Add `TRADING_RULES.md` with Supreme Rule and opt-in safety defaults.
 - Add `templates/pine_header.template` with conservative flags (no SL/TP suggestions by default).
 - Add updated GitHub PR template requiring checklist compliance.
-
