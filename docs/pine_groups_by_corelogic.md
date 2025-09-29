@@ -1,0 +1,288 @@
+# Pine grouping by core logic
+
+Rules: assign to VSA if indicators contain VSA-related keywords; VP for volume-profile/value-area related; PA for price-action/Wyckoff/structure; COMPOSITE if multiple categories match; OTHER otherwise.
+
+## VSA (7 files)
+
+- D:\Work\Coding\Trading\indicators\cvd\Better-01-CVD.pine
+  - declared: better cvd - final
+  - keywords: volume|cvd|cv|ema|sma|rma|ma|delta|va|range|wick
+- D:\Work\Coding\Trading\indicators\cvd\Better-02-CVD.pine
+  - declared: better cvd - final
+  - keywords: volume|cvd|cv|ema|sma|rma|ma|delta|va|range|wick
+- D:\Work\Coding\Trading\indicators\cvd\CVD Pro.pine
+  - declared: cvd pro
+  - keywords: volume|cvd|cv|vsa|ema|sma|rma|ma|signal|confluence|delta|buy|sell|va|range|wick
+- D:\Work\Coding\Trading\indicators\cvd\Vol+CVD.pine
+  - declared: vsa volume + cvd (analysis engine)
+  - keywords: volume|cvd|cv|vsa|ema|sma|rma|ma|delta|va|range
+- D:\Work\Coding\Trading\indicators\PI family\PICE-02.pine
+  - declared: pi confluence engine v1.3
+  - keywords: volume|vsa|trend|ema|sma|ma|signal|va|range|wick
+- D:\Work\Coding\Trading\indicators\SMPA family\PILIT-01.pine
+  - declared: vsa pure
+  - keywords: volume|vwap|vsa|trend|sma|ma|signal|va|vwap|range
+- D:\Work\Coding\Trading\indicators\SMPA family\Shark.pine
+  - declared: mtf precision scalp vsa
+  - keywords: volume|profile|vsa|scalp|scalping|trend|ema|sma|ma|signal|confluence|va|range
+
+## VP (4 files)
+
+- D:\Work\Coding\Trading\indicators\PI family\VP-01.pine
+  - declared: 
+  - keywords: volume|sma|rma|ma|poc|va|range|session
+- D:\Work\Coding\Trading\indicators\PI family\VP-02.pine
+  - declared: 
+  - keywords: volume|sma|rma|ma|poc|va|range|session
+- D:\Work\Coding\Trading\indicators\vp\VP-03.pine
+  - declared: 
+  - keywords: volume|profile|volume_profile|sma|ma|poc|va|range|session
+- D:\Work\Coding\Trading\indicators\vp\VP-04.pine
+  - declared: 
+  - keywords: volume|profile|volume_profile|sma|rma|ma|poc|va|range|session|wick
+
+## PA (14 files)
+
+- D:\Work\Coding\Trading\indicators\hybrid\WSH_Velo_v5_2_copy.pine
+  - declared: wyckoff-smc hybrid [v5.2 patched]
+  - keywords: volume|wyckoff|scalp|scalping|ema|sma|rma|ma|signal|delta|buy|sell|va|range|session|liquidity|supply|demand|gap|wick
+- D:\Work\Coding\Trading\indicators\kv\EZZ-08.pine
+  - declared: ezz1-cgpt (hybrid wyckoff/pa • temp zones)
+  - keywords: volume|sma|rma|ma|signal|buy|sell|va|range|gap|wick
+- D:\Work\Coding\Trading\indicators\PI family\PI-05.pine
+  - declared: pi v2.1 scalping
+  - keywords: volume|scalp|sma|rma|ma|signal|va|range
+- D:\Work\Coding\Trading\indicators\PI family\PI-17.pine
+  - declared: pi v2.1 scalping
+  - keywords: volume|scalp|scalping|sma|ma|signal|va
+- D:\Work\Coding\Trading\indicators\SMPA family\SMPA ORG.pine
+  - declared: sm price action
+  - keywords: trend|sma|rma|ma|confluence|delta|va|range|gap|wick
+- D:\Work\Coding\Trading\indicators\SMPA family\SMPA-01.pine
+  - declared: smpa+ fixed
+  - keywords: trend|sma|rma|ma|confluence|delta|va|range|gap|wick
+- D:\Work\Coding\Trading\indicators\SMPA family\SMPA-04.pine
+  - declared: sm price action + signals
+  - keywords: trend|sma|rma|ma|signal|confluence|fvg|buy|sell|va|gap
+- D:\Work\Coding\Trading\indicators\SMPA family\SMPA-05.pine
+  - declared: smpa+ fixed
+  - keywords: trend|sma|rma|ma|confluence|va|range|gap
+- D:\Work\Coding\Trading\indicators\SMPA family\SMPA-06.pine
+  - declared: smpa+
+  - keywords: trend|sma|rma|ma|confluence|va|range|gap
+- D:\Work\Coding\Trading\indicators\wyckoff\Wish 5.2 hybrid.pine
+  - declared: wyckoff-smc hybrid [v5.2 patched]
+  - keywords: volume|wyckoff|scalp|scalping|ema|sma|rma|ma|buy|sell|va|range|supply|demand|wick
+- D:\Work\Coding\Trading\indicators\wyckoff\WSH Velo.pine
+  - declared: wyckoff-smc hybrid [v5.2 patched]
+  - keywords: volume|wyckoff|scalp|scalping|ema|sma|ma|buy|sell|va|range|liquidity|gap|wick
+- D:\Work\Coding\Trading\indicators\wyckoff\WSH-01.pine
+  - declared: wyckoff-smc hybrid [v5.0]
+  - keywords: volume|wyckoff|ema|sma|rma|ma|signal|buy|sell|va|range|liquidity|supply|demand|gap|wick
+- D:\Work\Coding\Trading\indicators\wyckoff\WSH-03.pine
+  - declared: wyckoff-smc hybrid [v5.1] — scalper
+  - keywords: volume|wyckoff|scalp|ema|sma|rma|ma|signal|delta|buy|sell|va|range|session|liquidity|supply|demand|gap|wick
+- D:\Work\Coding\Trading\indicators\wyckoff\WSH-04.pine
+  - declared: wyckoff-smc hybrid [v5.0]
+  - keywords: volume|wyckoff|ema|sma|rma|ma|signal|buy|sell|va|range|liquidity|supply|demand|wick
+
+## COMPOSITE (38 files)
+
+- D:\Work\Coding\Trading\indicators\cvd\C+V+D.pine
+  - declared: cvd+vol+div (v2.0 - dual divergence)
+  - keywords: volume|cvd|cv|sma|ma|delta|va|range|supply|wick
+- D:\Work\Coding\Trading\indicators\kv\EZZ1-v1.6.3-(Wyckoff-VSA-KV-Gate-Weights-Sweep-WR)-Final-1.pine
+  - declared: ezz1 v1.6.3 (wyckoff/vsa + kv + gate + weights + δ + sweep + wr) — final
+  - keywords: volume|vsa|scalp|ema|sma|rma|ma|signal|delta|buy|sell|va|range|session|supply|demand|gap|wick
+- D:\Work\Coding\Trading\indicators\kv\EZZ1-v1.6.3-(Wyckoff-VSA-KV-Gate-Weights-Sweep-WR)-Final.pine
+  - declared: ezz1 v1.6.3 (wyckoff/vsa + kv + gate + weights + δ + sweep + wr) — final
+  - keywords: volume|vsa|scalp|ema|sma|rma|ma|signal|delta|buy|sell|va|range|session|supply|demand|gap|wick
+- D:\Work\Coding\Trading\indicators\kv\EZZY-1.pine
+  - declared: ezzy
+  - keywords: volume|vsa|scalp|ema|sma|rma|ma|signal|delta|buy|sell|va|range|session|supply|demand|gap|wick
+- D:\Work\Coding\Trading\indicators\kv\EZZY-2.pine
+  - declared: ezzy
+  - keywords: volume|vsa|scalp|ema|sma|rma|ma|signal|delta|buy|sell|va|range|session|supply|demand|gap|wick
+- D:\Work\Coding\Trading\indicators\PI family\PI-01.pine
+  - declared: pi v2.1 truly clean
+  - keywords: volume|cv|vwap|vsa|scalp|trend|ema|sma|ma|signal|buy|sell|poc|va|vwap|range|supply|demand
+- D:\Work\Coding\Trading\indicators\PI family\PI-02.pine
+  - declared: pi v14.1 (syntax fix)
+  - keywords: volume|cv|vpp|vsa|trend|ema|sma|rma|ma|signal|poc|va|range|supply|demand
+- D:\Work\Coding\Trading\indicators\PI family\PI-03.pine
+  - declared: pi (final stable)
+  - keywords: volume|cv|valuearea|vpp|vsa|trend|ema|sma|rma|ma|signal|buy|sell|poc|va|range|supply|demand
+- D:\Work\Coding\Trading\indicators\PI family\PI-04.pine
+  - declared: pi v2.1 (syntax corrected)
+  - keywords: volume|cv|valuearea|vpp|vsa|trend|ema|sma|rma|ma|signal|buy|sell|poc|va|range|supply|demand
+- D:\Work\Coding\Trading\indicators\PI family\PI-06.pine
+  - declared: pi v2.1 clean
+  - keywords: volume|cv|vwap|vsa|scalp|trend|ema|sma|ma|signal|buy|sell|poc|va|vwap|range|supply|demand
+- D:\Work\Coding\Trading\indicators\PI family\PI-07.pine
+  - declared: pi v3.0 zerolag ultimate
+  - keywords: volume|cumulative|vsa|trend|ema|sma|rma|ma|signal|orderflow|imbalance|delta|buy|sell|va|range
+- D:\Work\Coding\Trading\indicators\PI family\PI-08.pine
+  - declared: pi v2.5
+  - keywords: volume|cv|valuearea|vpp|vsa|trend|ema|sma|rma|ma|signal|buy|sell|poc|va|range|supply|demand
+- D:\Work\Coding\Trading\indicators\PI family\PI-09.pine
+  - declared: pi v2.5 claude
+  - keywords: volume|cv|valuearea|vpp|vsa|trend|ema|sma|rma|ma|signal|buy|sell|poc|va|range|supply|demand
+- D:\Work\Coding\Trading\indicators\PI family\PI-10.pine
+  - declared: vsa-wyckoff analyst (tf presets)
+  - keywords: volume|cv|vsa|trend|ema|sma|ma|signal|confluence|buy|sell|va|range|supply|demand
+- D:\Work\Coding\Trading\indicators\PI family\PI-11.pine
+  - declared: pi v2.1 scalping
+  - keywords: volume|cv|valuearea|vpp|vsa|scalp|scalping|trend|ema|sma|rma|ma|signal|buy|sell|poc|va|range|supply|demand
+- D:\Work\Coding\Trading\indicators\PI family\PI-12.pine
+  - declared: pi v2.5
+  - keywords: volume|cv|valuearea|vpp|vsa|trend|ema|sma|rma|ma|signal|buy|sell|poc|va|range|supply|demand
+- D:\Work\Coding\Trading\indicators\PI family\PI-15.pine
+  - declared: pi v10.3 (annotated s/r)
+  - keywords: volume|cv|vpp|vsa|trend|ema|sma|rma|ma|signal|poc|va|range|supply|demand
+- D:\Work\Coding\Trading\indicators\PI family\PI-16.pine
+  - declared: vw - pure vsa/wyckoff (vscode optimized)
+  - keywords: volume|sma|ma|signal|va|range
+- D:\Work\Coding\Trading\indicators\PI family\PI-18.pine
+  - declared: pi 3.4 professional
+  - keywords: volume|vpp|profile|vsa|trend|ema|sma|rma|ma|buy|sell|poc|va|range|session
+- D:\Work\Coding\Trading\indicators\PI family\Pi-3.2-VPP-1.pine
+  - declared: pi 3.2 + vpp
+  - keywords: volume|vpp|profile|vsa|trend|ema|sma|rma|ma|buy|sell|poc|va|range|session|supply|demand
+- D:\Work\Coding\Trading\indicators\PI family\Pi-3.2-VPP-2.pine
+  - declared: pi 3.2 + vpp
+  - keywords: volume|vpp|profile|vsa|trend|ema|sma|rma|ma|buy|sell|poc|va|range|session|supply|demand
+- D:\Work\Coding\Trading\indicators\PI family\Pi-3.2-VPP.pine
+  - declared: pi 3.2 + vpp
+  - keywords: volume|vpp|profile|vsa|trend|ema|sma|rma|ma|buy|sell|poc|va|range|session|supply|demand
+- D:\Work\Coding\Trading\indicators\SMPA family\PILIT-02.pine
+  - declared: btc vsa pro+ complete
+  - keywords: volume|cvd|cv|vsa|trend|ema|sma|rma|ma|signal|buy|sell|va|range|supply|demand
+- D:\Work\Coding\Trading\indicators\SMPA family\PLS original.pine
+  - declared: pls v4.1 (clear signals)
+  - keywords: volume|cv|vpp|vsa|ema|sma|rma|ma|signal|buy|sell|poc|va|range
+- D:\Work\Coding\Trading\indicators\SMPA family\SMBR-02.pine
+  - declared: sm breakout signals [phi] + vsa
+  - keywords: volume|profile|vsa|wyckoff|ema|sma|rma|ma|signal|buy|sell|va|range|supply|demand
+- D:\Work\Coding\Trading\indicators\SMPA family\SMPA-03.pine
+  - declared: sm price action + vsa (strict)
+  - keywords: volume|vsa|trend|ema|sma|rma|ma|signal|confluence|buy|sell|va|range|supply|demand|gap
+- D:\Work\Coding\Trading\indicators\SMPA family\VSA-Scalping-Engine-Pro-1.pine
+  - declared: vsa scalping engine pro
+  - keywords: volume|valuearea|vpp|scalp|trend|ema|sma|rma|ma|signal|poc|va|range
+- D:\Work\Coding\Trading\indicators\SMPA family\VSA-Scalping-Engine-Pro-2.pine
+  - declared: vsa scalping engine pro
+  - keywords: volume|valuearea|vpp|scalp|trend|ema|sma|rma|ma|signal|poc|va|range
+- D:\Work\Coding\Trading\indicators\SMPA family\VSA-Scalping-Engine-Pro.pine
+  - declared: vsa scalping engine pro
+  - keywords: volume|valuearea|vpp|scalp|trend|ema|sma|rma|ma|signal|poc|va|range
+- D:\Work\Coding\Trading\indicators\trend\TEST-02.pine
+  - declared: vsa-wyckoff analyst
+  - keywords: volume|cv|vsa|trend|ema|sma|rma|ma|signal|confluence|buy|sell|va|range|liquidity|supply|demand
+- D:\Work\Coding\Trading\indicators\vp\version5-1.pine
+  - declared: 
+  - keywords: volume|profile|sma|rma|ma|poc|va|range|session
+- D:\Work\Coding\Trading\indicators\vp\version5-2.pine
+  - declared: 
+  - keywords: volume|profile|sma|rma|ma|poc|va|range|session
+- D:\Work\Coding\Trading\indicators\vp\version5-3.pine
+  - declared: 
+  - keywords: volume|profile|sma|rma|ma|poc|va|range|session
+- D:\Work\Coding\Trading\indicators\vp\version5-4.pine
+  - declared: 
+  - keywords: volume|profile|sma|rma|ma|poc|va|range|session
+- D:\Work\Coding\Trading\indicators\vp\version5-5.pine
+  - declared: 
+  - keywords: volume|profile|sma|rma|ma|poc|va|range|session
+- D:\Work\Coding\Trading\indicators\vp\version5-6.pine
+  - declared: 
+  - keywords: volume|profile|sma|rma|ma|poc|va|range|session
+- D:\Work\Coding\Trading\indicators\vp\version5-7.pine
+  - declared: 
+  - keywords: volume|profile|sma|rma|ma|poc|va|range|session
+- D:\Work\Coding\Trading\indicators\vp\version5.pine
+  - declared: 
+  - keywords: volume|profile|sma|rma|ma|poc|va|range|session
+
+## OTHER (28 files)
+
+- D:\Work\Coding\Trading\indicators\composite\Leviathan.pine
+  - declared: leviathan - key level engine v2.0
+  - keywords: volume|sma|ma|va|range
+- D:\Work\Coding\Trading\indicators\cvd\Better-03-CVD.pine
+  - declared: better cvd [enhanced]
+  - keywords: 
+- D:\Work\Coding\Trading\indicators\cvd\Better-04-CVD.pine
+  - declared: better cvd pro
+  - keywords: volume|cvd|cv|ema|sma|rma|ma|delta|va|range|wick
+- D:\Work\Coding\Trading\indicators\kv\Eclaude.pine
+  - declared: eclaude
+  - keywords: volume|sma|rma|ma|signal|buy|sell|va|wick
+- D:\Work\Coding\Trading\indicators\kv\EZ-01.pine
+  - declared: ez
+  - keywords: volume|sma|ma|buy|sell|va|range|wick
+- D:\Work\Coding\Trading\indicators\kv\EZ-02.pine
+  - declared: ezz
+  - keywords: volume|sma|ma|buy|sell|va|range|wick
+- D:\Work\Coding\Trading\indicators\kv\EZ3.pine
+  - declared: ez2
+  - keywords: volume|sma|ma|buy|sell|va|range|wick
+- D:\Work\Coding\Trading\indicators\kv\EZZ-02.pine
+  - declared: ezz1
+  - keywords: volume|sma|ma|signal|buy|sell|va|gap|wick
+- D:\Work\Coding\Trading\indicators\kv\EZZ-03.pine
+  - declared: ezz2
+  - keywords: volume|profile|scalp|sma|ma|signal|buy|sell|va|range|gap|wick
+- D:\Work\Coding\Trading\indicators\kv\EZZ-04.pine
+  - declared: ezz1
+  - keywords: volume|sma|ma|signal|buy|sell|va|gap|wick
+- D:\Work\Coding\Trading\indicators\kv\EZZ-06.pine
+  - declared: ezz 3.0 final - complete syntax fixed
+  - keywords: volume|sma|rma|ma|signal|buy|sell|va|range|session|gap|wick
+- D:\Work\Coding\Trading\indicators\kv\EZZ-07.pine
+  - declared: ezz 2.8 (flip zone logic)
+  - keywords: trend|ma|va|wick
+- D:\Work\Coding\Trading\indicators\kv\EZZII.pine
+  - declared: ezz1 kv-tf v1.0
+  - keywords: volume|trend|ema|sma|ma|signal|buy|sell|va|gap|wick
+- D:\Work\Coding\Trading\indicators\kv\KVS 30.pine
+  - declared: kvs v3.0+
+  - keywords: volume|trend|ema|sma|ma|va|range|wick
+- D:\Work\Coding\Trading\indicators\PI family\PICE-01.pine
+  - declared: pi confluence engine v1.6
+  - keywords: 
+- D:\Work\Coding\Trading\indicators\PI family\PICE-03.pine
+  - declared: pi confluence engine v1.4.2
+  - keywords: 
+- D:\Work\Coding\Trading\indicators\PI family\PICE-04.pine
+  - declared: pi confluence engine v1.7
+  - keywords: 
+- D:\Work\Coding\Trading\indicators\SMPA family\Leviathan.pine
+  - declared: leviathan - key level engine v2.0
+  - keywords: ma|va|range
+- D:\Work\Coding\Trading\indicators\SMPA family\SMBR-01.pine
+  - declared: smbr-mft
+  - keywords: sma|rma|ma|va
+- D:\Work\Coding\Trading\indicators\SMPA family\SMBR-03.pine
+  - declared: 
+  - keywords: sma|rma|ma|va
+- D:\Work\Coding\Trading\indicators\SMPA family\SP.pine
+  - declared: scalppro (sp) ultimate v2.2
+  - keywords: volume|trend|ema|sma|rma|ma|confluence|buy|sell|va|range|session
+- D:\Work\Coding\Trading\indicators\trend\Squeeze.pine
+  - declared: squeeze momentum indicator [lazybear] (v6 fixed)
+  - keywords: ema|sma|ma|va|range
+- D:\Work\Coding\Trading\indicators\trend\STAI-01.pine
+  - declared: supertrend ai
+  - keywords: ma|signal|va
+- D:\Work\Coding\Trading\indicators\trend\STAI-02.pine
+  - declared: supertrend ai
+  - keywords: ma|signal|va
+- D:\Work\Coding\Trading\indicators\trend\TEST-01.pine
+  - declared: ezz 2.8 (flip zone logic)
+  - keywords: ma|va
+- D:\Work\Coding\Trading\indicators\trend\TEST-03.pine
+  - declared: ezz 2.8 gemini (final & stable)
+  - keywords: trend|ma|va
+- D:\Work\Coding\Trading\indicators\trend\TEST-04.pine
+- D:\Work\Coding\Trading\indicators\vp\value-area.pine
+
