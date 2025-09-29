@@ -1,0 +1,192 @@
+//@version=6
+indicator("VSA Volume + CVD (Analysis Engine)", "VSA+CVD v2.5", format=format.volume, precision=0)
+
+import TradingView/ta/8
+
+// ==============================================================================================
+// VSA & VAD SETTINGS
+// ==============================================================================================
+var string GRP_VSA = "VSA Volume Settings"
+lengthVolumeMA = input.int(20, title="Length of Volume MA", minval=1, group=GRP_VSA)
+vsa_zscore_sensitivity = input.float(1.8, title="VSA Z-score Sensitivity", minval=0.5, maxval=4.0, step=0.1, group=GRP_VSA, tooltip="Ngưỡng Z-score cho 'High Volume'. Ultra High = 1.5x ngưỡng. Very High = 1.2x.")
+
+// ==============================================================================================
+// CVD SETTINGS
+// ==============================================================================================
+var string GRP_CVD = "CVD Settings"
+anchorInput = input.timeframe("1D", "Anchor period (Reset point)", group=GRP_CVD)
+cvdLookback    = input.int(50, "CVD Scaling Lookback", group=GRP_CVD, tooltip="Số nến để scale lớp phủ CVD.")
+cvdTransparency = input.int(80, "CVD Transparency", minval=0, maxval=100, group=GRP_CVD)
+cvdBullColor   = input.color(color.new(color.blue, 0), "CVD Bull Color", group=GRP_CVD)
+cvdBearColor   = input.color(color.new(color.orange, 0), "CVD Bear Color", group=GRP_CVD)
+
+// ==============================================================================================
+// DIVERGENCE & ANALYSIS SETTINGS (NEW)
+// ==============================================================================================
+var string GRP_ANALYSIS = "🧠 Analysis Engine"
+showDivergence = input.bool(true, title="Show Divergence Signals", group=GRP_ANALYSIS)
+divLookback = input.int(5, "Divergence Pivot Lookback", minval=3, maxval=15, group=GRP_ANALYSIS)
+showDashboard = input.bool(true, title="Show Dashboard", group=GRP_ANALYSIS)
+
+// Add persistent table handle (init on demand)
+var table dashboard = na
+
+// ==============================================================================================
+// CORE CALCULATIONS
+// ==============================================================================================
+
+// --- VSA Z-Score Engine ---
+f_calculateZScore(value, length) =>
+    mean = ta.sma(value, length)
+    std_dev = ta.stdev(value, length)
+    std_dev > 0 ? (value - mean) / std_dev : 0
+
+vol_zscore = f_calculateZScore(volume, lengthVolumeMA)
+volumeMA = ta.sma(volume, lengthVolumeMA)
+
+bool isUltraHigh = vol_zscore >= vsa_zscore_sensitivity * 1.5
+bool isVeryHigh  = vol_zscore >= vsa_zscore_sensitivity * 1.2 and vol_zscore < vsa_zscore_sensitivity * 1.5
+bool isHigh      = vol_zscore >= vsa_zscore_sensitivity
+bool isNormal    = vol_zscore >= vsa_zscore_sensitivity * 0.5 and vol_zscore < vsa_zscore_sensitivity
+bool isLow       = vol_zscore > 0 and vol_zscore < vsa_zscore_sensitivity * 0.5
+bool isVeryLow   = vol_zscore <= 0
+
+// --- CVD Data Engine ---
+// Anchor data (cho tổng delta từ đầu ngày/anchor)
+[openVolume, maxVolume, minVolume, lastVolume] = ta.requestVolumeDelta(timeframe.period, anchorInput)
+
+// --- CVD INTRABAR DELTA (LIVE) ---
+// Sử dụng var để lưu CVD tại lúc bar mở
+var float bar_open_cvd = na
+
+// Precompute time change each bar to avoid calling ta.change() only conditionally
+timeChange = ta.change(time)
+
+// Khi bar mới bắt đầu, lưu lại CVD tại thời điểm đó
+if barstate.isfirst or timeChange != 0
+    bar_open_cvd := lastVolume
+
+// Delta live của bar hiện tại = CVD hiện tại - CVD lúc bar mở
+cvd_delta_current_bar = lastVolume - nz(bar_open_cvd, lastVolume)
+
+// Delta từ đầu anchor period (giữ nguyên)
+cvd_delta_since_anchor = lastVolume - openVolume
+
+// --- Divergence Engine (NEW) ---
+// Find pivots
+pricePivotHigh = ta.pivothigh(high, divLookback, divLookback)
+pricePivotLow  = ta.pivotlow(low, divLookback, divLookback)
+cvdPivotHigh   = ta.pivothigh(lastVolume, divLookback, divLookback)
+cvdPivotLow    = ta.pivotlow(lastVolume, divLookback, divLookback)
+
+// Get previous pivot values safely (use boolean condition for ta.valuewhen)
+prevPricePivotHigh = ta.valuewhen(not na(pricePivotHigh), pricePivotHigh, 1)
+prevCvdPivotHigh   = ta.valuewhen(not na(cvdPivotHigh), cvdPivotHigh, 1)
+prevPricePivotLow  = ta.valuewhen(not na(pricePivotLow), pricePivotLow, 1)
+prevCvdPivotLow    = ta.valuewhen(not na(cvdPivotLow), cvdPivotLow, 1)
+
+// Detect divergence between the two most recent pivots (require both current and previous pivots exist)
+bearDiv = not na(pricePivotHigh) and not na(prevPricePivotHigh) and not na(cvdPivotHigh) and not na(prevCvdPivotHigh) and (pricePivotHigh > prevPricePivotHigh) and (cvdPivotHigh < prevCvdPivotHigh)
+bullDiv = not na(pricePivotLow)  and not na(prevPricePivotLow)  and not na(cvdPivotLow)  and not na(prevCvdPivotLow)  and (pricePivotLow  < prevPricePivotLow)  and (cvdPivotLow  > prevCvdPivotLow)
+
+// --- Simplified Accumulation/Distribution Detection for Alerts (NEW) ---
+bool isAccumulationBar = close > open and (high - close) / (high - low) < 0.4 and (close - low) / (high - low) > 0.6 and isHigh
+bool isDistributionBar = close < open and (close - low) / (high - low) < 0.4 and (high - close) / (high - low) > 0.6 and isHigh
+
+// --- Plot để hiển thị giá trị chính xác trong Indicator Status ---
+plot(nz(volume), title="Vol", color=color.gray, display=display.status_line)
+plot(nz(lastVolume), title="CVD", color=color.new(color.orange, 0), display=display.status_line)  
+plot(nz(openVolume), title="CVD_open", color=color.new(color.blue, 0), display=display.status_line)
+plot(nz(cvd_delta_current_bar), title="CVD_delta", color=color.white, display=display.status_line)
+
+// ==============================================================================================
+// PLOTTING & DASHBOARD
+// ==============================================================================================
+
+// 1. VSA Volume
+vsaColor = isUltraHigh ? color.new(color.purple, 20) : isVeryHigh  ? color.new(color.red, 20) : isHigh ? color.new(color.orange, 20) : isNormal ? color.new(color.green, 20) : isLow ? color.new(color.blue, 20) : color.new(color.gray, 20)
+plot(volume, color=vsaColor, style=plot.style_columns, title="VSA Volume")
+
+// 2. CVD Cumulative Overlay
+volumeScaleMax = ta.highest(volume, cvdLookback)
+cvdMax = ta.highest(lastVolume, cvdLookback), cvdMin = ta.lowest(lastVolume, cvdLookback)
+cvdRange = cvdMax - cvdMin, scaleFactor = cvdRange > 0 ? volumeScaleMax / cvdRange * 0.8 : 1
+scaledOpen = (openVolume - cvdMin) * scaleFactor, scaledHigh = (maxVolume - cvdMin) * scaleFactor, scaledLow = (minVolume - cvdMin) * scaleFactor, scaledClose = (lastVolume - cvdMin) * scaleFactor
+cvdIsBull = lastVolume >= openVolume
+cvdBodyColor = cvdIsBull ? color.new(cvdBullColor, cvdTransparency) : color.new(cvdBearColor, cvdTransparency)
+plotcandle(scaledOpen, scaledHigh, scaledLow, scaledClose, title="CVD Cumulative Overlay", color=cvdBodyColor, bordercolor=na, wickcolor=cvdBodyColor)
+hline(0, title="Baseline", color=color.new(color.white, 80), linestyle=hline.style_dashed)
+
+// 3. Divergence Signals (NEW)
+plotshape(showDivergence and bearDiv, "Bearish Divergence", shape.labeldown, location.top, color.new(color.red, 20), text="DIV", textcolor=color.white, size=size.tiny)
+plotshape(showDivergence and bullDiv, "Bullish Divergence", shape.labelup, location.bottom, color.new(color.green, 20), text="DIV", textcolor=color.white, size=size.tiny)
+
+// 4. Dashboard (NEW) — CVD DELTA LIVE TRONG BAR HIỆN TẠI
+if showDashboard and barstate.islast
+    if na(dashboard)
+        dashboard := table.new(position.top_right, 2, 6, border_width=1, border_color=color.new(color.gray, 50))
+    table.clear(dashboard, 0, 0, 1, 5)
+
+    // CVD values - SỬ DỤNG LIVE DELTA CALCULATION
+    float cvd_current = nz(lastVolume)           // CVD hiện tại
+    float cvd_open_bar = nz(bar_open_cvd)        // CVD lúc bar mở
+    
+    // Delta live trong bar hiện tại
+    float cvd_delta_perbar = nz(cvd_delta_current_bar)    // Live delta = lastVolume - bar_open_cvd
+    float cvd_total_delta = nz(cvd_delta_since_anchor)    // Total delta từ anchor
+
+    string cvdText = str.tostring(math.round(cvd_current, 0))
+    string cvdDeltaPerBarText = (cvd_delta_perbar > 0 ? "+" : "") + str.tostring(math.round(cvd_delta_perbar, 0))
+    string cvdDeltaAnchorText = (cvd_total_delta > 0 ? "+" : "") + str.tostring(math.round(cvd_total_delta, 0))
+
+    // Volume strength / classification
+    float curVol = nz(volume)
+    string volText = str.tostring(math.round(curVol, 0))
+    string volConfirm = isUltraHigh ? "ULTRA HIGH" : isVeryHigh ? "VERY HIGH" : isHigh ? "HIGH" : "LOW"
+    string volInfo = volText + " | " + volConfirm
+
+    // Priority / highlight
+    string volPrioText = isUltraHigh ? "★★★" : isVeryHigh ? "★★" : isHigh ? "★" : " "
+    color volPrioColor = bearDiv ? color.red : bullDiv ? color.green : color.blue
+    bgcolor_ultra = isUltraHigh ? (bullDiv ? color.new(color.green, 85) : bearDiv ? color.new(color.red, 85) : isAccumulationBar ? color.new(color.lime, 85) : isDistributionBar ? color.new(color.orange, 85) : color.new(color.gray, 90)) : na
+
+    // Header
+    table.cell(dashboard, 0, 0, "VSA+CVD ANALYSIS", bgcolor=color.new(color.black, 20), text_color=color.white, text_size=size.small)
+    table.cell(dashboard, 1, 0, "Value", bgcolor=color.new(color.black, 20), text_color=color.white, text_size=size.small)
+
+    dataTextColor = not na(bgcolor_ultra) ? color.white : color.black
+
+    // Row 1: Volume Strength
+    table.cell(dashboard, 0, 1, "Volume:", text_color=color.black, text_size=size.small)
+    table.cell(dashboard, 1, 1, volInfo, text_halign=text.align_right, text_color=not na(bgcolor_ultra) ? color.white : color.black, bgcolor=bgcolor_ultra, text_size=size.small)
+
+    // Row 2: Priority
+    table.cell(dashboard, 0, 2, "Priority:", text_color=color.black, text_size=size.small)
+    table.cell(dashboard, 1, 2, volPrioText, text_halign=text.align_right, text_color=not na(bgcolor_ultra) ? color.white : volPrioColor, bgcolor=bgcolor_ultra, text_size=size.small)
+
+    // Row 3: CVD and live per-bar delta
+    table.cell(dashboard, 0, 3, "CVD (Δbar):", text_color=color.black, text_size=size.small)
+    table.cell(dashboard, 1, 3, cvdText + " (" + cvdDeltaPerBarText + ")", text_halign=text.align_right, text_color=not na(bgcolor_ultra) ? color.white : (cvd_delta_perbar >= 0 ? color.green : color.red), bgcolor=na, text_size=size.small)
+
+    // Row 4: Confidence
+    string confidenceText = isUltraHigh ? "High" : isVeryHigh ? "Medium" : isHigh ? "Low" : "Very Low"
+    table.cell(dashboard, 0, 4, "Confidence:", text_color=color.black, text_size=size.small)
+    table.cell(dashboard, 1, 4, confidenceText, text_halign=text.align_right, text_color=dataTextColor, bgcolor=bgcolor_ultra, text_size=size.small)
+
+// ==============================================================================================
+// ALERTS (NEW)
+// ==============================================================================================
+// Level 3 Alerts (Ultra Priority)
+alertcondition(bullDiv and isUltraHigh, "★★★ Bullish Divergence (ULTRA)", "Bull Div | ULTRA HIGH | Confidence: High")
+alertcondition(bearDiv and isUltraHigh, "★★★ Bearish Divergence (ULTRA)", "Bear Div | ULTRA HIGH | Confidence: High")
+// Level 2 Alerts (High Priority)
+alertcondition(bullDiv and isVeryHigh, "★★ Bullish Divergence (VERY HIGH)", "Bull Div | VERY HIGH | Confidence: Medium")
+alertcondition(bearDiv and isVeryHigh, "★★ Bearish Divergence (VERY HIGH)", "Bear Div | VERY HIGH | Confidence: Medium")
+// Accumulation / Distribution: split into two const alerts each (ULTRA / VERY)
+alertcondition(isAccumulationBar and isUltraHigh, "★★ Accumulation (ULTRA)", "Accumulation | ULTRA HIGH | Confidence: High")
+alertcondition(isAccumulationBar and isVeryHigh, "★★ Accumulation (VERY HIGH)", "Accumulation | VERY HIGH | Confidence: Medium")
+alertcondition(isDistributionBar and isUltraHigh, "★★ Distribution (ULTRA)", "Distribution | ULTRA HIGH | Confidence: High")
+alertcondition(isDistributionBar and isVeryHigh, "★★ Distribution (VERY HIGH)", "Distribution | VERY HIGH | Confidence: Medium")
+// Level 1 Alerts (Medium Priority)
+alertcondition(bullDiv and isHigh, "★ Bullish Divergence (HIGH)", "Bull Div | HIGH | Confidence: Low")
+alertcondition(bearDiv and isHigh, "★ Bearish Divergence (HIGH)", "Bear Div | HIGH | Confidence: Low")

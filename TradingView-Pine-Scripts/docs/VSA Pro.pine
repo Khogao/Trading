@@ -1,0 +1,17 @@
+if showSignalLabels and (not showLabelOnConfirmed or barstate.isconfirmed)
+    if isSpring
+        vsaLabels := f_create_or_push_label(vsaLabels, "SPRING", low, label.style_label_up, color.blue, color.white, size.normal)
+    if isUpthrust
+        vsaLabels := f_create_or_push_label(vsaLabels, "UPTHRUST", high, label.style_label_down, color.red, color.white, size.normal)
+    if isSellingClimax
+        vsaLabels := f_create_or_push_label(vsaLabels, "SC", low, label.style_label_up, color.blue, color.black, size.small)
+    if isBuyingClimax
+        vsaLabels := f_create_or_push_label(vsaLabels, "BC", high, label.style_label_down, color.red, color.white, size.small)
+    if isNoSupply
+        vsaLabels := f_create_or_push_label(vsaLabels, "NS", low, label.style_label_up, color.blue, color.white, size.tiny)
+    if isNoDemand
+        vsaLabels := f_create_or_push_label(vsaLabels, "ND", high, label.style_label_down, color.red, color.white, size.tiny)
+    if isStoppingVolume
+        vsaLabels := f_create_or_push_label(vsaLabels, "SV", low, label.style_label_up, color.blue, color.black, size.tiny)
+    if isEffortVsResult
+        vsaLabels := f_create_or_push_label(vsaLabels, "EVR", high + bar_spread * 0.5, label.style_none, color.red, color.black, size.tiny)

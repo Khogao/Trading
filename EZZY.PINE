@@ -1,0 +1,761 @@
+//@version=5
+indicator("EZZY", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=300)
+
+//==================================================================================================
+// Utilities
+//==================================================================================================
+mid(h, l) => (h + l) / 2.0
+nzv(x) => nz(x, 0.0)
+sign(x) => x > 0 ? 1.0 : x < 0 ? -1.0 : 0.0
+clamp(v, a, b) => math.max(a, math.min(b, v))
+
+//==================================================================================================
+// ------------------------------ INPUTS  -------------------------------------
+//==================================================================================================
+
+// ---------------- Core
+grp_core    = "Core"
+mode        = input.string("Historical", "Mode", options = ["Historical","Present"], group=grp_core)
+monochrome  = input.bool(false, "Monochrome style", group=grp_core)
+mobileMode  = input.bool(true, "Mobile mode (bigger labels, less history)", group=grp_core)
+colorByBias = input.bool(true, "Color candles by VSA bias", group=grp_core)
+
+// ---------------- VSA Detection
+grp_vsa     = "VSA Detection"
+lk_swing    = input.int(50, "Swing lookback (major HH/LL)", minval=5, group=grp_vsa)
+lk_micro    = input.int(5, "Micro lookback (BOS/traps)", minval=2, group=grp_vsa)
+lenVol      = input.int(30, "Volume MA length", minval=5, group=grp_vsa)
+lenSprd     = input.int(30, "Spread MA length", minval=5, group=grp_vsa)
+wickRatio   = input.float(0.55, "Long wick min ratio (base)", step=0.01, group=grp_vsa)
+use_UT      = input.bool(true, "Detect UT", group=grp_vsa)
+use_SPR     = input.bool(true, "Detect SPR", group=grp_vsa)
+use_ND      = input.bool(true, "Detect ND", group=grp_vsa)
+use_NS      = input.bool(true, "Detect NS", group=grp_vsa)
+use_SV      = input.bool(true, "Detect SV", group=grp_vsa)
+use_TEST    = input.bool(true, "Detect Test / Test✓", group=grp_vsa)
+use_EVR     = input.bool(false,"Detect EVR (Effort-Result)", group=grp_vsa)
+
+// ---------------- Adaptive thresholds (Z-score / legacy)
+grp_z       = "Adaptive Thresholds"
+useZ        = input.bool(true, "Use Z-score thresholds", group=grp_z)
+zLen        = input.int(100, "Z-score lookback", minval=30, group=grp_z)
+zHV         = input.float(1.5, "Vol Z ≥ HV", step=0.1, group=grp_z)
+zUHV        = input.float(2.3, "Vol Z ≥ UHV", step=0.1, group=grp_z)
+zWide       = input.float(+0.7, "Spread Z ≥ Wide", step=0.1, group=grp_z)
+zNarrow     = input.float(-0.5, "Spread Z ≤ Narrow", step=0.1, group=grp_z)
+// legacy (nếu tắt Z-score)
+hvMult      = input.float(1.6, "HV multiplier (legacy)", step=0.1, group=grp_z)
+uhvMult     = input.float(2.5, "UHV multiplier (legacy)", step=0.1, group=grp_z)
+wideMult    = input.float(1.3, "Wide multiplier (legacy)", step=0.05, group=grp_z)
+narrowMult  = input.float(0.7, "Narrow multiplier (legacy)", step=0.05, group=grp_z)
+
+// ---------------- Dynamic Wick
+grp_dw      = "Dynamic Wick"
+useDynWick  = input.bool(true, "Dynamic wick threshold", group=grp_dw)
+dynLen      = input.int(100, "Wick stat length", minval=20, group=grp_dw)
+dynStdK     = input.float(0.5, "Wick + k*stdev", step=0.05, group=grp_dw)
+
+// ---------------- Context & Confirm
+grp_ctx     = "Context & Confirm"
+ctxNDNS     = input.bool(true, "Context ND/NS (EMA20 + near HH/LL)", group=grp_ctx)
+ctxDistATR  = input.float(0.6, "Proximity ≤ k*ATR", step=0.05, group=grp_ctx)
+confirmBars = input.int(1, "Confirm bars (UT/SPR/Test)", minval=1, maxval=3, group=grp_ctx)
+needVolConf = input.bool(true, "Vol confirmation for SPR/Test✓ (next bar vol ↓)", group=grp_ctx)
+
+// ---------------- EVR Strict
+grp_evr     = "EVR Strict"
+evrStrict   = input.bool(true, "Use EVR strict", group=grp_evr)
+evrEffZMin  = input.float(1.3, "Min Effort Z", step=0.1, group=grp_evr)
+evrResATRMax= input.float(0.25, "Max Result/ATR", step=0.05, group=grp_evr)
+
+// ---------------- Regime & Session
+grp_reg     = "Regime & Session"
+useRegime   = input.bool(true, "Use regime filter (ATR% & optional ADX)", group=grp_reg)
+minATRpct   = input.float(0.15, "Min ATR14 % of price", step=0.01, group=grp_reg)
+useADX      = input.bool(false, "Also require ADX(14)", group=grp_reg)
+minADX      = input.int(18, "Min ADX", minval=10, maxval=50, group=grp_reg)
+useSession  = input.bool(false, "Use session filter (UTC hours)", group=grp_reg)
+sessStartH  = input.int(0, "Session start hour (UTC)", minval=0, maxval=23, group=grp_reg)
+sessEndH    = input.int(24, "Session end hour (UTC)", minval=1, maxval=24, group=grp_reg)
+
+// ---------------- Zones (current TF)
+grp_zone    = "Zones (current TF)"
+showZones   = input.bool(true, "Show Demand/Supply zones (current TF)", group=grp_zone)
+maxZones    = input.int(8, "Max zones per side", minval=1, maxval=20, group=grp_zone)
+zoneOpacity = input.int(80, "Zone opacity (0-100)", minval=0, maxval=100, group=grp_zone)
+zonePadPct  = input.float(0.10, "Zone padding %", minval=0, step=0.01, group=grp_zone)
+colDemand   = input.color(color.new(color.lime, 80), "Demand color", group=grp_zone)
+colSupply   = input.color(color.new(color.red, 80), "Supply color", group=grp_zone)
+
+// ---------------- KV CORE (MTF 5m/15m)
+grp_kv      = "KV CORE (MTF 5m/15m)"
+useKV5      = input.bool(true, "Enable KV 5m", group=grp_kv)
+useKV15     = input.bool(true, "Enable KV 15m", group=grp_kv)
+kvLabel     = input.bool(true, "Show KV labels", group=grp_kv)
+
+// ---------------- Levels / PD
+grp_lvl     = "Levels / PD"
+showSWHL    = input.bool(true, "Show Strong/Weak High/Low", group=grp_lvl)
+showDaily   = input.bool(false, "Show Daily prev High/Low", group=grp_lvl)
+showWeekly  = input.bool(false, "Show Weekly prev High/Low", group=grp_lvl)
+usePD       = input.bool(true, "Use Premium/Discount", group=grp_lvl)
+discQ       = input.float(0.35, "Discount quantile", step=0.01, group=grp_lvl)
+premQ       = input.float(0.65, "Premium quantile", step=0.01, group=grp_lvl)
+
+// ---------------- Delta & Liquidity
+grp_dl = "Delta & Liquidity"
+useDelta        = input.bool(true,  "Use Volume Delta (tick-proxy)", group=grp_dl)
+deltaZLen       = input.int(50,     "Delta Z lookback", minval=20, group=grp_dl)
+deltaSPRBonus   = input.float(1.0,  "Δ bonus on SPR", step=0.5, group=grp_dl)
+deltaUTBonus    = input.float(1.0,  "Δ bonus on UT",  step=0.5, group=grp_dl)
+useSweep        = input.bool(true,  "Liquidity sweep (stop-hunt HH/LL)", group=grp_dl)
+pivotLR         = input.int(5,      "Pivot L/R for sweep", minval=2, group=grp_dl)
+sweepWickK      = input.float(0.6,  "Min wick ratio on sweep", step=0.05, group=grp_dl)
+sweepBonus      = input.float(1.5,  "Sweep bonus", step=0.5, group=grp_dl)
+
+// ---------------- Traps & Proposals
+grp_tp      = "Traps & Proposals"
+useMicroBOS = input.bool(true, "Micro BOS/CHoCH", group=grp_tp)
+warnTrap    = input.bool(true, "Trap warnings", group=grp_tp)
+showSignals = input.bool(true, "Show Buy/Sell proposals", group=grp_tp)
+longThr     = input.float(4.0, "Long confluence threshold", step=0.1, group=grp_tp)
+shortThr    = input.float(4.0, "Short confluence threshold", step=0.1, group=grp_tp)
+plotR       = input.bool(false, "Plot Entry/SL & 1R/2R", group=grp_tp)
+gradeOn     = input.bool(true, "Show grading A/B/C", group=grp_tp)
+
+// ---------------- Weights (Confluence) — Long
+grp_wL = "Weights (Confluence) — Long"
+wL_SPR          = input.float(3.0, "SPR", step=0.5, group=grp_wL)
+wL_TEST_succ    = input.float(2.0, "Test✓", step=0.5, group=grp_wL)
+wL_TEST_raw     = input.float(0.5, "Test? (pending)", step=0.5, group=grp_wL)
+wL_NS           = input.float(1.0, "NS", step=0.5, group=grp_wL)
+wL_SV           = input.float(1.0, "SV", step=0.5, group=grp_wL)
+wL_EVR_bull     = input.float(0.5, "EVR+", step=0.5, group=grp_wL)
+wL_inDemand     = input.float(2.5, "In Demand (KV TF)", step=0.5, group=grp_wL)
+wL_inDiscount   = input.float(1.0, "In Discount (PD)", step=0.5, group=grp_wL)
+wL_microBOS     = input.float(1.2, "Micro BOS ↑", step=0.5, group=grp_wL)
+wL_pen_inSupply = input.float(1.5, "Penalty: In Supply", step=0.5, group=grp_wL)
+
+// ---------------- Weights (Confluence) — Short
+grp_wS = "Weights (Confluence) — Short"
+wS_UT           = input.float(3.0, "UT", step=0.5, group=grp_wS)
+wS_ND           = input.float(1.0, "ND", step=0.5, group=grp_wS)
+wS_EVR_bear     = input.float(0.5, "EVR−", step=0.5, group=grp_wS)
+wS_inSupply     = input.float(2.5, "In Supply (KV TF)", step=0.5, group=grp_wS)
+wS_inPremium    = input.float(1.0, "In Premium (PD)", step=0.5, group=grp_wS)
+wS_microBOS     = input.float(1.2, "Micro BOS ↓", step=0.5, group=grp_wS)
+wS_pen_inDemand = input.float(1.5, "Penalty: In Demand", step=0.5, group=grp_wS)
+
+// ---------------- Top-Down Gate
+grp_gate  = "Top-Down Gate"
+enableGate= input.bool(true, "Enable Gate", group=grp_gate)
+useD_TF   = input.bool(true, "Use 1D", group=grp_gate)
+use4H_TF  = input.bool(true, "Use 4H", group=grp_gate)
+use1H_TF  = input.bool(true, "Use 1H", group=grp_gate)
+use30m_TF = input.bool(true, "Use 30m", group=grp_gate)
+wD        = input.float(2.0, "Weight 1D", step=0.5, group=grp_gate)
+w4H       = input.float(2.0, "Weight 4H", step=0.5, group=grp_gate)
+w1H       = input.float(1.5, "Weight 1H", step=0.5, group=grp_gate)
+w30m      = input.float(1.0, "Weight 30m", step=0.5, group=grp_gate)
+gateLong  = input.float(2.5, "Gate Long ≥ Σ", step=0.5, group=grp_gate)
+gateShort = input.float(2.5, "Gate Short ≥ |Σ|", step=0.5, group=grp_gate)
+
+// ---------------- Backtest Lite
+grp_bt    = "Mini Backtest (Lite)"
+btOn      = input.bool(true, "Enable 1R/2R tracking", group=grp_bt)
+btHorizon = input.int(20, "Lookahead bars (horizon)", minval=5, maxval=200, group=grp_bt)
+btMaxOpen = input.int(30, "Max concurrent eval", minval=1, maxval=200, group=grp_bt)
+
+// ---------------- Presets
+grp_preset   = "Presets"
+presetType   = input.string("Scalping", "Preset", options=["None","Scalping","Day trading"], group=grp_preset)
+applyPreset  = input.bool(true, "Apply preset values", group=grp_preset)
+isScalp() => applyPreset and presetType == "Scalping"
+isDay()   => applyPreset and presetType == "Day trading"
+fEffF(x, sx, dx) => isScalp() ? sx : isDay() ? dx : x
+fEffI(x, sx, dx) => isScalp() ? sx : isDay() ? dx : x
+fEffB(x, sx, dx) => isScalp() ? sx : isDay() ? dx : x
+
+// ---------------- Alerts (Templates)
+grp_alrt      = "Alerts (Templates)"
+enableAlerts  = input.bool(true,  "Enable webhook templates", group=grp_alrt)
+alertFormat   = input.string("JSON", "Format", options=["JSON","Compact"], group=grp_alrt)
+
+//==================================================================================================
+// ------------------------------ EFFECTIVE PARAMS (from Presets) ---------------------------------
+//==================================================================================================
+zLenEff     = fEffI(zLen, 100, 150)
+zHVEff      = fEffF(zHV,  1.5, 1.7)
+zUHVEff     = fEffF(zUHV, 2.3, 2.7)
+zWideEff    = fEffF(zWide, +0.6, +0.7)
+zNarEff     = fEffF(zNarrow, -0.5, -0.5)
+dynLenEff   = fEffI(dynLen, 100, 150)
+dynKEff     = fEffF(dynStdK, 0.5, 0.6)
+ctxATREff   = fEffF(ctxDistATR, 0.6, 0.8)
+confBEff    = fEffI(confirmBars, 1, 2)
+volConfEf   = fEffB(needVolConf, true, true)
+// Crypto-oriented ATR% (preset override)
+minATREff   = fEffF(minATRpct, 0.50, 0.75)
+useADXEff   = fEffB(useADX, false, true)
+minADXEff   = fEffI(minADX, 18, 20)
+useSesEff   = fEffB(useSession, false, false)
+useKV5Ef    = fEffB(useKV5,  true, false)
+useKV15Ef    = fEffB(useKV15, true, true)
+kvLabEf     = kvLabel
+discQEf     = fEffF(discQ, 0.35, 0.35)
+premQEf     = fEffF(premQ, 0.65, 0.65)
+wL_SPR_E        = fEffF(wL_SPR,        3.0, 3.5)
+wL_TEST_ok_E    = fEffF(wL_TEST_succ,  2.0, 2.5)
+wL_TEST_p_E     = fEffF(wL_TEST_raw,   0.5, 0.8)
+wL_NS_E         = fEffF(wL_NS,         1.0, 1.2)
+wL_SV_E         = fEffF(wL_SV,         1.0, 1.5)
+wL_EVRp_E       = fEffF(wL_EVR_bull,   0.5, 1.0)
+wL_inDem_E      = fEffF(wL_inDemand,   2.5, 2.0)
+wL_inDisc_E     = fEffF(wL_inDiscount, 1.0, 1.5)
+wL_mBOS_E       = fEffF(wL_microBOS,   1.2, 0.8)
+wL_penSup_E     = fEffF(wL_pen_inSupply, 1.5, 1.0)
+wS_UT_E         = fEffF(wS_UT,         3.0, 3.5)
+wS_ND_E         = fEffF(wS_ND,         1.0, 1.2)
+wS_EVRm_E       = fEffF(wS_EVR_bear,   0.5, 1.0)
+wS_inSup_E      = fEffF(wS_inSupply,   2.5, 2.0)
+wS_inPrem_E     = fEffF(wS_inPremium,  1.0, 1.5)
+wS_mBOS_E       = fEffF(wS_microBOS,   1.2, 0.8)
+wS_penDem_E     = fEffF(wS_pen_inDemand, 1.5, 1.0)
+longThrE        = fEffF(longThr,  4.0, 5.5)
+shortThrE       = fEffF(shortThr, 4.0, 5.5)
+wD_E            = fEffF(wD,   2.0, 2.5)
+w4H_E           = fEffF(w4H,  2.0, 2.0)
+w1H_E           = fEffF(w1H,  1.5, 1.5)
+w30m_E          = fEffF(w30m, 1.0, 1.0)
+gateLongE       = fEffF(gateLong,  2.5, 3.0)
+gateShortE      = fEffF(gateShort, 2.5, 3.0)
+btHoriE         = fEffI(btHorizon, 20, 40)
+btMaxOpenE      = fEffI(btMaxOpen, 30, 20)
+
+//==================================================================================================
+// ------------------------------ CORE CALCS -------------------------------------------------------
+//==================================================================================================
+spread   = high - low
+rngMA    = ta.sma(spread, lenSprd)
+volMA    = ta.sma(volume, lenVol)
+atr14    = ta.atr(14)
+atrPct   = atr14 / nz(close, 1.0) * 100.0
+ema20    = ta.ema(close, 20)
+// Calculate ADX manually
+trueRange = math.max(math.max(high - low, math.abs(high - close[1])), math.abs(low - close[1]))
+directionalMovementPlus = high - high[1] > low[1] - low ? math.max(high - high[1], 0) : 0
+directionalMovementMinus = low[1] - low > high - high[1] ? math.max(low[1] - low, 0) : 0
+smoothedTrueRange = ta.rma(trueRange, 14)
+smoothedDirectionalMovementPlus = ta.rma(directionalMovementPlus, 14)
+smoothedDirectionalMovementMinus = ta.rma(directionalMovementMinus, 14)
+diPlus = (smoothedDirectionalMovementPlus / smoothedTrueRange) * 100
+diMinus = (smoothedDirectionalMovementMinus / smoothedTrueRange) * 100
+dx = math.abs(diPlus - diMinus) / (diPlus + diMinus) * 100
+adx14 = ta.rma(dx, 14)
+barHour  = hour(time)
+
+// Z-score series
+zVol     = (volume - ta.sma(volume, zLenEff)) / math.max(nz(ta.stdev(volume, zLenEff), 0.0), 1e-6)
+zRng     = (spread - ta.sma(spread, zLenEff)) / math.max(nz(ta.stdev(spread, zLenEff), 0.0), 1e-6)
+
+// Wide/Narrow/HV/UHV flags
+isWide   = useZ ? (zRng >= zWideEff)  : spread > rngMA * wideMult
+isNarrow = useZ ? (zRng <= zNarEff)   : spread < rngMA * narrowMult
+isHV     = useZ ? (zVol >= zHVEff)    : volume > volMA * hvMult
+isUHV    = useZ ? (zVol >= zUHVEff)   : volume > volMA * uhvMult
+
+// Wick ratios
+upperWickRatio = (high - math.max(open, close)) / math.max(spread, 1e-6)
+lowerWickRatio = (math.min(open, close) - low) / math.max(spread, 1e-6)
+
+// --- Volume Delta (tick-proxy)
+spreadSafe = math.max(spread, 1e-6)
+upFrac   = clamp((close - low) / spreadSafe,  0.0, 1.0)
+downFrac = clamp((high  - close) / spreadSafe, 0.0, 1.0)
+buyVol   = useDelta ? volume * upFrac   : na
+sellVol  = useDelta ? volume * downFrac : na
+volDelta = useDelta ? (buyVol - sellVol) : na
+zDelta   = useDelta ? (volDelta - nz(ta.sma(volDelta, deltaZLen), 0.0)) / math.max(nz(ta.stdev(volDelta, deltaZLen), 0.0), 1e-6) : na
+deltaPos = useDelta and (nz(zDelta, 0.0) > 0)
+deltaNeg = useDelta and (nz(zDelta, 0.0) < 0)
+
+// Context (HH/LL & proximity)
+hhSwing = ta.highest(high, lk_swing)
+llSwing = ta.lowest(low,  lk_swing)
+nearHH  = math.abs(hhSwing - high) <= ctxATREff * atr14
+nearLL  = math.abs(llSwing - low)  <= ctxATREff * atr14
+
+// Session / Regime
+regimeOK = not useRegime or (atrPct >= minATREff and (not useADXEff or adx14 >= minADXEff))
+sessOK() =>
+    if not useSesEff
+        true
+    else
+        barHour >= sessStartH and barHour < sessEndH
+
+// --- Dynamic wick thresholds (fix for undefined uwrMin/lwrMin bug)
+uwrMin = useDynWick ? ta.sma(upperWickRatio, dynLenEff) + ta.stdev(upperWickRatio, dynLenEff) * dynKEff : wickRatio
+lwrMin = useDynWick ? ta.sma(lowerWickRatio, dynLenEff) + ta.stdev(lowerWickRatio, dynLenEff) * dynKEff : wickRatio
+
+//==================================================================================================
+// ------------------------------ VSA SIGNALS ------------------------------------------------------
+//==================================================================================================
+hhPrev = ta.highest(high[1], lk_swing)
+llPrev = ta.lowest(low[1],  lk_swing)
+
+raw_UT_now  = use_UT  and (high > hhPrev) and (upperWickRatio >= uwrMin) and (isHV or isUHV)
+raw_SPR_now = use_SPR and (low  < llPrev) and (lowerWickRatio >= lwrMin) and (isHV or isUHV)
+
+var bool raw_UT  = false
+var bool raw_SPR = false
+raw_UT  := raw_UT_now
+raw_SPR := raw_SPR_now
+
+// Confirm mid of the SIGNAL bar (clear naming)
+sigHigh = high[confBEff]
+sigLow  = low[confBEff]
+utBarMid  = mid(sigHigh, sigLow)   // UT: close < mid of signal bar
+sprBarMid = mid(sigHigh, sigLow)   // SPR: close > mid of signal bar
+
+// Volume confirmation stricter: must drop ≥30% vs prev
+volConfOK() => not volConfEf or (volume < volume[1] * 0.7)
+
+succ_UT   = raw_UT[confBEff]  and close < utBarMid
+succ_SPR  = raw_SPR[confBEff] and close > sprBarMid and volConfOK()
+
+isUpBar   = close > open
+isDownBar = close < open
+ndRaw     = use_ND and isUpBar   and isNarrow and volume < volume[1] and volume < volume[2] and (not ctxNDNS or (close > ema20 and nearHH))
+nsRaw     = use_NS and isDownBar and isNarrow and volume < volume[1] and volume < volume[2] and (not ctxNDNS or (close < ema20 and nearLL))
+svRaw     = use_SV and isDownBar and (isHV or isUHV) and close > (low + spread*0.6) and nearLL
+raw_TEST  = use_TEST and isDownBar[1] and volume[1] < volume[2] and nearLL[1]
+succ_TEST = raw_TEST and isUpBar and volConfOK()
+
+atrBase   = math.max(atr14, 1e-6)
+resultATR = math.abs(close - open) / atrBase
+evrBull   = use_EVR and evrStrict and (zVol >= evrEffZMin) and (resultATR <= evrResATRMax) and isUpBar
+evrBear   = use_EVR and evrStrict and (zVol >= evrEffZMin) and (resultATR <= evrResATRMax) and isDownBar
+
+hhMicro   = ta.highest(high, lk_micro)[1]
+llMicro   = ta.lowest(low,  lk_micro)[1]
+microUp   = close > hhMicro
+microDown = close < llMicro
+var float microBias = 0.0
+majorReversal = succ_UT or succ_SPR
+microBias := majorReversal ? 0.0 : microUp ? 1.0 : microDown ? -1.0 : nz(microBias[1], 0.0)
+
+//==================================================================================================
+// ------------------------------ PD bands ---------------------------------------------------------
+//==================================================================================================
+rangeHL = hhSwing - llSwing
+discLvl = usePD ? (llSwing + rangeHL * discQEf) : na
+premLvl = usePD ? (llSwing + rangeHL * premQEf) : na
+pdDiscount = usePD and not na(discLvl) and close <= discLvl
+pdPremium  = usePD and not na(premLvl) and close >= premLvl
+
+//==================================================================================================
+// ------------------------------ Liquidity Sweep --------------------------------------------------
+//==================================================================================================
+ph = ta.pivothigh(high, pivotLR, pivotLR)
+pl = ta.pivotlow(low,  pivotLR, pivotLR)
+var float lastPH = na
+var float lastPL = na
+if not na(ph)
+    lastPH := ph
+if not na(pl)
+    lastPL := pl
+sweepHigh = useSweep and not na(lastPH) and high > lastPH and close < lastPH and upperWickRatio >= sweepWickK
+sweepLow  = useSweep and not na(lastPL) and low  < lastPL  and close > lastPL  and lowerWickRatio >= sweepWickK
+if warnTrap and sweepHigh
+    label.new(bar_index, high, "Sweep↑", style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0), size=mobileMode?size.small:size.tiny, yloc=yloc.abovebar)
+if warnTrap and sweepLow
+    label.new(bar_index, low,  "Sweep↓", style=label.style_label_up,   textcolor=color.white, color=color.new(color.green, 0), size=mobileMode?size.small:size.tiny, yloc=yloc.belowbar)
+
+//==================================================================================================
+// ------------------------------ KV ZONES (CURRENT TF) -------------------------------------------
+//==================================================================================================
+var box[] ctfDemBoxes = array.new_box()
+var box[] ctfSupBoxes = array.new_box()
+var float[] ctfDemTop = array.new_float()
+var float[] ctfDemBot = array.new_float()
+var float[] ctfSupTop = array.new_float()
+var float[] ctfSupBot = array.new_float()
+
+dFill = color.new(color.lime, 100 - zoneOpacity)
+sFill = color.new(color.red,  100 - zoneOpacity)
+
+create_ctf_zone(_isDemand, _top, _bot) =>
+    if showZones
+        pad = (_top - _bot) * zonePadPct
+        t = _top
+        b = _bot
+        topZ = _isDemand ? (t - pad) : (t + pad)
+        botZ = _isDemand ? (b + pad) : (b - pad)
+        bx = box.new(bar_index, topZ, bar_index, botZ)
+        box.set_bgcolor(bx, _isDemand ? dFill : sFill)
+        box.set_border_color(bx, _isDemand ? color.new(color.lime, 0) : color.new(color.red, 0))
+        if _isDemand
+            array.push(ctfDemBoxes, bx)
+            array.push(ctfDemTop, topZ)
+            array.push(ctfDemBot, botZ)
+            if array.size(ctfDemBoxes) > maxZones
+                old = array.shift(ctfDemBoxes)
+                if not na(old)
+                    box.delete(old)
+                array.shift(ctfDemTop)
+                array.shift(ctfDemBot)
+        else
+            array.push(ctfSupBoxes, bx)
+            array.push(ctfSupTop, topZ)
+            array.push(ctfSupBot, botZ)
+            if array.size(ctfSupBoxes) > maxZones
+                old = array.shift(ctfSupBoxes)
+                if not na(old)
+                    box.delete(old)
+                array.shift(ctfSupTop)
+                array.shift(ctfSupBot)
+
+if raw_SPR_now
+    create_ctf_zone(true, math.min(open, close), low)
+if raw_UT_now
+    create_ctf_zone(false, high, math.max(open, close))
+
+// SAFE: only iterate when arrays have items
+if array.size(ctfDemBoxes) > 0
+    for i = 0 to array.size(ctfDemBoxes) - 1
+        bx = array.get(ctfDemBoxes, i)
+        bot = array.get(ctfDemBot, i)
+        box.set_rightbottom(bx, bar_index, bot)
+
+if array.size(ctfSupBoxes) > 0
+    for i = 0 to array.size(ctfSupBoxes) - 1
+        bx = array.get(ctfSupBoxes, i)
+        bot = array.get(ctfSupBot, i)
+        box.set_rightbottom(bx, bar_index, bot)
+
+//==================================================================================================
+// ------------------------------ KV MTF (5m/15m) --------------------------------------------------
+//==================================================================================================
+type KVZoneState
+    bool active
+    float top
+    float bottom
+    int tleft
+    label lab
+    box bx
+
+f_clear_kv_zone(st) =>
+    if st.active
+        label.delete(st.lab)
+        box.delete(st.bx)
+    st.active := false
+    st.top := na
+    st.bottom := na
+    st.tleft := na
+    st.lab := na
+    st.bx := na
+    st
+
+f_set_kv_zone(tfName, isDemand, topZ, botZ, showLab) =>
+    st = KVZoneState.new(true, topZ, botZ, time, na, na)
+    bx = box.new(time, topZ, time, botZ, xloc = xloc.bar_time)
+    box.set_bgcolor(bx, isDemand ? dFill : sFill)
+    box.set_border_color(bx, isDemand ? color.new(color.lime, 0) : color.new(color.red, 0))
+    label lb = na
+    if showLab
+        txt = "KV " + tfName + " " + (isDemand ? "Demand" : "Supply")
+        lb := label.new(time, (topZ+botZ)/2.0, txt, xloc=xloc.bar_time, yloc=yloc.price, style=label.style_label_left, textcolor=color.white, color=color.new(color.black,70), size = mobileMode?size.small:size.tiny)
+    st.tleft := time
+    st.lab := lb
+    st.bx := bx
+    st
+
+f_update_right(st) =>
+    if st.active
+        box.set_rightbottom(st.bx, time, st.bottom)
+    st
+
+// detect UT/SPR on a higher TF bar CLOSE only
+f_kv_from_tf(tfName, enabled) =>
+    o = request.security(syminfo.tickerid, tfName, open,  barmerge.gaps_on, barmerge.lookahead_off)
+    h = request.security(syminfo.tickerid, tfName, high,  barmerge.gaps_on, barmerge.lookahead_off)
+    l = request.security(syminfo.tickerid, tfName, low,   barmerge.gaps_on, barmerge.lookahead_off)
+    c = request.security(syminfo.tickerid, tfName, close, barmerge.gaps_on, barmerge.lookahead_off)
+    v = request.security(syminfo.tickerid, tfName, volume,barmerge.gaps_on, barmerge.lookahead_off)
+
+    zV = (v - ta.sma(v, zLenEff)) / math.max(nz(ta.stdev(v, zLenEff), 0.0), 1e-6)
+    sp = h - l
+    uw = (h - math.max(o, c)) / math.max(sp, 1e-6)
+    lw = (math.min(o, c) - l) / math.max(sp, 1e-6)
+
+    hhPrevHTF = ta.highest(h[1], math.max(5, lk_swing/2))
+    llPrevHTF = ta.lowest(l[1],  math.max(5, lk_swing/2))
+
+    bool newClose = ta.change(c) != 0
+
+    utHTF  = enabled and newClose and (h > hhPrevHTF) and (uw >= uwrMin) and (zV >= zHVEff)
+    sprHTF = enabled and newClose and (l < llPrevHTF) and (lw >= lwrMin) and (zV >= zHVEff)
+
+    [utHTF, sprHTF, newClose, c, h, l, o]
+
+// MTF KV detection — derive presence flags from f_kv_from_tf (no state objects)
+bool inDem5  = false
+bool inSup5  = false
+bool inDem15 = false
+bool inSup15 = false
+
+// 15m HTF signals
+[ut15, spr15, new15, c15, h15, l15, o15] = f_kv_from_tf("15", useKV15Ef)
+
+// 5m HTF signals
+[ut5, spr5, new5, c5, h5, l5, o5] = f_kv_from_tf("5", useKV5Ef)
+
+// map HTF UT/SPR to Supply/Demand presence
+inDem5  := spr5
+inSup5  := ut5
+inDem15 := spr15
+inSup15 := ut15
+
+// choose KV presence; fallback to PD if none
+kvInDemand = (useKV5Ef  and inDem5)  or (useKV15Ef and inDem15)
+kvInSupply = (useKV5Ef  and inSup5)  or (useKV15Ef and inSup15)
+inDemand   = kvInDemand ? true : pdDiscount
+inSupply   = kvInSupply ? true : pdPremium
+
+//==================================================================================================
+// ------------------------------ SCORE ENGINE -----------------------------------------------------
+//==================================================================================================
+float longScore = 0.0
+longScore += (succ_SPR      ? wL_SPR_E        : 0)
+longScore += (succ_TEST     ? wL_TEST_ok_E    : (raw_TEST ? wL_TEST_p_E : 0))
+longScore += (nsRaw         ? wL_NS_E         : 0)
+longScore += (svRaw         ? wL_SV_E         : 0)
+longScore += (evrBull       ? wL_EVRp_E       : 0)
+longScore += (inDemand      ? wL_inDem_E      : 0)
+longScore += (pdDiscount    ? wL_inDisc_E     : 0)
+longScore += (microBias==1  ? wL_mBOS_E       : 0)
+longScore -= (inSupply      ? wL_penSup_E     : 0)
+// Delta confirms & Sweep bonus
+longScore  += (succ_SPR and deltaPos  ? deltaSPRBonus : 0)
+longScore  += (sweepLow  ? sweepBonus : 0)
+
+float shortScore = 0.0
+shortScore += (succ_UT        ? wS_UT_E        : 0)
+shortScore += (ndRaw          ? wS_ND_E        : 0)
+shortScore += (evrBear        ? wS_EVRm_E      : 0)
+shortScore += (inSupply       ? wS_inSup_E     : 0)
+shortScore += (pdPremium      ? wS_inPrem_E    : 0)
+shortScore += (microBias==-1  ? wS_mBOS_E      : 0)
+shortScore -= (inDemand       ? wS_penDem_E    : 0)
+// Delta confirms & Sweep bonus
+shortScore += (succ_UT  and deltaNeg  ? deltaUTBonus  : 0)
+shortScore += (sweepHigh ? sweepBonus : 0)
+
+//==================================================================================================
+// ------------------------------ TOP-DOWN GATE ----------------------------------------------------
+//==================================================================================================
+f_bias_from_tf(tf) =>
+    c  = request.security(syminfo.tickerid, tf, close,             barmerge.gaps_off, barmerge.lookahead_off)
+    ma = request.security(syminfo.tickerid, tf, ta.sma(close, 50), barmerge.gaps_off, barmerge.lookahead_off)
+    b  = c > ma ? 1.0 : c < ma ? -1.0 : 0.0
+    [b]
+
+float htfScore = 0.0
+if enableGate
+    if useD_TF
+        [bD] = f_bias_from_tf("D")
+        htfScore += wD_E   * bD
+    if use4H_TF
+        [b4] = f_bias_from_tf("240")
+        htfScore += w4H_E  * b4
+    if use1H_TF
+        [b1] = f_bias_from_tf("60")
+        htfScore += w1H_E  * b1
+    if use30m_TF
+        [b30] = f_bias_from_tf("30")
+        htfScore += w30m_E * b30
+
+canLongGate  = enableGate ? (nz(htfScore) >=  gateLongE)  : true
+canShortGate = enableGate ? (nz(htfScore) <= -gateShortE) : true
+
+//==================================================================================================
+// ------------------------------ PROPOSALS & GRADING ---------------------------------------------
+//==================================================================================================
+canLong  = showSignals and (longScore  >= longThrE)  and not inSupply and regimeOK and sessOK()
+canShort = showSignals and (shortScore >= shortThrE) and not inDemand and regimeOK and sessOK()
+
+gradeTextLong  = canLong  ? (longScore  >= longThrE + 2 ? "A" : longScore  >= longThrE + 1 ? "B" : "C") : ""
+gradeTextShort = canShort ? (shortScore >= shortThrE + 2 ? "A" : shortScore >= shortThrE + 1 ? "B" : "C") : ""
+
+// Candle coloring by bias
+bullCol = monochrome ? color.new(color.gray, 0) : color.new(color.lime, 0)
+bearCol = monochrome ? color.new(color.gray, 50): color.new(color.red,  0)
+candleCol = microBias >= 0 ? bullCol : bearCol
+plotcandle(colorByBias ? open : na, high, low, colorByBias ? close : na, color = candleCol, wickcolor = candleCol, bordercolor = candleCol, title="VSA Bias Candles")
+
+label_style_buy  = label.style_label_up
+label_style_sell = label.style_label_down
+txtLong  = gradeOn ? "BUY "  + gradeTextLong  + "\nS="+str.tostring(longScore,  format.mintick)  : "BUY"
+txtShort = gradeOn ? "SELL " + gradeTextShort + "\nS="+str.tostring(shortScore, format.mintick) : "SELL"
+
+if canLong and canLongGate
+    var label lBuy = na
+    if mode == "Present"
+        label.delete(lBuy)
+    lBuy := label.new(bar_index, low, txtLong, style=label_style_buy, textcolor=color.white, color=color.new(color.green, 0), size = mobileMode ? size.small : size.tiny, yloc=yloc.belowbar)
+
+if canShort and canShortGate
+    var label lSell = na
+    if mode == "Present"
+        label.delete(lSell)
+    lSell := label.new(bar_index, high, txtShort, style=label_style_sell, textcolor=color.white, color=color.new(color.red, 0), size = mobileMode ? size.small : size.tiny, yloc=yloc.abovebar)
+
+// Optional 1R/2R plotting
+plotR_do = plotR and (canLong or canShort)
+if plotR_do
+    longSL = llSwing
+    shortSL= hhSwing
+    if canLong and canLongGate
+        entry = close
+        risk  = entry - longSL
+        tp1   = entry + risk
+        tp2   = entry + risk*2.0
+        line.new(bar_index, entry, bar_index+1, entry, extend=extend.right, color=color.new(color.green,70))
+        line.new(bar_index, longSL, bar_index+1, longSL, extend=extend.right, color=color.new(color.red,70))
+        line.new(bar_index, tp1,   bar_index+1, tp1,   extend=extend.right, color=color.new(color.green,20))
+        line.new(bar_index, tp2,   bar_index+1, tp2,   extend=extend.right, color=color.new(color.green,10))
+    if canShort and canShortGate
+        entry = close
+        risk  = shortSL - entry
+        tp1   = entry - risk
+        tp2   = entry - risk*2.0
+        line.new(bar_index, entry, bar_index+1, entry, extend=extend.right, color=color.new(color.red,70))
+        line.new(bar_index, shortSL, bar_index+1, shortSL, extend=extend.right, color=color.new(color.red,70))
+        line.new(bar_index, tp1,   bar_index+1, tp1,   extend=extend.right, color=color.new(color.red,20))
+        line.new(bar_index, tp2,   bar_index+1, tp2,   extend=extend.right, color=color.new(color.red,10))
+
+// --- Mini Backtest (Lite) — track WR% 1R
+bool sigLong  = canLong  and canLongGate
+bool sigShort = canShort and canShortGate
+newLongSig  = sigLong  and not sigLong[1]
+newShortSig = sigShort and not sigShort[1]
+
+var int   btWins  = 0
+var int   btLoss  = 0
+var int   btTotal = 0
+var int[]   btDir   = array.new_int()
+var float[] btEntry = array.new_float()
+var float[] btSL    = array.new_float()
+var float[] btTP    = array.new_float()
+var int[]   btLeft  = array.new_int()
+
+if btOn
+    // enqueue new evals
+    if newLongSig
+        entry = close
+        sl    = llSwing
+        risk  = entry - sl
+        tp    = entry + risk
+        array.push(btDir, 1)
+        array.push(btEntry, entry)
+        array.push(btSL, sl)
+        array.push(btTP, tp)
+        array.push(btLeft, btHoriE)
+    if newShortSig
+        entry = close
+        sl    = hhSwing
+        risk  = sl - entry
+        tp    = entry - risk
+        array.push(btDir, -1)
+        array.push(btEntry, entry)
+        array.push(btSL, sl)
+        array.push(btTP, tp)
+        array.push(btLeft, btHoriE)
+
+    // cap concurrent evals
+    while array.size(btDir) > btMaxOpenE
+        array.shift(btDir)
+        array.shift(btEntry)
+        array.shift(btSL)
+        array.shift(btTP)
+        array.shift(btLeft)
+
+    // evaluate queue
+    if array.size(btDir) > 0
+        for i = array.size(btDir) - 1 to 0
+            dir  = array.get(btDir, i)
+            slv  = array.get(btSL,  i)
+            tpv  = array.get(btTP,  i)
+            left = array.get(btLeft,i)
+
+            win  = dir==1 ? (high >= tpv) : (low  <= tpv)
+            lose = dir==1 ? (low  <= slv) : (high >= slv)
+
+            if win or lose or left <= 0
+                btTotal += 1
+                if win
+                    btWins += 1
+                else
+                    btLoss += 1
+                array.remove(btDir, i), array.remove(btEntry, i), array.remove(btSL, i), array.remove(btTP, i), array.remove(btLeft, i)
+            else
+                array.set(btLeft, i, left-1)
+
+//==================================================================================================
+// ------------------------------ DASHBOARD --------------------------------------------------------
+//==================================================================================================
+dashTxtBase = "EZZ1 v1.6.3 | Gate: " + str.tostring(htfScore, format.mintick) +
+              " | L:" + str.tostring(longScore,  format.mintick) +
+              " | S:" + str.tostring(shortScore, format.mintick) +
+              " | Regime:" + (regimeOK ? "OK" : "X")
+
+wr = (btOn and btTotal > 0) ? (btWins * 100.0) / btTotal : na
+dashTxt = dashTxtBase + (btOn ? (" | WR:" + (na(wr) ? "n/a" : str.tostring(wr, "#.#") + "%")) : "")
+
+var label dash = na
+if barstate.islast
+    label.delete(dash)
+    dash := label.new(bar_index, na, dashTxt, xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_right, textcolor=color.white, color=color.new(color.black,70), size=mobileMode?size.small:size.tiny)
+
+//==================================================================================================
+// ------------------------------ ALERTS (legacy + templates) -------------------------------------
+//==================================================================================================
+// Legacy alerts
+alertcondition(canLong and canLongGate,  "BUY Proposal",  "EZZ1: BUY proposal (passed Gate & Threshold).")
+alertcondition(canShort and canShortGate,"SELL Proposal", "EZZ1: SELL proposal (passed Gate & Threshold).")
+
+// Webhook templates
+kvTag = kvInDemand ? (inDem5 ? "KV5m" : "KV15m") : (kvInSupply ? (inSup5 ? "KV5m" : "KV15m") : (pdDiscount ? "PD-Disc" : pdPremium ? "PD-Prem" : "none"))
+reasonsL = (succ_SPR ? "SPR | " : "") + (succ_TEST ? "Test✓ | " : (raw_TEST ? "Test? | " : "")) + (nsRaw?"NS | ":"") + (svRaw?"SV | ":"") + (evrBull?"EVR+ | ":"") + (inDemand?"InDemand | ":"") + (pdDiscount?"PD | ":"") + ((microBias==1)?"mBOS↑ | ":"") + (inSupply?"PenaltySupply | ":"")
+reasonsS = (succ_UT ? "UT | " : "") + (ndRaw?"ND | ":"") + (evrBear?"EVR- | ":"") + (inSupply?"InSupply | ":"") + (pdPremium?"PD | ":"") + ((microBias==-1)?"mBOS↓ | ":"") + (inDemand?"PenaltyDemand | ":"")
+
+// Escape JSON
+jsonEsc(s) =>
+    s1 = str.replace(s, "\\", "\\\\")
+    str.replace(s1, "\"", "\\\"")
+
+// Build JSON bằng concatenation (tránh str.format)
+alertMsgBuy =
+    alertFormat=="JSON"
+        ? ('{"sym":"' + syminfo.ticker + '","tf":"' + timeframe.period + '","type":"BUY","grade":"' + gradeTextLong +
+           '","score":' + str.tostring(longScore,  format.mintick) +
+           ',"price":' + str.tostring(close,      format.mintick) +
+           ',"kv":"' + kvTag + '","reasons":"' + jsonEsc(reasonsL) + '","time":' + str.tostring(time) + '}')
+        : ('BUY '  + gradeTextLong  + '  S=' + str.tostring(longScore,  format.mintick) + '  ' + reasonsL)
+
+alertMsgSell =
+    alertFormat=="JSON"
+        ? ('{"sym":"' + syminfo.ticker + '","tf":"' + timeframe.period + '","type":"SELL","grade":"' + gradeTextShort +
+           '","score":' + str.tostring(shortScore, format.mintick) +
+           ',"price":' + str.tostring(close,       format.mintick) +
+           ',"kv":"' + kvTag + '","reasons":"' + jsonEsc(reasonsS) + '","time":' + str.tostring(time) + '}')
+        : ('SELL ' + gradeTextShort + '  S=' + str.tostring(shortScore, format.mintick) + '  ' + reasonsS)
+
+// Use constant messages for alertcondition, and fire dynamic runtime alerts with alert()
+alertcondition(enableAlerts and canLong and canLongGate,  "BUY (webhook)",  "EZZ1 BUY proposal")
+alertcondition(enableAlerts and canShort and canShortGate, "SELL (webhook)", "EZZ1 SELL proposal")
+
+if enableAlerts and newLongSig
+    alert(alertMsgBuy, alert.freq_once_per_bar_close)
+if enableAlerts and newShortSig
+    alert(alertMsgSell, alert.freq_once_per_bar_close)

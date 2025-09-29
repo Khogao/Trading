@@ -1,0 +1,515 @@
+//@version=5
+indicator("VSA-Wyckoff Analyst", shorttitle="VW-Analyst", overlay=true, max_labels_count=100)
+
+// === CẤU TRÚC DỮ LIỆU ===
+type VolumeContext
+    float current
+    float average
+    float median
+    float percentileRank
+    bool isHigh
+    bool isLow
+    bool isExtreme
+
+type BarCharacteristics
+    float barRange
+    float avgRange
+    float closeLocation
+    bool isNarrow
+    bool isWide
+    bool isUp
+    bool isDown
+    VolumeContext volume
+
+type VSASignal
+    string name
+    string type  // "bullish" or "bearish"
+    float strength  // 0.0 to 5.0
+    array<string> reasons
+    bool isValid
+
+// === CÀI ĐẶT ===
+var string GRP_VSA = "🎯 VSA - Cài đặt Cốt lõi"
+volLookback = input.int(20, "Volume Lookback", group=GRP_VSA, minval=5, maxval=100)
+highVolThreshold = input.float(1.5, "High Volume Threshold", group=GRP_VSA, minval=1.0, step=0.1)
+lowVolThreshold = input.float(0.7, "Low Volume Threshold", group=GRP_VSA, maxval=1.0, step=0.1)
+swingLookback = input.int(10, "Swing High/Low Lookback", group=GRP_VSA, minval=5, maxval=50)
+
+var string GRP_FILTER = "🔍 Bộ lọc Tín hiệu"
+useTrendFilter = input.bool(true, "Lọc theo Xu hướng EMA", group=GRP_FILTER)
+trendLength = input.int(200, "Độ dài EMA Xu hướng (EMA chậm)", group=GRP_FILTER, minval=10)
+emaFastLength = input.int(21, "Độ dài EMA nhanh", group=GRP_FILTER, minval=2)
+emaSlowLength = input.int(50, "Độ dài EMA chậm", group=GRP_FILTER, minval=2)
+minConfluence = input.int(1, "Số tín hiệu Tối thiểu để Hiển thị", group=GRP_FILTER, minval=1, maxval=5)
+useVolumeFilter = input.bool(true, "Lọc theo Chất lượng Volume (Crypto)", group=GRP_FILTER)
+minVolumeQuality = input.int(2, "Ngưỡng Chất lượng Volume Tối thiểu", group=GRP_FILTER, minval=0, maxval=3)
+
+var string GRP_TOGGLES = "🚦 Bật/Tắt Các Mẫu hình VSA"
+enableSpringUpthrust = input.bool(true, "1. Spring / Upthrust", group=GRP_TOGGLES)
+enableClimax = input.bool(true, "2. Buying / Selling Climax", group=GRP_TOGGLES)
+enableStoppingVol = input.bool(true, "3. Stopping Volume", group=GRP_TOGGLES)
+enableShakeout = input.bool(true, "4. Shakeout", group=GRP_TOGGLES)
+enableEffortResult = input.bool(true, "5. Effort vs Result", group=GRP_TOGGLES)
+enableNoSupplyDemand = input.bool(true, "6. No Supply / No Demand", group=GRP_TOGGLES)
+enableTestBar = input.bool(true, "7. Test Bar", group=GRP_TOGGLES)
+
+var string GRP_CUSTOMIZE = "🎛️ Ngưỡng Sức mạnh Tín hiệu"
+springStrength = input.float(2.5, "Spring Min Strength", group=GRP_CUSTOMIZE, minval=1.0, maxval=5.0, step=0.1)
+upthrustStrength = input.float(2.5, "Upthrust Min Strength", group=GRP_CUSTOMIZE, minval=1.0, maxval=5.0, step=0.1)
+climaxStrength = input.float(3.0, "Climax Min Strength", group=GRP_CUSTOMIZE, minval=1.0, maxval=5.0, step=0.1)
+stoppingVolStrength = input.float(2.0, "Stopping Volume Min Strength", group=GRP_CUSTOMIZE, minval=1.0, maxval=5.0, step=0.1)
+shakeoutStrength = input.float(2.5, "Shakeout Min Strength", group=GRP_CUSTOMIZE, minval=1.0, maxval=5.0, step=0.1)
+effortResultStrength = input.float(2.0, "Effort/Result Min Strength", group=GRP_CUSTOMIZE, minval=1.0, maxval=5.0, step=0.1)
+noSupplyDemandStrength = input.float(1.5, "No Supply/Demand Min Strength", group=GRP_CUSTOMIZE, minval=1.0, maxval=5.0, step=0.1)
+testBarStrength = input.float(1.5, "Test Bar Min Strength", group=GRP_CUSTOMIZE, minval=1.0, maxval=5.0, step=0.1)
+climaxVolThreshold = input.float(90.0, "Climax Volume Threshold (%)", group=GRP_CUSTOMIZE, minval=80.0, maxval=99.0)
+
+
+var string GRP_DISPLAY = "🎨 Hiển thị"
+showLabels = input.bool(true, "Hiển thị Nhãn Tín hiệu", group=GRP_DISPLAY)
+showBackground = input.bool(false, "Tô màu Nền", group=GRP_DISPLAY)
+showDashboard = input.bool(true, "Bảng Điều khiển", group=GRP_DISPLAY)
+showEmaFill = input.bool(true, "Tô màu giữa EMA nhanh/chậm", group=GRP_DISPLAY)
+
+// === CÁC HÀM PHÂN TÍCH ===
+f_getVolumeContext() =>
+    current = volume
+    average = ta.sma(volume, volLookback)
+    median = ta.median(volume, volLookback)
+    rank = 0.0
+    for i = 1 to volLookback
+        if volume > volume[i]
+            rank += 1.0
+    percentileRank = rank / volLookback * 100
+    isHigh = current > average * highVolThreshold
+    isLow = current < average * lowVolThreshold
+    isExtreme = percentileRank > 90 or percentileRank < 10
+    VolumeContext.new(current, average, median, percentileRank, isHigh, isLow, isExtreme)
+
+f_getBarCharacteristics(vol_ctx) =>
+    barRange = high - low
+    avgRange = ta.atr(14)
+    closeLocation = barRange > 0 ? (close - low) / barRange : 0.5
+    isNarrow = barRange < avgRange * 0.7
+    isWide = barRange > avgRange * 1.3
+    isUp = close > open
+    isDown = close < open
+    BarCharacteristics.new(barRange, avgRange, closeLocation, isNarrow, isWide, isUp, isDown, vol_ctx)
+
+f_getVolumeQuality() =>
+    volumeMA = ta.sma(volume, 20)
+    volumeStdev = ta.stdev(volume, 20)
+    isVolumeSpike = volume > (volumeMA + 3 * volumeStdev)
+    recentVolumes = array.new<float>(5)
+    for i = 0 to 4
+        array.set(recentVolumes, i, volume[i])
+    avgRecentVol = array.avg(recentVolumes)
+    volumeCV = avgRecentVol > 0 ? array.stdev(recentVolumes) / avgRecentVol : 0
+    isConsistentVolume = volumeCV < 0.8
+    currentHour = hour(time, "UTC")
+    isLiquidityHour = currentHour >= 8 and currentHour <= 20
+    qualityScore = (isConsistentVolume ? 1 : 0) + (not isVolumeSpike ? 1 : 0) + (isLiquidityHour ? 1 : 0)
+    qualityScore
+
+f_sortSignalsByStrength(signals) =>
+    _signals = array.copy(signals)
+    if array.size(_signals) > 1
+        for i = 0 to array.size(_signals) - 2
+            for j = i + 1 to array.size(_signals) - 1
+                signal_i = array.get(_signals, i)
+                signal_j = array.get(_signals, j)
+                if signal_j.strength > signal_i.strength
+                    array.set(_signals, i, signal_j)
+                    array.set(_signals, j, signal_i)
+    _signals
+
+// === PRE-CALCULATE ALL TA FUNCTIONS FOR CONSISTENCY ===
+lowestLowPrev = ta.lowest(low, swingLookback)[1]
+highestHighPrev = ta.highest(high, swingLookback)[1]
+atr14 = ta.atr(14)
+
+// === CÁC HÀM PHÁT HIỆN TÍN HIỆU VSA ===
+f_detectSpring(bar, lowestLowPrev) =>
+    signal = VSASignal.new("Spring", "bullish", 0.0, array.new<string>(), false)
+    if na(bar) or na(bar.volume) or na(lowestLowPrev)
+        signal
+    else
+        priceFailure = low < lowestLowPrev and close > lowestLowPrev
+        volumeConfirmation = bar.volume.isHigh or bar.volume.percentileRank > 70
+        closeStrength = bar.closeLocation > 0.5
+        if priceFailure
+            array.push(signal.reasons, "Price broke support & recovered")
+            signal.strength += 2.0
+        if volumeConfirmation
+            array.push(signal.reasons, "High volume confirmation")
+            signal.strength += 1.5
+        if closeStrength
+            array.push(signal.reasons, "Strong close")
+            signal.strength += 1.0
+        signal.isValid := signal.strength >= springStrength ? true : false
+        signal
+
+f_detectUpthrust(bar, highestHighPrev) =>
+    signal = VSASignal.new("Upthrust", "bearish", 0.0, array.new<string>(), false)
+    if na(bar) or na(bar.volume) or na(highestHighPrev)
+        signal
+    else
+        priceFailure = high > highestHighPrev and close < highestHighPrev
+        volumeConfirmation = bar.volume.isHigh or bar.volume.percentileRank > 70
+        closeWeakness = bar.closeLocation < 0.5
+        if priceFailure
+            array.push(signal.reasons, "Price broke resistance & failed")
+            signal.strength += 2.0
+        if volumeConfirmation
+            array.push(signal.reasons, "High volume confirmation")
+            signal.strength += 1.5
+        if closeWeakness
+            array.push(signal.reasons, "Weak close")
+            signal.strength += 1.0
+        signal.isValid := signal.strength >= upthrustStrength ? true : false
+        signal
+
+f_detectShakeout(bar, lowestLowPrev) =>
+    signal = VSASignal.new("Shakeout", "bullish", 0.0, array.new<string>(), false)
+    if na(bar) or na(bar.volume) or na(lowestLowPrev)
+        signal
+    else
+        priceFailure = low < lowestLowPrev and close > lowestLowPrev
+        volumeConfirmation = bar.volume.isExtreme or bar.volume.percentileRank > 85
+        closeStrength = bar.closeLocation > 0.6
+        wideRange = bar.isWide
+        if priceFailure and wideRange
+            array.push(signal.reasons, "Wide spread failure below support")
+            signal.strength += 2.5
+        if volumeConfirmation
+            array.push(signal.reasons, "Extreme volume confirmation")
+            signal.strength += 1.5
+        if closeStrength
+            array.push(signal.reasons, "Very strong close")
+            signal.strength += 1.0
+        signal.isValid := signal.strength >= shakeoutStrength ? true : false
+        signal
+
+
+// --- Effort to Rise & Effort to Fall tách biệt ---
+f_detectEffortToRise(bar, atr14) =>
+    signal = VSASignal.new("Effort to Rise", "bullish", 0.0, array.new<string>(), false)
+    if na(bar) or na(bar.volume) or na(atr14)
+        signal
+    else
+        highVolume = bar.volume.percentileRank > 75
+        narrowRange = not bar.isWide and bar.barRange < atr14 * 0.9
+        closeUp = bar.closeLocation > 0.5
+        if highVolume and narrowRange and closeUp
+            array.push(signal.reasons, "High effort, little result (rise)")
+            signal.strength += 2.0
+            array.push(signal.reasons, "Close in upper half")
+            signal.strength += 0.5
+        signal.isValid := signal.strength >= effortResultStrength ? true : false
+        signal
+
+f_detectEffortToFall(bar, atr14) =>
+    signal = VSASignal.new("Effort to Fall", "bearish", 0.0, array.new<string>(), false)
+    if na(bar) or na(bar.volume) or na(atr14)
+        signal
+    else
+        highVolume = bar.volume.percentileRank > 75
+        narrowRange = not bar.isWide and bar.barRange < atr14 * 0.9
+        closeDown = bar.closeLocation <= 0.5
+        if highVolume and narrowRange and closeDown
+            array.push(signal.reasons, "High effort, little result (fall)")
+            signal.strength += 2.0
+            array.push(signal.reasons, "Close in lower half")
+            signal.strength += 0.5
+        signal.isValid := signal.strength >= effortResultStrength ? true : false
+        signal
+
+f_detectStoppingVolume(bar) =>
+    signal = VSASignal.new("Stopping Vol", "bullish", 0.0, array.new<string>(), false)
+    if na(bar) or na(bar.volume)
+        signal
+    else
+        downMove = bar.isDown
+        highVolume = bar.volume.percentileRank > 80
+        strongClose = bar.closeLocation > 0.6
+        if downMove and highVolume
+            array.push(signal.reasons, "High volume on down bar")
+            signal.strength += 2.0
+        if strongClose
+            array.push(signal.reasons, "Close in upper range")
+            signal.strength += 1.5
+        signal.isValid := signal.strength >= stoppingVolStrength ? true : false
+        signal
+
+f_detectNoSupply(bar) =>
+    signal = VSASignal.new("No Supply", "bullish", 0.0, array.new<string>(), false)
+    if na(bar) or na(bar.volume)
+        signal
+    else
+        downMove = bar.isDown
+        lowVolume = bar.volume.isLow
+        narrowRange = bar.isNarrow
+        afterDecline = close > close[3]
+        if downMove and lowVolume
+            array.push(signal.reasons, "Down bar on low volume")
+            signal.strength += 1.5
+        if narrowRange
+            array.push(signal.reasons, "Narrow range")
+            signal.strength += 1.0
+        if afterDecline
+            array.push(signal.reasons, "After a decline")
+            signal.strength += 0.5
+        signal.isValid := signal.strength >= noSupplyDemandStrength ? true : false
+        signal
+
+f_detectTestBar(bar, prevSpringSignal, prevShakeoutSignal, prevStoppingVolSignal) =>
+    signal = VSASignal.new("Test Bar", "bullish", 0.0, array.new<string>(), false)
+    if na(bar) or na(bar.volume)
+        signal
+    else
+        downMove = bar.isDown
+        lowVolume = bar.volume.isLow or bar.volume.percentileRank < 20
+        strongClose = bar.closeLocation > 0.5
+        afterStrength = na(prevSpringSignal) or na(prevShakeoutSignal) or na(prevStoppingVolSignal) ? false : (prevSpringSignal.isValid or prevShakeoutSignal.isValid or prevStoppingVolSignal.isValid)
+        if downMove and lowVolume
+            array.push(signal.reasons, "Test on low volume")
+            signal.strength += 2.0
+        if strongClose
+            array.push(signal.reasons, "Strong close after test")
+            signal.strength += 1.0
+        if afterStrength
+            array.push(signal.reasons, "Follows previous strength")
+            signal.strength += 1.5
+        signal.isValid := signal.strength >= testBarStrength ? true : false
+        signal
+
+f_detectBuyingClimax(bar) =>
+    signal = VSASignal.new("Buying Climax", "bearish", 0.0, array.new<string>(), false)
+    if na(bar) or na(bar.volume)
+        signal
+    else
+        upMove = bar.isUp
+        extremeVolume = bar.volume.percentileRank > climaxVolThreshold
+        wideRange = bar.isWide
+        weakClose = bar.closeLocation < 0.4
+        if upMove and extremeVolume
+            array.push(signal.reasons, "Extreme volume on up bar")
+            signal.strength += 2.5
+        if wideRange
+            array.push(signal.reasons, "Wide spread")
+            signal.strength += 1.0
+        if weakClose
+            array.push(signal.reasons, "Weak close in range")
+            signal.strength += 1.5
+        signal.isValid := signal.strength >= climaxStrength ? true : false
+        signal
+
+f_detectSellingClimax(bar) =>
+    signal = VSASignal.new("Selling Climax", "bullish", 0.0, array.new<string>(), false)
+    if na(bar) or na(bar.volume)
+        signal
+    else
+        downMove = bar.isDown
+        extremeVolume = bar.volume.percentileRank > climaxVolThreshold
+        wideRange = bar.isWide
+        strongClose = bar.closeLocation > 0.6
+        if downMove and extremeVolume
+            array.push(signal.reasons, "Extreme volume on down bar")
+            signal.strength += 2.5
+        if wideRange
+            array.push(signal.reasons, "Wide spread")
+            signal.strength += 1.0
+        if strongClose
+            array.push(signal.reasons, "Strong close in range")
+            signal.strength += 1.5
+        signal.isValid := signal.strength >= climaxStrength ? true : false
+        signal
+
+f_detectNoDemand(bar) =>
+    signal = VSASignal.new("No Demand", "bearish", 0.0, array.new<string>(), false)
+    if na(bar) or na(bar.volume)
+        signal
+    else
+        upMove = bar.isUp
+        lowVolume = bar.volume.isLow
+        narrowRange = bar.isNarrow
+        afterRally = close < close[3]
+        if upMove and lowVolume
+            array.push(signal.reasons, "Up bar on low volume")
+            signal.strength += 1.5
+        if narrowRange
+            array.push(signal.reasons, "Narrow range")
+            signal.strength += 1.0
+        if afterRally
+            array.push(signal.reasons, "After a rally")
+            signal.strength += 0.5
+        signal.isValid := signal.strength >= noSupplyDemandStrength ? true : false
+        signal
+
+// === TREND FILTER ===
+f_getTrendBias() =>
+    trendEMA = ta.ema(close, trendLength)
+    close > trendEMA ? 1 : close < trendEMA ? -1 : 0
+
+// === MAIN EXECUTION ===
+var activeSignals = array.new<VSASignal>()
+totalBullishScore = 0.0
+totalBearishScore = 0.0
+confluenceCount = 0
+volumeQuality = 0
+
+// Call context functions on every calculation, not just in dashboard
+volCtx = f_getVolumeContext()
+bar = f_getBarCharacteristics(volCtx)
+trendBias = f_getTrendBias()
+volumeQuality := f_getVolumeQuality()
+
+// Calculate previous bar context and characteristics
+prevVolCtx = f_getVolumeContext()[1]
+prevBar = f_getBarCharacteristics(prevVolCtx)
+lowestLowPrevPrev = ta.lowest(low, swingLookback)[2]
+highestHighPrevPrev = ta.highest(high, swingLookback)[2]
+atr14Prev = ta.atr(14)[1]
+
+// Pre-calculate previous bar signals for use in f_detectTestBar
+prevSpringSignal    = f_detectSpring(prevBar, lowestLowPrevPrev)
+prevShakeoutSignal  = f_detectShakeout(prevBar, lowestLowPrevPrev)
+prevStoppingVolSignal = f_detectStoppingVolume(prevBar)
+
+// Pre-calculate all signals for the current bar
+springSignal         = f_detectSpring(bar, lowestLowPrev)
+upthrustSignal       = f_detectUpthrust(bar, highestHighPrev)
+shakeoutSignal       = f_detectShakeout(bar, lowestLowPrev)
+stoppingVolSignal    = f_detectStoppingVolume(bar)
+noSupplySignal       = f_detectNoSupply(bar)
+noDemandSignal       = f_detectNoDemand(bar)
+buyingClimaxSignal   = f_detectBuyingClimax(bar)
+sellingClimaxSignal  = f_detectSellingClimax(bar)
+effortToRiseSignal   = f_detectEffortToRise(bar, atr14)
+effortToFallSignal   = f_detectEffortToFall(bar, atr14)
+testBarSignal        = f_detectTestBar(bar, prevSpringSignal, prevShakeoutSignal, prevStoppingVolSignal)
+
+if bar_index > math.max(volLookback, swingLookback)
+    if barstate.isconfirmed and (volumeQuality >= minVolumeQuality or not useVolumeFilter)
+        array.clear(activeSignals)
+        if enableSpringUpthrust
+            if springSignal.isValid and (not useTrendFilter or trendBias >= 0)
+                array.push(activeSignals, springSignal)
+            if upthrustSignal.isValid and (not useTrendFilter or trendBias <= 0)
+                array.push(activeSignals, upthrustSignal)
+        if enableShakeout
+            if shakeoutSignal.isValid and (not useTrendFilter or trendBias >= 0)
+                array.push(activeSignals, shakeoutSignal)
+        if enableStoppingVol
+            if stoppingVolSignal.isValid and (not useTrendFilter or trendBias >= 0)
+                array.push(activeSignals, stoppingVolSignal)
+        if enableNoSupplyDemand
+            if noSupplySignal.isValid and (not useTrendFilter or trendBias >= 0)
+                array.push(activeSignals, noSupplySignal)
+            if noDemandSignal.isValid and (not useTrendFilter or trendBias <= 0)
+                array.push(activeSignals, noDemandSignal)
+        if enableClimax
+            if buyingClimaxSignal.isValid and (not useTrendFilter or trendBias <= 0)
+                array.push(activeSignals, buyingClimaxSignal)
+            if sellingClimaxSignal.isValid and (not useTrendFilter or trendBias >= 0)
+                array.push(activeSignals, sellingClimaxSignal)
+        if enableEffortResult
+            if effortToRiseSignal.isValid and (not useTrendFilter or trendBias >= 0)
+                array.push(activeSignals, effortToRiseSignal)
+            if effortToFallSignal.isValid and (not useTrendFilter or trendBias <= 0)
+                array.push(activeSignals, effortToFallSignal)
+        if enableTestBar
+            if testBarSignal.isValid and (not useTrendFilter or trendBias >= 0)
+                array.push(activeSignals, testBarSignal)
+
+    confluenceCount := array.size(activeSignals)
+    if confluenceCount > 0
+        for signal in activeSignals
+            if signal.type == "bullish"
+                totalBullishScore += signal.strength
+            else
+                totalBearishScore += signal.strength
+
+// === DISPLAY ===
+// Add this helper function before the display section
+f_abbrSignalName(name) => name == "Spring" ? "SPR" : name == "Upthrust" ? "UT" : name == "Shakeout" ? "SkO" : name == "Stopping Vol" ? "STV" : name == "No Supply" ? "NS" : name == "No Demand" ? "ND" : name == "Test Bar" ? "TST" : name == "Buying Climax" ? "BC" : name == "Selling Climax" ? "SC" : name == "Effort to Rise" ? "EfR" : name == "Effort to Fall" ? "EfF" : ""
+    
+
+
+
+emaFast = ta.ema(close, emaFastLength)
+emaSlow = ta.ema(close, emaSlowLength)
+emaFastPlot = plot(emaFast, "EMA Nhanh", color=color.orange, linewidth=1)
+emaSlowPlot = plot(emaSlow, "EMA Chậm", color=color.blue, linewidth=1)
+plot(ta.ema(close, trendLength), "Trend EMA (legacy)", color.gray, 1, display=display.none)
+
+// Fill area between EMA fast/slow
+var color fillColor = na
+isUpTrend = emaFast > emaSlow
+isDownTrend = emaFast < emaSlow
+fillColor := showEmaFill ? (isUpTrend ? color.new(color.green, 80) : isDownTrend ? color.new(color.red, 80) : na) : na
+fill(emaFastPlot, emaSlowPlot, color=fillColor)
+
+bgcolor(showBackground and confluenceCount >= minConfluence and (totalBullishScore > 0 or totalBearishScore > 0) ? (totalBullishScore > totalBearishScore ? color.new(color.green, 90) : color.new(color.red, 90)) : na)
+
+if showLabels and confluenceCount > 0 and confluenceCount >= minConfluence
+    sortedSignals = f_sortSignalsByStrength(activeSignals)
+    strongestSignal = array.get(sortedSignals, 0)
+    abbrName = f_abbrSignalName(strongestSignal.name)
+    // Thêm ngôi sao nếu là BC/SC và strength >= 4.5
+    isClimax = (strongestSignal.name == "Buying Climax" or strongestSignal.name == "Selling Climax")
+    isStar = isClimax and strongestSignal.strength >= 4.5
+    star = isStar ? "★" : ""
+    signalText = abbrName + star
+    scoreText = str.tostring(strongestSignal.strength, "#.#")
+    signalYloc = strongestSignal.type == "bullish" ? yloc.belowbar : yloc.abovebar
+    // Chủ động xác định độ sáng của background để chọn màu chữ phù hợp
+    bgCol = chart.bg_color
+    bgR = color.r(bgCol)
+    bgG = color.g(bgCol)
+    bgB = color.b(bgCol)
+    bgLuminance = 0.299 * bgR + 0.587 * bgG + 0.114 * bgB
+    labelTextColor = bgLuminance > 180 ? color.black : color.white
+    // Offset for score label
+    offset = (high - low) * 0.2
+    mainY = strongestSignal.type == "bullish" ? low : high
+    scoreY = strongestSignal.type == "bullish" ? (low - offset) : (high + offset)
+    // Main label
+    label.new(x=bar_index, y=mainY, text=signalText, color=na, textcolor=labelTextColor, style=strongestSignal.type == "bullish" ? label.style_label_left : label.style_label_right, yloc=signalYloc, size=size.small)
+    // Score label, below main label
+    label.new(x=bar_index, y=scoreY, text=scoreText, color=na, textcolor=labelTextColor, style=strongestSignal.type == "bullish" ? label.style_label_left : label.style_label_right, yloc=signalYloc, size=size.tiny)
+
+// === DASHBOARD ===
+var table dashboard = na
+if showDashboard and barstate.islast
+    if na(dashboard)
+        dashboard := table.new(position.top_right, 2, 7, bgcolor=color.new(color.black, 80), border_width=1)
+    
+    table.clear(dashboard, 0, 6, 0, 1)
+    
+    // Remove unsupported colspan argument
+    table.cell(dashboard, 0, 0, "VSA ANALYSIS", text_color=color.white, bgcolor=color.blue)
+    
+    // Use volCtx, trendBias, volumeQuality from above (already calculated)
+    table.cell(dashboard, 0, 1, "Trend:")
+    table.cell(dashboard, 1, 1, trendBias > 0 ? "BULLISH" : trendBias < 0 ? "BEARISH" : "NEUTRAL", text_color=trendBias > 0 ? color.green : trendBias < 0 ? color.red : color.gray)
+    
+    table.cell(dashboard, 0, 2, "Volume:")
+    table.cell(dashboard, 1, 2, str.tostring(volCtx.percentileRank, "#") + "%", text_color=volCtx.isHigh ? color.red : volCtx.isLow ? color.gray : color.blue)
+    
+    table.cell(dashboard, 0, 3, "Vol Quality:")
+    volQualityColor = volumeQuality == 3 ? color.green : volumeQuality == 2 ? color.orange : color.red
+    table.cell(dashboard, 1, 3, str.tostring(volumeQuality) + "/3", text_color=volQualityColor)
+
+    table.cell(dashboard, 0, 4, "Confluence:")
+    table.cell(dashboard, 1, 4, str.tostring(confluenceCount), text_color=confluenceCount > 0 ? color.green : color.gray)
+    
+    table.cell(dashboard, 0, 5, "Bull Score:")
+    table.cell(dashboard, 1, 5, str.tostring(totalBullishScore, "#.#"), text_color=color.green)
+    
+    table.cell(dashboard, 0, 6, "Bear Score:")
+    table.cell(dashboard, 1, 6, str.tostring(totalBearishScore, "#.#"), text_color=color.red)
+
+// === ALERTS ===
+alertcondition(confluenceCount >= minConfluence and totalBullishScore > totalBearishScore, "VSA Bullish Signal", "VSA Bullish confluence detected")
+alertcondition(confluenceCount >= minConfluence and totalBearishScore > totalBullishScore, "VSA Bearish Signal", "VSA Bearish confluence detected")

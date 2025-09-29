@@ -1,0 +1,42 @@
+// filepath: /TradingView-Pine-Scripts/TradingView-Pine-Scripts/src/strategies/scalping-strategy.pine
+// © 2025 Gemini AI - Scalping Strategy
+// @version=5
+strategy("Scalping Strategy", shorttitle="Scalp", overlay=true)
+
+// Input parameters for scalping strategy
+riskRewardRatio = input.float(2.0, "Risk/Reward Ratio", step=0.1)
+takeProfitPips = input.int(10, "Take Profit (pips)", minval=1)
+stopLossPips = input.int(5, "Stop Loss (pips)", minval=1)
+scalpVolumeThreshold = input.float(1.5, "Volume Threshold Multiplier", step=0.1)
+
+// EMA settings for trend direction
+fastEMALength = input.int(9, "Fast EMA Length", minval=1)
+slowEMALength = input.int(21, "Slow EMA Length", minval=1)
+
+// Calculate EMAs
+fastEMA = ta.ema(close, fastEMALength)
+slowEMA = ta.ema(close, slowEMALength)
+
+// Determine trend direction
+isBullishTrend = fastEMA > slowEMA
+isBearishTrend = fastEMA < slowEMA
+
+// Volume condition
+isHighVolume = volume > ta.sma(volume, 20) * scalpVolumeThreshold
+
+// Entry conditions
+longCondition = isBullishTrend and isHighVolume
+shortCondition = isBearishTrend and isHighVolume
+
+// Execute trades
+if (longCondition)
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Take Profit/Stop Loss", "Long", limit=close + takeProfitPips * syminfo.mintick, stop=close - stopLossPips * syminfo.mintick)
+
+if (shortCondition)
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Take Profit/Stop Loss", "Short", limit=close - takeProfitPips * syminfo.mintick, stop=close + stopLossPips * syminfo.mintick)
+
+// Plot EMAs for visual reference
+plot(fastEMA, color=color.green, title="Fast EMA")
+plot(slowEMA, color=color.red, title="Slow EMA")

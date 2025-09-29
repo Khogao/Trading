@@ -1,0 +1,415 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Phi
+//@version=5
+strategy("SMBR-MFT", shorttitle="SMBR-MFT", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10, calc_on_every_tick=true)
+
+// --- INPUTS ---
+tfOpt = input.string("5", "Timeframe", options=["1", "3", "5", "15", "60", "240", "D"], group="Inputs")
+// Add bosConfType input
+bosConfType = input.string("Candle Close", "BOS Confirmation Type", options=["Candle Close", "Wick"], group="Inputs")
+// Add tp_count input
+tp_count = input.int(3, "TP Count", minval=1, maxval=3, group="Inputs")
+order_percent_input = input.float(10, "Order Percent", minval=0.1, maxval=100, step=0.1, group="Inputs")
+
+// --- COLOR CONSTANTS ---
+BULL = color.new(color.green, 0)
+BEAR = color.new(color.red, 0)
+
+// --- TIMEFRAME STRING ---
+tf = tfOpt == "1"   ? "1"
+  : tfOpt == "3"   ? "3"
+  : tfOpt == "5"   ? "5"
+  : tfOpt == "15"  ? "15"
+  : tfOpt == "60"  ? "60"
+  : tfOpt == "240" ? "240"
+  : tfOpt == "D"   ? "D"
+  : "5"
+
+// --- SETTINGS CHO TỪNG TF ---
+// 1m
+swing_1   = input.int(7, "SwingSize 1m", group="1m Settings")
+rr_1      = input.float(1.0, "RR 1m", group="1m Settings")
+lev_1     = input.int(5, "Leverage 1m", minval=1, maxval=125, group="1m Settings")
+tp1_1     = input.float(0.33, "TP1 Ratio 1m", minval=0.05, maxval=10.0, step=0.01, group="1m Settings")
+tp2_1     = input.float(0.66, "TP2 Ratio 1m", minval=0.05, maxval=10.0, step=0.01, group="1m Settings")
+tp3_1     = input.float(1.0,  "TP3 Ratio 1m", minval=0.05, maxval=10.0, step=0.01, group="1m Settings")
+// 3m
+swing_3   = input.int(7, "SwingSize 3m", group="3m Settings")
+rr_3      = input.float(1.0, "RR 3m", group="3m Settings")
+lev_3     = input.int(5, "Leverage 3m", minval=1, maxval=125, group="3m Settings")
+tp1_3     = input.float(0.33, "TP1 Ratio 3m", minval=0.05, maxval=10.0, step=0.01, group="3m Settings")
+tp2_3     = input.float(0.66, "TP2 Ratio 3m", minval=0.05, maxval=10.0, step=0.01, group="3m Settings")
+tp3_3     = input.float(1.0,  "TP3 Ratio 3m", minval=0.05, maxval=10.0, step=0.01, group="3m Settings")
+// 5m
+swing_5   = input.int(7, "SwingSize 5m", group="5m Settings")
+rr_5      = input.float(1.0, "RR 5m", group="5m Settings")
+lev_5     = input.int(5, "Leverage 5m", minval=1, maxval=125, group="5m Settings")
+tp1_5     = input.float(0.33, "TP1 Ratio 5m", minval=0.05, maxval=10.0, step=0.01, group="5m Settings")
+tp2_5     = input.float(0.66, "TP2 Ratio 5m", minval=0.05, maxval=10.0, step=0.01, group="5m Settings")
+tp3_5     = input.float(1.0,  "TP3 Ratio 5m", minval=0.05, maxval=10.0, step=0.01, group="5m Settings")
+// 15m
+swing_15  = input.int(7, "SwingSize 15m", group="15m Settings")
+rr_15     = input.float(1.0, "RR 15m", group="15m Settings")
+lev_15    = input.int(5, "Leverage 15m", minval=1, maxval=125, group="15m Settings")
+tp1_15    = input.float(0.33, "TP1 Ratio 15m", minval=0.05, maxval=10.0, step=0.01, group="15m Settings")
+tp2_15    = input.float(0.66, "TP2 Ratio 15m", minval=0.05, maxval=10.0, step=0.01, group="15m Settings")
+tp3_15    = input.float(1.0,  "TP3 Ratio 15m", minval=0.05, maxval=10.0, step=0.01, group="15m Settings")
+// 60m
+swing_60  = input.int(7, "SwingSize 60m", group="60m Settings")
+rr_60     = input.float(1.0, "RR 60m", group="60m Settings")
+lev_60    = input.int(5, "Leverage 60m", minval=1, maxval=125, group="60m Settings")
+tp1_60    = input.float(0.33, "TP1 Ratio 60m", minval=0.05, maxval=10.0, step=0.01, group="60m Settings")
+tp2_60    = input.float(0.66, "TP2 Ratio 60m", minval=0.05, maxval=10.0, step=0.01, group="60m Settings")
+tp3_60    = input.float(1.0,  "TP3 Ratio 60m", minval=0.05, maxval=10.0, step=0.01, group="60m Settings")
+// 240m
+swing_240 = input.int(7, "SwingSize 240m", group="240m Settings")
+rr_240    = input.float(1.0, "RR 240m", group="240m Settings")
+lev_240   = input.int(5, "Leverage 240m", minval=1, maxval=125, group="240m Settings")
+tp1_240   = input.float(0.33, "TP1 Ratio 240m", minval=0.05, maxval=10.0, step=0.01, group="240m Settings")
+tp2_240   = input.float(0.66, "TP2 Ratio 240m", minval=0.05, maxval=10.0, step=0.01, group="240m Settings")
+tp3_240   = input.float(1.0,  "TP3 Ratio 240m", minval=0.05, maxval=10.0, step=0.01, group="240m Settings")
+// 1d
+swing_D   = input.int(7, "SwingSize 1d", group="D Settings")
+rr_D      = input.float(1.0, "RR 1d", group="D Settings")
+lev_D     = input.int(5, "Leverage 1d", minval=1, maxval=125, group="D Settings")
+tp1_D     = input.float(0.33, "TP1 Ratio 1d", minval=0.05, maxval=10.0, step=0.01, group="D Settings")
+tp2_D     = input.float(0.66, "TP2 Ratio 1d", minval=0.05, maxval=10.0, step=0.01, group="D Settings")
+tp3_D     = input.float(1.0,  "TP3 Ratio 1d", minval=0.05, maxval=10.0, step=0.01, group="D Settings")
+
+// --- LẤY GIÁ TRỊ THEO TF ĐANG CHỌN ---
+swingSize = tfOpt == "1"   ? swing_1
+         : tfOpt == "3"   ? swing_3
+         : tfOpt == "5"   ? swing_5
+         : tfOpt == "15"  ? swing_15
+         : tfOpt == "60"  ? swing_60
+         : tfOpt == "240" ? swing_240
+         : tfOpt == "D"   ? swing_D
+         : 7
+
+rr = tfOpt == "1"   ? rr_1
+   : tfOpt == "3"   ? rr_3
+   : tfOpt == "5"   ? rr_5
+   : tfOpt == "15"  ? rr_15
+   : tfOpt == "60"  ? rr_60
+   : tfOpt == "240" ? rr_240
+   : tfOpt == "D"   ? rr_D
+   : 1.0
+
+tp1_ratio = tfOpt == "1"   ? tp1_1
+          : tfOpt == "3"   ? tp1_3
+          : tfOpt == "5"   ? tp1_5
+          : tfOpt == "15"  ? tp1_15
+          : tfOpt == "60"  ? tp1_60
+          : tfOpt == "240" ? tp1_240
+          : tfOpt == "D"   ? tp1_D
+          : 0.33
+
+tp2_ratio = tfOpt == "1"   ? tp2_1
+          : tfOpt == "3"   ? tp2_3
+          : tfOpt == "5"   ? tp2_5
+          : tfOpt == "15"  ? tp2_15
+          : tfOpt == "60"  ? tp2_60
+          : tfOpt == "240" ? tp2_240
+          : tfOpt == "D"   ? tp2_D
+          : 0.66
+
+tp3_ratio = tfOpt == "1"   ? tp3_1
+          : tfOpt == "3"   ? tp3_3
+          : tfOpt == "5"   ? tp3_5
+          : tfOpt == "15"  ? tp3_15
+          : tfOpt == "60"  ? tp3_60
+          : tfOpt == "240" ? tp3_240
+          : tfOpt == "D"   ? tp3_D
+          : 1.0
+
+// --- HIGHER TIMEFRAME DATA ---
+[htf_close, htf_high, htf_low] = request.security(syminfo.tickerid, tf, [close, high, low])
+
+MS(int swingSize, int src_BI, string bosConfType, bool enms, float src_close, float src_high, float src_low) =>
+    pivHi = ta.pivothigh(src_high, swingSize, swingSize)
+    pivLo = ta.pivotlow(src_low, swingSize, swingSize)
+    var float prevHigh = na
+    var float prevLow = na
+    var int prevHighIndex = na
+    var int prevLowIndex = na
+    var bool highActive = false
+    var bool lowActive = false
+    bool hh = false
+    bool lh = false
+    bool hl = false
+    bool ll = false
+    var int prevSwing = 0
+    if not na(pivHi) and enms
+        if pivHi >= prevHigh
+            hh := true
+            prevSwing := 2
+        else
+            lh := true
+            prevSwing := 1
+        prevHigh := pivHi
+        highActive := true
+        prevHighIndex := src_BI - swingSize
+    if not na(pivLo) and enms
+        if pivLo >= prevLow
+            hl := true
+            prevSwing := -1
+        else
+            ll := true
+            prevSwing := -2
+        prevLow := pivLo
+        lowActive := true
+        prevLowIndex := src_BI - swingSize
+    bool highBroken = false
+    bool lowBroken = false
+    float highSrc = bosConfType == 'Candle Close' ? src_close : src_high
+    float lowSrc = bosConfType == 'Candle Close' ? src_close : src_low
+    if highSrc > prevHigh and highActive and enms
+        highBroken := true
+        highActive := false
+    if lowSrc < prevLow and lowActive and enms
+        lowBroken := true
+        lowActive := false
+    [hh,ll,lh,hl,highBroken,lowBroken,prevHighIndex,prevLowIndex,pivHi,pivLo,prevHigh,prevLow]
+
+[hh, ll, lh, hl, highBroken, lowBroken, prevHighIndex, prevLowIndex, pivHi, pivLo, prevHigh, prevLow] = MS(swingSize, bar_index, bosConfType, true, htf_close, htf_high, htf_low)
+
+var int prevBreakoutDir = 0
+length = 0
+
+// --- CHOCH LOGIC (placeholder, set as false or implement your own logic) ---
+choch = false
+
+if highBroken
+    line.new(prevHighIndex, prevHigh, bar_index, prevHigh, color=BULL, width=1, force_overlay=true)
+    label.new(math.floor(bar_index - (bar_index - prevHighIndex) / 2), prevHigh, prevBreakoutDir == -1 and choch ? 'CHoCH' : 'BOS', color=color.rgb(0, 0, 0, 80), textcolor=BULL, size=size.tiny, force_overlay=true)
+    prevBreakoutDir := 1
+    length := bar_index - prevHighIndex
+if lowBroken
+    line.new(prevLowIndex, prevLow, bar_index, prevLow, color=BEAR, width=1, force_overlay=true)
+    label.new(math.floor(bar_index - (bar_index - prevLowIndex) / 2), prevLow, prevBreakoutDir == 1 and choch ? 'CHoCH' : 'BOS', color=color.rgb(0, 0, 0, 80), textcolor=BEAR, style=label.style_label_up, size=size.tiny, force_overlay=true)
+    prevBreakoutDir := -1
+    length := bar_index - prevLowIndex
+
+x = math.max(1, nz(length))
+v = ta.highest(x) - ta.lowest(x)
+dist = v / rr
+trigger = 0
+var active = 0
+var TP = 0.0
+var TP1 = 0.0
+var TP2 = 0.0
+var TP3 = 0.0
+var SL = 0.0
+var TPs = array.new_line()
+var TPs1 = array.new_line()
+var TPs2 = array.new_line()
+var TPs3 = array.new_line()
+
+var total = 0
+var tp1s = 0
+var tp2s = 0
+var tp3s = 0
+
+// --- Lệnh vào/thoát lệnh strategy ---
+if highBroken
+    active := 1
+    trigger := 1
+    total += 1
+    TP := prevHigh + dist * tp3_ratio
+    TP1 := prevHigh + dist * tp1_ratio
+    TP2 := prevHigh + dist * tp2_ratio
+    SL := prevHigh - dist
+    // Vào lệnh Long
+    strategy.entry("Long", strategy.long, comment="BOS Long")
+    // Thoát lệnh với TP/SL chính
+    if tp_count == 1
+        strategy.exit("TP1", from_entry="Long", stop=SL, limit=TP1)
+    else if tp_count == 2
+        strategy.exit("TP1", from_entry="Long", stop=SL, limit=TP1, qty_percent=50)
+        strategy.exit("TP2", from_entry="Long", stop=SL, limit=TP2, qty_percent=50)
+    else
+        strategy.exit("TP1", from_entry="Long", stop=SL, limit=TP1, qty_percent=33)
+        strategy.exit("TP2", from_entry="Long", stop=SL, limit=TP2, qty_percent=33)
+        strategy.exit("TP3", from_entry="Long", stop=SL, limit=TP, qty_percent=34)
+
+    TPs.unshift(line.new(prevHighIndex, TP, bar_index, TP, color=color.new(BULL, 70), width=1, force_overlay=true, style=line.style_dashed))
+    TPs1.unshift(line.new(prevHighIndex, TP1, bar_index, TP1, color=color.new(BULL, 50), width=1, force_overlay=true, style=line.style_dashed))
+    TPs2.unshift(line.new(prevHighIndex, TP2, bar_index, TP2, color=color.new(BULL, 30), width=1, force_overlay=true, style=line.style_dashed))
+    if tp_count == 3
+        TPs3.unshift(line.new(prevHighIndex, TP, bar_index, TP, color=color.new(BULL, 10), width=1, force_overlay=true, style=line.style_dashed))
+    linefill.new(TPs.first(), TPs1.first(), color.new(BULL, 90))
+
+if lowBroken
+    active := -1
+    trigger := 1
+    total += 1
+    TP := prevLow - dist * tp3_ratio
+    TP1 := prevLow - dist * tp1_ratio
+    TP2 := prevLow - dist * tp2_ratio
+    SL := prevLow + dist
+    // Vào lệnh Short
+    strategy.entry("Short", strategy.short, comment="BOS Short")
+    // Thoát lệnh với TP/SL chính
+    if tp_count == 1
+        strategy.exit("TP1", from_entry="Short", stop=SL, limit=TP1)
+    else if tp_count == 2
+        strategy.exit("TP1", from_entry="Short", stop=SL, limit=TP1, qty_percent=50)
+        strategy.exit("TP2", from_entry="Short", stop=SL, limit=TP2, qty_percent=50)
+    else
+        strategy.exit("TP1", from_entry="Short", stop=SL, limit=TP1, qty_percent=33)
+        strategy.exit("TP2", from_entry="Short", stop=SL, limit=TP2, qty_percent=33)
+        strategy.exit("TP3", from_entry="Short", stop=SL, limit=TP, qty_percent=34)
+
+    TPs.unshift(line.new(prevLowIndex, TP, bar_index, TP, color=color.new(BEAR, 70), width=1, force_overlay=true, style=line.style_dashed))
+    TPs1.unshift(line.new(prevLowIndex, TP1, bar_index, TP1, color=color.new(BEAR, 50), width=1, force_overlay=true, style=line.style_dashed))
+    TPs2.unshift(line.new(prevLowIndex, TP2, bar_index, TP2, color=color.new(BEAR, 30), width=1, force_overlay=true, style=line.style_dashed))
+    if tp_count == 3
+        TPs3.unshift(line.new(prevLowIndex, TP, bar_index, TP, color=color.new(BEAR, 10), width=1, force_overlay=true, style=line.style_dashed))
+    linefill.new(TPs.first(), TPs1.first(), color.new(BEAR, 90))
+
+// Lấy leverage theo TF
+leverage = tfOpt == "1"   ? lev_1 :
+           tfOpt == "3"   ? lev_3 :
+           tfOpt == "5"   ? lev_5 :
+           tfOpt == "15"  ? lev_15 :
+           tfOpt == "60"  ? lev_60 :
+           tfOpt == "240" ? lev_240 :
+           tfOpt == "D"   ? lev_D : 5
+
+// Tính vốn thực tế kiểm soát mỗi lệnh
+// NOTE: 'account_size' is hardcoded as a placeholder. For live trading, replace with 'strategy.equity' or another dynamic value as needed.
+account_size = 1000  // hoặc lấy từ equity nếu muốn động
+order_percent = order_percent_input / 100
+order_value = account_size * order_percent
+position_value = order_value * leverage
+
+// Thêm biến lưu trạng thái lệnh
+var float entryPrice = na
+var float slPrice = na
+var float tp1Price = na
+var float tp2Price = na
+var float tp3Price = na
+var int   tradeDir = 0  // 1: long, -1: short, 0: none
+
+// Khi có tín hiệu mới, lưu trạng thái lệnh và tính quantity
+var float quantity = na
+if highBroken
+    entryPrice := prevHigh
+    slPrice := prevHigh - dist
+    tp1Price := prevHigh + dist * tp1_ratio
+    tp2Price := prevHigh + dist * tp2_ratio
+    tp3Price := prevHigh + dist * tp3_ratio
+    tradeDir := 1
+    quantity := position_value / entryPrice
+if lowBroken
+    entryPrice := prevLow
+    slPrice := prevLow + dist
+    tp1Price := prevLow - dist * tp1_ratio
+    tp2Price := prevLow - dist * tp2_ratio
+    tp3Price := prevLow - dist * tp3_ratio
+    tradeDir := -1
+    quantity := position_value / entryPrice
+
+// Khi lệnh đóng, tính lãi/lỗ thực tế
+var float realized_pnl = na
+if (tradeDir == 1 and (close >= tp3Price or close <= slPrice)) or
+   (tradeDir == -1 and (close <= tp3Price or close >= slPrice))
+    exitPrice = close
+    if tradeDir == 1
+        realized_pnl := (exitPrice - entryPrice) * quantity
+    if tradeDir == -1
+        realized_pnl := (entryPrice - exitPrice) * quantity
+    // reset trạng thái như cũ
+    tradeDir := 0
+    entryPrice := na
+    slPrice := na
+    tp1Price := na
+    tp2Price := na
+    tp3Price := na
+    quantity := na
+
+// Kiểm tra lệnh còn hiệu lực (giá chưa chạm TP3 hoặc SL)
+isActive = (tradeDir == 1 and (close < tp3Price and close > slPrice)) or
+           (tradeDir == -1 and (close > tp3Price and close < slPrice))
+
+// Nếu còn hiệu lực, vẽ lại các mức TP/SL
+if isActive
+    if tradeDir == 1
+        line.new(bar_index-1, tp1Price, bar_index, tp1Price, color=color.purple, width=1, style=line.style_dotted)
+        line.new(bar_index-1, tp2Price, bar_index, tp2Price, color=color.purple, width=1, style=line.style_dotted)
+        line.new(bar_index-1, tp3Price, bar_index, tp3Price, color=color.purple, width=1, style=line.style_dotted)
+        line.new(bar_index-1, slPrice, bar_index, slPrice, color=color.red, width=1, style=line.style_dotted)
+    if tradeDir == -1
+        line.new(bar_index-1, tp1Price, bar_index, tp1Price, color=color.purple, width=1, style=line.style_dotted)
+        line.new(bar_index-1, tp2Price, bar_index, tp2Price, color=color.purple, width=1, style=line.style_dotted)
+        line.new(bar_index-1, tp3Price, bar_index, tp3Price, color=color.purple, width=1, style=line.style_dotted)
+        line.new(bar_index-1, slPrice, bar_index, slPrice, color=color.red, width=1, style=line.style_dotted)
+
+// Khi lệnh đóng (giá chạm TP3 hoặc SL), reset trạng thái và cập nhật winrate
+if tradeDir == 1
+    if close >= tp1Price
+        tp1s += 1
+    if close >= tp2Price
+        tp2s += 1
+    if close >= tp3Price
+        tp3s += 1
+    // Reset trạng thái (must be in a block)
+    tradeDir := 0
+    entryPrice := na
+    slPrice := na
+    tp1Price := na
+    tp2Price := na
+    tp3Price := na
+if tradeDir == -1
+    if close <= tp1Price
+        tp1s += 1
+    if close <= tp2Price
+        tp2s += 1
+    if close <= tp3Price
+        tp3s += 1
+    // Reset trạng thái (must be in a block)
+    tradeDir := 0
+    entryPrice := na
+    slPrice := na
+    tp1Price := na
+    tp2Price := na
+    tp3Price := na
+
+// --- VẼ VÀ THỐNG KÊ ---
+// Declare table variable at global scope
+var table data_table = na
+
+barcolor(active == 0 ? color.new(color.gray, 40) : active == 1 ? color.new(BULL, 40) : color.new(BEAR, 40))
+plotshape(highBroken, "Bullish Signal", shape.labelup, location.belowbar, BULL, size=size.small)
+plotshape(lowBroken, "Bearish Signal", shape.labeldown, location.abovebar, BEAR, size=size.small)
+
+// Helper function to calculate winrate
+winrate(tp, total) =>
+    total > 0 ? (tp / total) * 100.0 : na
+
+if barstate.islast
+    // Only create table if it hasn't been created yet
+    if na(data_table)
+        data_table := table.new(position.top_right, 2, 8, color.gray, chart.fg_color, 1, chart.fg_color, 1)
+
+    // Thống kê winrate các TP
+    t1_rate = winrate(tp1s, total)
+    t2_rate = winrate(tp2s, total)
+    t3_rate = winrate(tp3s, total)
+
+    table.cell(data_table, 0, 0, "Smart Money Breakout Stats", text_color=chart.fg_color, text_halign=text.align_center)
+    table.cell(data_table, 1, 0, "Value", text_color=chart.fg_color, text_halign=text.align_center)
+    table.cell(data_table, 0, 1, "Total Signals", text_color=chart.fg_color)
+    table.cell(data_table, 1, 1, str.tostring(total), text_color=chart.fg_color, text_halign=text.align_center)
+    table.cell(data_table, 0, 2, "TP1 Win Rate", text_color=chart.fg_color)
+    table.cell(data_table, 1, 2, total > 0 ? str.format("{0,number,#.##}%", t1_rate) : "No Trades", text_color=chart.fg_color, text_halign=text.align_center)
+    table.cell(data_table, 0, 3, "TP2 Win Rate", text_color=chart.fg_color)
+    table.cell(data_table, 1, 3, total > 0 ? str.format("{0,number,#.##}%", t2_rate) : "No Trades", text_color=chart.fg_color, text_halign=text.align_center)
+    table.cell(data_table, 0, 4, "TP3 Win Rate", text_color=chart.fg_color)
+    table.cell(data_table, 1, 4, total > 0 ? str.format("{0,number,#.##}%", t3_rate) : "No Trades", text_color=chart.fg_color, text_halign=text.align_center)
+    table.cell(data_table, 0, 5, "Leverage", text_color=chart.fg_color)
+    table.cell(data_table, 1, 5, str.tostring(leverage) + "x", text_color=chart.fg_color, text_halign=text.align_center)
+    table.cell(data_table, 0, 6, "Position Value", text_color=chart.fg_color)
+    table.cell(data_table, 1, 6, str.tostring(position_value), text_color=chart.fg_color, text_halign=text.align_center)
+    table.cell(data_table, 0, 7, "Realized PnL", text_color=chart.fg_color)
+    table.cell(data_table, 1, 7, na(realized_pnl) ? "N/A" : str.tostring(realized_pnl, format.mintick), text_color=realized_pnl >= 0 ? color.green : color.red, text_halign=text.align_center)

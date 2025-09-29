@@ -1,0 +1,254 @@
+// © 2025 Gemini AI - PI v3.0 ZeroLag Ultimate (VSA + Market Cipher + Order Flow)
+// @version=5
+indicator("PI v3.0 ZeroLag Ultimate", shorttitle="PI v3.0 ZLU", overlay=true, max_labels_count=500)
+
+// === ZERO-LAG MARKET CIPHER INTEGRATION ===
+var string GRP_CIPHER = "🎯 Market Cipher System"
+enableCipher = input.bool(true, "Enable Market Cipher", group=GRP_CIPHER)
+cipherSensitivity = input.float(0.7, "Cipher Sensitivity", group=GRP_CIPHER, minval=0.1, maxval=2.0)
+showMoneyFlow = input.bool(true, "Show Money Flow", group=GRP_CIPHER)
+showWaveAnalysis = input.bool(true, "Show Wave Analysis", group=GRP_CIPHER)
+
+var string GRP_ORDERFLOW = "💎 Order Flow Analysis"
+enableOrderFlow = input.bool(true, "Enable Order Flow", group=GRP_ORDERFLOW)
+volumeThreshold = input.float(2.0, "Large Order Threshold", group=GRP_ORDERFLOW)
+deltaImbalanceThreshold = input.float(0.3, "Delta Imbalance %", group=GRP_ORDERFLOW)
+showInstitutionalFlow = input.bool(true, "Institutional Flow", group=GRP_ORDERFLOW)
+
+var string GRP_FOOTPRINT = "🚀 Footprint Analysis"
+enableFootprint = input.bool(true, "Enable Footprint", group=GRP_FOOTPRINT)
+absorptionThreshold = input.float(1.5, "Absorption Level", group=GRP_FOOTPRINT)
+exhaustionLookback = input.int(5, "Exhaustion Lookback", group=GRP_FOOTPRINT)
+showSmartMoney = input.bool(true, "Smart Money Signatures", group=GRP_FOOTPRINT)
+
+// === ORIGINAL VSA SETTINGS (COMPRESSED) ===
+var string GRP_VSA = "🎯 VSA Core"
+enableSpring = input.bool(true, "Spring", group=GRP_VSA)
+enableUpthrust = input.bool(true, "Upthrust", group=GRP_VSA)
+enableSOS_SOW = input.bool(true, "SOS/SOW", group=GRP_VSA)
+volLookback = input.int(20, "Volume Lookback", group=GRP_VSA)
+volMultiplier = input.float(1.8, "High Vol Factor", group=GRP_VSA)
+
+// === ZERO-LAG FUNCTIONS ===
+f_zeroLagEMA(src, length) =>
+    ema1 = ta.ema(src, length)
+    ema2 = ta.ema(ema1, length)
+    ema1 + (ema1 - ema2)
+
+f_marketCipher(src, length, sensitivity) =>
+    // Zero-lag oscillator với volume weighting
+    zlEma = f_zeroLagEMA(src, length)
+    rsi = ta.rsi(src, length)
+    volume_ratio = volume / ta.sma(volume, length)
+    
+    // Money Flow calculation
+    typical_price = (high + low + close) / 3
+    money_flow = typical_price * volume
+    positive_flow = money_flow * (close > close[1] ? 1 : 0)
+    negative_flow = money_flow * (close < close[1] ? 1 : 0)
+    
+    mfi = 100 - (100 / (1 + ta.sum(positive_flow, length) / ta.sum(negative_flow, length)))
+    
+    // Cipher Score
+    cipher_score = (rsi + mfi) / 2 * volume_ratio * sensitivity
+    [cipher_score, mfi, volume_ratio]
+
+f_orderFlowAnalysis() =>
+    // Simulated Order Flow từ Volume + Price action
+    buy_volume = volume * (close > open ? (close - open) / (high - low) : 0)
+    sell_volume = volume * (close < open ? (open - close) / (high - low) : 0)
+    
+    // Delta calculation
+    delta = buy_volume - sell_volume
+    cumulative_delta = ta.cum(delta)
+    
+    // Large order detection
+    avg_volume = ta.sma(volume, 20)
+    is_large_order = volume > avg_volume * volumeThreshold
+    
+    // Institutional flow patterns
+    institutional_buy = is_large_order and close > open and close > (high + low) / 2
+    institutional_sell = is_large_order and close < open and close < (high + low) / 2
+    
+    [delta, cumulative_delta, institutional_buy, institutional_sell]
+
+f_footprintAnalysis() =>
+    // Footprint simulation via tick analysis
+    range_size = high - low
+    
+    // Volume distribution estimation
+    upper_volume = volume * (close > (high + low) / 2 ? 0.7 : 0.3)
+    lower_volume = volume * (close < (high + low) / 2 ? 0.7 : 0.3)
+    
+    // Absorption patterns
+    volume_at_highs = high == ta.highest(high, exhaustionLookback) ? upper_volume : 0
+    volume_at_lows = low == ta.lowest(low, exhaustionLookback) ? lower_volume : 0
+    
+    // Smart Money detection
+    is_absorption = volume_at_highs > ta.sma(volume, 10) * absorptionThreshold or 
+                   volume_at_lows > ta.sma(volume, 10) * absorptionThreshold
+    
+    // Exhaustion signals
+    buying_exhaustion = volume_at_highs > 0 and close < open
+    selling_exhaustion = volume_at_lows > 0 and close > open
+    
+    [is_absorption, buying_exhaustion, selling_exhaustion]
+
+// === CALCULATIONS ===
+[cipher_score, mfi, volume_ratio] = enableCipher ? f_marketCipher(close, 14, cipherSensitivity) : [na, na, na]
+[delta, cumulative_delta, institutional_buy, institutional_sell] = enableOrderFlow ? f_orderFlowAnalysis() : [na, na, false, false]
+[is_absorption, buying_exhaustion, selling_exhaustion] = enableFootprint ? f_footprintAnalysis() : [false, false, false]
+
+// === VSA CORE (SIMPLIFIED) ===
+bar_range = high - low
+avg_volume = ta.sma(volume, volLookback)
+is_high_vol = volume > avg_volume * volMultiplier
+close_location = (close - low) / bar_range
+
+lowest_low = ta.lowest(low, 12)[1]
+highest_high = ta.highest(high, 12)[1]
+
+isSpring = enableSpring and close > lowest_low and low < lowest_low and is_high_vol
+isUpthrust = enableUpthrust and close < highest_high and high > highest_high and is_high_vol
+isSOS = enableSOS_SOW and close > open and is_high_vol and close_location > 0.7
+isSOW = enableSOS_SOW and close < open and is_high_vol and close_location < 0.3
+
+// === CONFLUENCE SCORING SYSTEM ===
+var array<string> bullish_signals = array.new<string>()
+var array<string> bearish_signals = array.new<string>()
+
+array.clear(bullish_signals)
+array.clear(bearish_signals)
+
+float total_bull_score = 0.0
+float total_bear_score = 0.0
+
+// VSA Signals
+if isSpring
+    array.push(bullish_signals, "SPR")
+    total_bull_score += 3.0
+if isSOS
+    array.push(bullish_signals, "SOS")
+    total_bull_score += 2.5
+if isUpthrust
+    array.push(bearish_signals, "UT")
+    total_bear_score += 3.0
+if isSOW
+    array.push(bearish_signals, "SOW")
+    total_bear_score += 2.5
+
+// Market Cipher Signals
+if enableCipher and not na(cipher_score)
+    if cipher_score > 70 and mfi > 60
+        array.push(bullish_signals, "MC+")
+        total_bull_score += 2.0
+    if cipher_score < 30 and mfi < 40
+        array.push(bearish_signals, "MC-")
+        total_bear_score += 2.0
+
+// Order Flow Signals
+if enableOrderFlow
+    if institutional_buy and delta > 0
+        array.push(bullish_signals, "OF+")
+        total_bull_score += 2.5
+    if institutional_sell and delta < 0
+        array.push(bearish_signals, "OF-")
+        total_bear_score += 2.5
+
+// Footprint Signals
+if enableFootprint
+    if selling_exhaustion
+        array.push(bullish_signals, "FP+")
+        total_bull_score += 2.0
+    if buying_exhaustion
+        array.push(bearish_signals, "FP-")
+        total_bear_score += 2.0
+    if is_absorption
+        array.push(bullish_signals, "ABS")
+        total_bull_score += 1.5
+
+// === ENHANCED TREND SYSTEM ===
+zlEMA_fast = f_zeroLagEMA(close, 8)
+zlEMA_slow = f_zeroLagEMA(close, 21)
+zlEMA_trend = f_zeroLagEMA(close, 50)
+
+trend_bull = zlEMA_fast > zlEMA_slow and zlEMA_slow > zlEMA_trend
+trend_bear = zlEMA_fast < zlEMA_slow and zlEMA_slow < zlEMA_trend
+
+if trend_bull
+    total_bull_score += 1.0
+if trend_bear
+    total_bear_score += 1.0
+
+// === SIGNAL GENERATION ===
+signal_threshold = 4.0
+is_strong_bull = total_bull_score >= signal_threshold and array.size(bullish_signals) >= 2
+is_strong_bear = total_bear_score >= signal_threshold and array.size(bearish_signals) >= 2
+
+// === PLOTTING ===
+plot(zlEMA_fast, "ZL Fast", color.aqua, 2)
+plot(zlEMA_slow, "ZL Slow", color.orange, 2)
+plot(zlEMA_trend, "ZL Trend", color.white, 1)
+
+// Money Flow subplot
+plotchar(showMoneyFlow and not na(mfi) and mfi > 80, "MFI OB", "⬆", location.abovebar, color.red, size=size.tiny)
+plotchar(showMoneyFlow and not na(mfi) and mfi < 20, "MFI OS", "⬇", location.belowbar, color.lime, size=size.tiny)
+
+// Order Flow markers
+plotshape(enableOrderFlow and institutional_buy, "Inst Buy", shape.triangleup, location.belowbar, color.lime, size=size.small)
+plotshape(enableOrderFlow and institutional_sell, "Inst Sell", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// Footprint markers
+plotchar(enableFootprint and is_absorption, "Absorption", "⚡", location.belowbar, color.yellow, size=size.small)
+
+// === MAIN SIGNALS ===
+if is_strong_bull
+    signal_text = "🚀 " + array.join(bullish_signals, "+") + "\nScore: " + str.tostring(total_bull_score, "#.#")
+    label.new(bar_index, low, signal_text, style=label.style_label_up, color=color.lime, 
+              textcolor=color.black, size=size.normal, yloc=yloc.belowbar)
+
+if is_strong_bear
+    signal_text = "🔻 " + array.join(bearish_signals, "+") + "\nScore: " + str.tostring(total_bear_score, "#.#")
+    label.new(bar_index, high, signal_text, style=label.style_label_down, color=color.red,
+              textcolor=color.white, size=size.normal, yloc=yloc.abovebar)
+
+// === ADVANCED DASHBOARD ===
+var table dashboard = na
+if barstate.islast
+    if na(dashboard)
+        dashboard := table.new(position.top_right, 3, 10, bgcolor=color.new(color.black, 80), border_width=1)
+    
+    table.cell(dashboard, 0, 0, "PI v3.0 ULTIMATE", text_color=color.white, bgcolor=color.blue)
+    table.cell(dashboard, 1, 0, "VALUE", text_color=color.white, bgcolor=color.blue)
+    table.cell(dashboard, 2, 0, "STATUS", text_color=color.white, bgcolor=color.blue)
+    
+    table.cell(dashboard, 0, 1, "ZL Trend", text_color=color.white)
+    table.cell(dashboard, 1, 1, trend_bull ? "BULL" : trend_bear ? "BEAR" : "NEUTRAL", 
+              text_color=trend_bull ? color.lime : trend_bear ? color.red : color.gray)
+    table.cell(dashboard, 2, 1, "✓", text_color=color.green)
+    
+    table.cell(dashboard, 0, 2, "Market Cipher", text_color=color.white)
+    table.cell(dashboard, 1, 2, str.tostring(cipher_score, "#.#"), text_color=color.white)
+    table.cell(dashboard, 2, 2, not na(cipher_score) ? "ACTIVE" : "OFF", text_color=color.gray)
+    
+    table.cell(dashboard, 0, 3, "Order Flow", text_color=color.white)
+    table.cell(dashboard, 1, 3, str.tostring(delta, "#"), text_color=delta > 0 ? color.lime : color.red)
+    table.cell(dashboard, 2, 3, institutional_buy ? "INST BUY" : institutional_sell ? "INST SELL" : "NEUTRAL",
+              text_color=institutional_buy ? color.lime : institutional_sell ? color.red : color.gray)
+    
+    table.cell(dashboard, 0, 4, "Footprint", text_color=color.white)
+    table.cell(dashboard, 1, 4, is_absorption ? "ABSORPTION" : "NORMAL", text_color=is_absorption ? color.yellow : color.gray)
+    table.cell(dashboard, 2, 4, buying_exhaustion ? "BUY EXH" : selling_exhaustion ? "SELL EXH" : "NORMAL",
+              text_color=buying_exhaustion ? color.red : selling_exhaustion ? color.lime : color.gray)
+    
+    table.cell(dashboard, 0, 5, "Bull Score", text_color=color.white)
+    table.cell(dashboard, 1, 5, str.tostring(total_bull_score, "#.#"), text_color=color.lime)
+    table.cell(dashboard, 2, 5, is_strong_bull ? "🚀 SIGNAL" : "WAIT", text_color=is_strong_bull ? color.lime : color.gray)
+    
+    table.cell(dashboard, 0, 6, "Bear Score", text_color=color.white)
+    table.cell(dashboard, 1, 6, str.tostring(total_bear_score, "#.#"), text_color=color.red)
+    table.cell(dashboard, 2, 6, is_strong_bear ? "🔻 SIGNAL" : "WAIT", text_color=is_strong_bear ? color.red : color.gray)
+
+// === ALERTS ===
+alertcondition(is_strong_bull, "Ultimate LONG", "PI v3.0 Ultimate LONG Signal!")
+alertcondition(is_strong_bear, "Ultimate SHORT", "PI v3.0 Ultimate SHORT Signal!")

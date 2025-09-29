@@ -1,0 +1,203 @@
+// © 2025 Gemini AI - Project Leviathan v2.0 (Foundation)
+// @version=5
+// SPRINT 1: Xây dựng Nền tảng - Key Level Engine dựa trên kiến trúc đã được xác thực.
+indicator("Leviathan - Key Level Engine v2.0", "Leviathan-KL v2.0", overlay=true, max_lines_count=500, max_labels_count=500, dynamic_requests=true)
+
+// === CÀI ĐẶT CỐT LÕI ===
+var string GRP_CORE = "⚙️ Core Settings"
+max_levels_per_tf = input.int(5, "Số Level Tối Đa / 1 TF", minval=2, maxval=20, group=GRP_CORE, tooltip="Giới hạn số lượng S/R hiển thị cho mỗi khung thời gian để tránh rối mắt.")
+level_extend = input.int(200, "Độ Dài Kéo Dài Level", minval=20, maxval=1000, group=GRP_CORE)
+min_distance_atr = input.float(0.25, "Khoảng Cách Min Giữa Levels (ATR)", minval=0.1, maxval=1.0, step=0.05, group=GRP_CORE)
+vol_window = input.int(3, "Volume Confirmation Window (All TFs)", minval=1, maxval=5, group=GRP_CORE, tooltip="Check volume spike trong window bars quanh pivot cho tất cả các TF.")
+vol_lookback_common = input.int(20, "Volume Lookback (All TFs)", group=GRP_CORE)
+
+// ensure ATR is calculated on every bar (consistency)
+atr_val = ta.atr(14)
+
+// === CÀI ĐẶT KHUNG THỜI GIAN ===
+var string GRP_TF_SETTINGS = "⏰ Timeframe Settings"
+// --- 5m ---
+show_5m = input.bool(false, "Enable 5M Levels", group=GRP_TF_SETTINGS, inline="5m")
+tf_5m_color = input.color(color.new(color.gray, 50), "", group=GRP_TF_SETTINGS, inline="5m")
+tf_5m_width = input.int(1, "", group=GRP_TF_SETTINGS, inline="5m")
+tf_5m_lookback = input.int(8, "5M Pivot Lookback", minval=3, maxval=50, group=GRP_TF_SETTINGS)
+tf_5m_vol_mult = input.float(1.2, "5M Volume Multiplier", minval=1.0, step=0.1, group=GRP_TF_SETTINGS)
+
+// --- 15m ---
+show_15m = input.bool(true, "Enable 15M Levels", group=GRP_TF_SETTINGS, inline="15m")
+tf_15m_color = input.color(color.new(color.aqua, 50), "", group=GRP_TF_SETTINGS, inline="15m")
+tf_15m_width = input.int(1, "", group=GRP_TF_SETTINGS, inline="15m")
+tf_15m_lookback = input.int(10, "15M Pivot Lookback", minval=3, maxval=50, group=GRP_TF_SETTINGS)
+tf_15m_vol_mult = input.float(1.5, "15M Volume Multiplier", minval=1.0, step=0.1, group=GRP_TF_SETTINGS)
+
+// --- 1H ---
+show_1h = input.bool(true, "Enable 1H Levels", group=GRP_TF_SETTINGS, inline="1h")
+tf_1h_color = input.color(color.new(color.yellow, 60), "", group=GRP_TF_SETTINGS, inline="1h")
+tf_1h_width = input.int(2, "", group=GRP_TF_SETTINGS, inline="1h")
+tf_1h_lookback = input.int(10, "1H Pivot Lookback", minval=3, maxval=50, group=GRP_TF_SETTINGS)
+tf_1h_vol_mult = input.float(1.5, "1H Volume Multiplier", minval=1.0, step=0.1, group=GRP_TF_SETTINGS)
+
+// --- 4H ---
+show_4h = input.bool(true, "Enable 4H Levels", group=GRP_TF_SETTINGS, inline="4h")
+tf_4h_color = input.color(color.new(color.orange, 50), "", group=GRP_TF_SETTINGS, inline="4h")
+tf_4h_width = input.int(2, "", group=GRP_TF_SETTINGS, inline="4h")
+tf_4h_lookback = input.int(8, "4H Pivot Lookback", minval=3, maxval=50, group=GRP_TF_SETTINGS)
+tf_4h_vol_mult = input.float(1.8, "4H Volume Multiplier", minval=1.0, step=0.1, group=GRP_TF_SETTINGS)
+
+// --- Daily ---
+show_daily = input.bool(true, "Enable Daily Levels", group=GRP_TF_SETTINGS, inline="d")
+daily_color = input.color(color.new(color.red, 40), "", group=GRP_TF_SETTINGS, inline="d")
+daily_width = input.int(3, "", group=GRP_TF_SETTINGS, inline="d")
+daily_lookback = input.int(5, "Daily Pivot Lookback", minval=3, maxval=50, group=GRP_TF_SETTINGS)
+daily_vol_mult = input.float(2.0, "Daily Volume Multiplier", minval=1.0, step=0.1, group=GRP_TF_SETTINGS)
+
+// === CẤU TRÚC DỮ LIỆU ===
+type KeyLevel
+    float price
+    string timeframe
+    bool is_support
+    int created_bar
+    line level_line
+    label info_label
+    float vol_strength
+
+var array<KeyLevel> all_levels = array.new<KeyLevel>()
+
+// === CÁC HÀM TIỆN ÍCH ===
+f_findValidatedPivots(p_len, v_mult, v_win) =>
+    // manual pivot detection confirmed p_len bars after the pivot (avoids internal names)
+    float pivot_h_price = na
+    float pivot_l_price = na
+    float vol_str_h = 0.0
+    float vol_str_l = 0.0
+
+    // only evaluate when we have enough history
+    if bar_index >= p_len * 2
+        // check pivot-high at bar offset p_len (i.e., confirmed p_len bars ago)
+        is_pivot_h = true
+        for i = 1 to p_len
+            if high[p_len] <= high[p_len - i] or high[p_len] <= high[p_len + i]
+                is_pivot_h := false
+                break
+        if is_pivot_h
+            pivot_h_price := high[p_len]
+
+        // check pivot-low at bar offset p_len
+        is_pivot_l = true
+        for i = 1 to p_len
+            if low[p_len] >= low[p_len - i] or low[p_len] >= low[p_len + i]
+                is_pivot_l := false
+                break
+        if is_pivot_l
+            pivot_l_price := low[p_len]
+
+    // volume average and confirmation evaluated at pivot bar (use indexed series)
+    vol_avg = ta.sma(volume, vol_lookback_common)
+    float vol_confirmed_h = na
+    float vol_confirmed_l = na
+
+    if not na(pivot_h_price)
+        max_vol_h = 0.0
+        for i = 0 to v_win - 1
+            // check volumes around the pivot bar (pivot at p_len)
+            vbar = volume[p_len - i]
+            if vbar > max_vol_h
+                max_vol_h := vbar
+        if max_vol_h > vol_avg[p_len] * v_mult
+            vol_confirmed_h := pivot_h_price
+            vol_str_h := max_vol_h / vol_avg[p_len]
+
+    if not na(pivot_l_price)
+        max_vol_l = 0.0
+        for i = 0 to v_win - 1
+            vbar = volume[p_len - i]
+            if vbar > max_vol_l
+                max_vol_l := vbar
+        if max_vol_l > vol_avg[p_len] * v_mult
+            vol_confirmed_l := pivot_l_price
+            vol_str_l := max_vol_l / vol_avg[p_len]
+
+    [vol_confirmed_h, vol_str_h, vol_confirmed_l, vol_str_l]
+
+f_manageLevel(price, tf_str, is_support_val, vol_str, atr_val) =>
+    tolerance = atr_val * min_distance_atr
+
+    merged = false
+    for level in all_levels
+        if level.timeframe == tf_str and level.is_support == is_support_val and math.abs(level.price - price) <= tolerance
+            line.set_x2(level.level_line, bar_index + level_extend)
+            if vol_str > level.vol_strength
+                level.vol_strength := vol_str
+                label.set_text(level.info_label, tf_str + (is_support_val ? " S" : " R") + " (" + str.tostring(vol_str, "#.#") + "x)")
+            merged := true
+            break
+    
+    if not merged
+        line_color = tf_str == "5m" ? tf_5m_color : tf_str == "15m" ? tf_15m_color : tf_str == "1H" ? tf_1h_color : tf_str == "4H" ? tf_4h_color : daily_color
+        line_width = tf_str == "5m" ? tf_5m_width : tf_str == "15m" ? tf_15m_width : tf_str == "1H" ? tf_1h_width : tf_str == "4H" ? tf_4h_width : daily_width
+        
+        new_line = line.new(bar_index, price, bar_index + level_extend, price, color=line_color, width=line_width, style=line.style_dotted)
+        new_label = label.new(bar_index, price, tf_str + (is_support_val ? " S" : " R") + " (" + str.tostring(vol_str, "#.#") + "x)", 
+                 yloc=yloc.price, style=label.style_label_left, color=color.new(line_color, 100), textcolor=color.white, xloc=xloc.bar_index)
+        
+        new_level = KeyLevel.new(price, tf_str, is_support_val, bar_index, new_line, new_label, vol_str)
+        
+        tf_levels = array.new<KeyLevel>()
+        for level in all_levels
+            if level.timeframe == tf_str
+                array.push(tf_levels, level)
+        
+        if array.size(tf_levels) >= max_levels_per_tf
+            weakest_idx = -1
+            weakest_str = 999.0
+            for i = 0 to array.size(tf_levels) - 1
+                current_level = array.get(tf_levels, i)
+                if current_level.vol_strength < weakest_str
+                    weakest_str := current_level.vol_strength
+                    weakest_idx := i
+
+            if weakest_idx > -1
+                weakest_level_to_remove = array.get(tf_levels, weakest_idx)
+                // compare by simple field (created_bar) because structs cannot be compared with '=='
+                remove_created_bar = weakest_level_to_remove.created_bar
+                for i = array.size(all_levels) - 1 to 0
+                    current = array.get(all_levels, i)
+                    if current.created_bar == remove_created_bar
+                        line.delete(current.level_line)
+                        label.delete(current.info_label)
+                        array.remove(all_levels, i)
+                        break
+        
+        array.push(all_levels, new_level)
+
+// === VÒNG LẶP TÍNH TOÁN CHÍNH ===
+if show_5m
+    [h, h_str, l, l_str] = request.security(syminfo.tickerid, "5", f_findValidatedPivots(tf_5m_lookback, tf_5m_vol_mult, vol_window))
+    if not na(h)
+        f_manageLevel(h, "5m", false, h_str, atr_val)
+    if not na(l)
+        f_manageLevel(l, "5m", true, l_str, atr_val)
+if show_15m
+    [h, h_str, l, l_str] = request.security(syminfo.tickerid, "15", f_findValidatedPivots(tf_15m_lookback, tf_15m_vol_mult, vol_window))
+    if not na(h)
+        f_manageLevel(h, "15m", false, h_str, atr_val)
+    if not na(l)
+        f_manageLevel(l, "15m", true, l_str, atr_val)
+if show_1h
+    [h, h_str, l, l_str] = request.security(syminfo.tickerid, "60", f_findValidatedPivots(tf_1h_lookback, tf_1h_vol_mult, vol_window))
+    if not na(h)
+        f_manageLevel(h, "1H", false, h_str, atr_val)
+    if not na(l)
+        f_manageLevel(l, "1H", true, l_str, atr_val)
+if show_4h
+    [h, h_str, l, l_str] = request.security(syminfo.tickerid, "240", f_findValidatedPivots(tf_4h_lookback, tf_4h_vol_mult, vol_window))
+    if not na(h)
+        f_manageLevel(h, "4H", false, h_str, atr_val)
+    if not na(l)
+        f_manageLevel(l, "4H", true, l_str, atr_val)
+if show_daily
+    [h, h_str, l, l_str] = request.security(syminfo.tickerid, "D", f_findValidatedPivots(daily_lookback, daily_vol_mult, vol_window))
+    if not na(h)
+        f_manageLevel(h, "D", false, h_str, atr_val)
+    if not na(l)
+        f_manageLevel(l, "D", true, l_str, atr_val)

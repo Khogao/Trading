@@ -1,0 +1,616 @@
+// © 2025 VSA Scalping Engine - UI Optimized Version
+// @version=5
+// UI OPTIMIZED: Tránh labels chồng chéo, spacing tốt hơn
+indicator("VSA Scalping Engine Pro", shorttitle="VSA Scalp", overlay=true, max_labels_count=500)
+
+// === SCALPING CONSTANTS ===
+var float VALUE_AREA_PERCENT = 0.68
+var float CLIMAX_VOL_THRESHOLD = 0.90
+var float MIN_PRICE_RANGE = 0.00001
+var int VA_UPDATE_INTERVAL = 5
+var float VA_PRICE_MOVE_THRESHOLD = 0.01
+
+// === TYPE DEFINITIONS ===
+type SignalConfig
+    string name
+    string displayText
+    color signalColor
+    float score
+    bool showAbove
+    int priority
+
+type BarAnalysis
+    bool isUp
+    bool isDown
+    bool isNarrow
+    bool isWide
+    bool isHighVol
+    bool isLowVol
+    float location
+    float momentum
+    float volumeRatio
+
+type LinePool
+    array<line> pool
+    int index
+
+type LabelManager
+    array<label> activeLabels
+    array<float> labelPrices
+    array<int> labelBars
+    int maxLabels
+
+// === UI SETTINGS ===
+var string GRP_UI = "🎨 UI & Spacing"
+labelSpacingMode = input.string("Smart", "Label Spacing", options=["Tight", "Normal", "Smart", "Wide"], group=GRP_UI)
+minLabelDistance = input.float(1.5, "Min Label Distance (ATR)", minval=0.5, maxval=3.0, step=0.25, group=GRP_UI)
+labelPriority = input.string("Score", "Label Priority", options=["Score", "Time", "Type"], group=GRP_UI)
+maxLabelsPerBar = input.int(2, "Max Labels Per Bar", minval=1, maxval=5, group=GRP_UI)
+labelAlignment = input.string("Stagger", "Label Alignment", options=["Aligned", "Stagger", "Dynamic"], group=GRP_UI)
+hideWeakSignals = input.bool(true, "Hide Weak Signals (<1.5)", group=GRP_UI)
+useCompactLabels = input.bool(true, "Compact Label Text", group=GRP_UI)
+labelSize = input.string("small", "Label Size", options=["tiny", "small", "normal"], group=GRP_UI)
+
+var string GRP_SCALP = "⚡ Scalping Settings"
+scalpMode = input.string("Normal", "Scalp Mode", options=["Conservative", "Normal", "Aggressive"], group=GRP_SCALP)
+useQuickSignals = input.bool(true, "Real-time Signals", group=GRP_SCALP)
+showMomentum = input.bool(true, "Show Momentum Arrows", group=GRP_SCALP)
+alertOnSignal = input.bool(true, "Enable Alerts", group=GRP_SCALP)
+minScoreThreshold = input.float(1.5, "Min Score Threshold", minval=0.5, maxval=3.0, step=0.5, group=GRP_SCALP)
+
+var string GRP_DISPLAY = "📊 Display Elements"
+showInfoPanel = input.bool(true, "Info Panel", group=GRP_DISPLAY)
+panelPosition = input.string("top_right", "Panel Position", options=["top_right", "bottom_right", "top_left"], group=GRP_DISPLAY)
+showVALines = input.bool(true, "Value Area Lines", group=GRP_DISPLAY)
+showSignalBackground = input.bool(false, "Signal Background", group=GRP_DISPLAY)
+showScoreLine = input.bool(false, "Score Line (Debug)", group=GRP_DISPLAY)
+
+var string GRP_VP = "📈 Value Area"
+vpLookback = input.int(30, "VA Lookback", group=GRP_VP, minval=10, maxval=50)
+vpProximityPercent = input.float(0.2, "VA Proximity %", group=GRP_VP, minval=0.05, maxval=1.0, step=0.05)
+vaRowCount = input.int(50, "VA Resolution", group=GRP_VP, minval=20, maxval=100)
+vaLineExtend = input.int(10, "VA Line Extension", group=GRP_VP, minval=5, maxval=30)
+
+var string GRP_SIGNALS = "🎯 Signal Types"
+enableSpringUT = input.bool(true, "Spring/Upthrust", group=GRP_SIGNALS)
+enableRapidReverse = input.bool(true, "Rapid Reversals", group=GRP_SIGNALS)
+enableVolumeSpike = input.bool(true, "Volume Spikes", group=GRP_SIGNALS)
+enableMomentumShift = input.bool(true, "Momentum Shifts", group=GRP_SIGNALS)
+enableQuickTest = input.bool(true, "Quick Tests", group=GRP_SIGNALS)
+enableExhaustion = input.bool(true, "Exhaustion Bars", group=GRP_SIGNALS)
+
+var string GRP_PARAMS = "⚙️ Parameters"
+lookbackH_L = input.int(5, "H/L Lookback", group=GRP_PARAMS, minval=3, maxval=10)
+volLookback = input.int(10, "Volume Lookback", group=GRP_PARAMS, minval=5, maxval=20)
+volMultiplier = input.float(1.5, "High Volume Multi", group=GRP_PARAMS, step=0.1)
+lowVolMultiplier = input.float(0.5, "Low Volume Multi", group=GRP_PARAMS, step=0.1)
+momentumPeriod = input.int(3, "Momentum Period", group=GRP_PARAMS, minval=2, maxval=5)
+
+var string GRP_TREND = "🌊 Trend System"
+useEMARibbon = input.bool(true, "EMA Ribbon", group=GRP_TREND)
+ema1Length = input.int(8, "Fast EMA", group=GRP_TREND)
+ema2Length = input.int(13, "Medium EMA", group=GRP_TREND)
+ema3Length = input.int(21, "Slow EMA", group=GRP_TREND)
+showEMACloud = input.bool(true, "Show Cloud", group=GRP_TREND)
+
+var string GRP_RISK = "⛔ Risk Management"
+showRiskLevels = input.bool(true, "Show SL/TP Levels", group=GRP_RISK)
+stopLossATR = input.float(1.0, "Stop Loss (ATR)", minval=0.5, maxval=2.0, step=0.1, group=GRP_RISK)
+targetATR = input.float(1.5, "Target (ATR)", minval=1.0, maxval=3.0, step=0.25, group=GRP_RISK)
+showRRRatio = input.bool(true, "Show R:R Ratio", group=GRP_RISK)
+
+// === INITIALIZE VARIABLES ===
+var float cached_dPOC = na
+var float cached_dVAH = na
+var float cached_dVAL = na
+var int last_va_bar = 0
+var bool va_cache_valid = false
+var LabelManager labelMgr = LabelManager.new(array.new_label(), array.new_float(), array.new_int(), 20)
+var array<line> vaLines = array.new<line>(3)
+var table infoPanel = na
+var int lastSignalBar = 0
+var float lastSignalPrice = 0.0
+var string lastSignalType = ""
+
+// Initialize signal configurations
+var array<SignalConfig> bullishSignals = array.new<SignalConfig>()
+var array<SignalConfig> bearishSignals = array.new<SignalConfig>()
+
+if barstate.isfirst
+    // Bullish signals
+    array.push(bullishSignals, SignalConfig.new("Spring", "SPR", color.lime, 3.0, false, 10))
+    array.push(bullishSignals, SignalConfig.new("Rapid Reverse Up", "RRU", color.aqua, 2.5, false, 9))
+    array.push(bullishSignals, SignalConfig.new("Volume Spike Up", "VSU", color.blue, 2.0, false, 8))
+    array.push(bullishSignals, SignalConfig.new("Momentum Up", "MOM↑", color.teal, 2.2, false, 7))
+    array.push(bullishSignals, SignalConfig.new("Quick Test", "QTS", color.green, 1.8, false, 6))
+    array.push(bullishSignals, SignalConfig.new("Exhaustion Low", "EXL", color.aqua, 2.3, false, 8))
+    
+    // Bearish signals
+    array.push(bearishSignals, SignalConfig.new("Upthrust", "UT", color.red, -3.0, true, 10))
+    array.push(bearishSignals, SignalConfig.new("Rapid Reverse Down", "RRD", color.orange, -2.5, true, 9))
+    array.push(bearishSignals, SignalConfig.new("Volume Spike Down", "VSD", color.maroon, -2.0, true, 8))
+    array.push(bearishSignals, SignalConfig.new("Momentum Down", "MOM↓", color.pink, -2.2, true, 7))
+    array.push(bearishSignals, SignalConfig.new("Quick Test Res", "QTR", color.red, -1.8, true, 6))
+    array.push(bearishSignals, SignalConfig.new("Exhaustion High", "EXH", color.orange, -2.3, true, 8))
+
+// === HELPER FUNCTIONS ===
+
+f_getLabelSize() =>
+    switch labelSize
+        "tiny" => size.tiny
+        "small" => size.small
+        "normal" => size.normal
+        => size.small
+
+f_getATR(period) => ta.atr(period)
+
+f_calculateSpacing() =>
+    atr = f_getATR(14)
+    spacingMultiplier = switch labelSpacingMode
+        "Tight" => 0.8
+        "Normal" => 1.0
+        "Smart" => 1.2
+        "Wide" => 1.5
+        => 1.0
+    atr * minLabelDistance * spacingMultiplier
+
+// Label collision detection and management
+f_findSafePosition(basePrice, isAbove, existingLabels, existingPrices) =>
+    spacing = f_calculateSpacing()
+    safePrice = basePrice
+    attempts = 0
+    maxAttempts = 5
+    
+    while attempts < maxAttempts
+        collision = false
+        for i = 0 to array.size(existingPrices) - 1
+            if array.size(existingPrices) > i
+                existingPrice = array.get(existingPrices, i)
+                if math.abs(safePrice - existingPrice) < spacing
+                    collision := true
+                    break
+        
+        if not collision
+            break
+        
+        // Adjust position
+        if labelAlignment == "Stagger"
+            offset = spacing * (1 + attempts * 0.3)
+            safePrice := isAbove ? basePrice + offset : basePrice - offset
+        else if labelAlignment == "Dynamic"
+            offset = spacing * (1 + attempts * 0.5)
+            direction = attempts % 2 == 0 ? 1 : -1
+            safePrice := basePrice + (offset * direction)
+        else  // Aligned
+            offset = spacing * (attempts + 1)
+            safePrice := isAbove ? basePrice + offset : basePrice - offset
+        
+        attempts += 1
+    
+    safePrice
+
+f_cleanOldLabels(labelMgr, currentBar) =>
+    lookback = 50
+    i = array.size(labelMgr.labelBars) - 1
+    while i >= 0
+        if array.size(labelMgr.labelBars) > i
+            barNum = array.get(labelMgr.labelBars, i)
+            if currentBar - barNum > lookback
+                if array.size(labelMgr.activeLabels) > i
+                    oldLabel = array.get(labelMgr.activeLabels, i)
+                    label.delete(oldLabel)
+                    array.remove(labelMgr.activeLabels, i)
+                    array.remove(labelMgr.labelPrices, i)
+                    array.remove(labelMgr.labelBars, i)
+        i -= 1
+
+f_addLabelSafe(labelMgr, barIndex, price, labelText, textColor, isAbove) =>
+    f_cleanOldLabels(labelMgr, barIndex)
+    labelsThisBar = 0
+    for i = 0 to array.size(labelMgr.labelBars) - 1
+        if array.size(labelMgr.labelBars) > i
+            if array.get(labelMgr.labelBars, i) == barIndex
+                labelsThisBar += 1
+    if labelsThisBar >= maxLabelsPerBar
+        na
+    else
+        safePrice = f_findSafePosition(price, isAbove, labelMgr.activeLabels, labelMgr.labelPrices)
+        newLabel = label.new(barIndex, safePrice, labelText, style=label.style_none, textcolor=textColor, size=f_getLabelSize())
+        if array.size(labelMgr.activeLabels) >= labelMgr.maxLabels
+            oldestLabel = array.shift(labelMgr.activeLabels)
+            label.delete(oldestLabel)
+            array.shift(labelMgr.labelPrices)
+            array.shift(labelMgr.labelBars)
+        array.push(labelMgr.activeLabels, newLabel)
+        array.push(labelMgr.labelPrices, safePrice)
+        array.push(labelMgr.labelBars, barIndex)
+        newLabel
+
+f_safeDivision(n, d) => d > MIN_PRICE_RANGE ? n / d : na
+
+f_calculateMomentum(length) =>
+    mom = (close - close[length]) / close[length] * 100
+    mom
+
+f_analyzeBarScalp() =>
+    _range = high - low
+    _avgRange = ta.sma(_range, volLookback)
+    _avgVolume = ta.sma(volume, volLookback)
+    _isNarrow = _range < _avgRange * 0.6
+    _isWide = _range > _avgRange * 1.2
+    _isHighVol = volume > _avgVolume * volMultiplier
+    _isLowVol = volume < _avgVolume * lowVolMultiplier
+    _location = f_safeDivision(close - low, _range)
+    _momentum = f_calculateMomentum(momentumPeriod)
+    _volumeRatio = f_safeDivision(volume, _avgVolume)
+    BarAnalysis.new(close > open, close < open, _isNarrow, _isWide, _isHighVol, _isLowVol, nz(_location, 0.5), _momentum, _volumeRatio)
+
+f_calculateValueAreaFast() =>
+    rowCount = vaRowCount
+    lookback_high = ta.highest(high, vpLookback)
+    lookback_low = ta.lowest(low, vpLookback)
+    step_price = f_safeDivision(lookback_high - lookback_low, rowCount - 1)
+    
+    if na(step_price) or step_price <= MIN_PRICE_RANGE
+        [close, high, low]
+    else
+        price_rows = array.new_float(rowCount, 0)
+        volume_rows = array.new_float(rowCount, 0)
+        
+        for i = 0 to rowCount - 1
+            array.set(price_rows, i, lookback_low + step_price * i)
+        
+        total_volume = 0.0
+        for i = 0 to math.min(vpLookback - 1, bar_index)
+            vol = nz(volume[i])
+            price = (high[i] + low[i] + close[i]) / 3
+            total_volume += vol
+            price_row_index = math.round(f_safeDivision(price - lookback_low, step_price))
+            if not na(price_row_index) and price_row_index >= 0 and price_row_index < rowCount
+                array.set(volume_rows, price_row_index, array.get(volume_rows, price_row_index) + vol)
+        
+        poc_volume = array.max(volume_rows)
+        poc_index = na(poc_volume) ? na : array.indexof(volume_rows, poc_volume)
+        _dPOC = na(poc_index) ? close : array.get(price_rows, poc_index)
+        
+        va_volume_target = total_volume * VALUE_AREA_PERCENT
+        va_volume_current = nz(poc_volume)
+        up_index = nz(poc_index, 0) + 1
+        down_index = nz(poc_index, 0) - 1
+        
+        while va_volume_current < va_volume_target and (up_index < rowCount or down_index >= 0)
+            if up_index < rowCount
+                va_volume_current += array.get(volume_rows, up_index)
+                up_index += 1
+            if down_index >= 0 and va_volume_current < va_volume_target
+                va_volume_current += array.get(volume_rows, down_index)
+                down_index -= 1
+        
+        _dVAH = up_index > 0 ? array.get(price_rows, math.min(rowCount - 1, up_index - 1)) : _dPOC
+        _dVAL = down_index < rowCount - 1 ? array.get(price_rows, math.max(0, down_index + 1)) : _dPOC
+        [_dPOC, _dVAH, _dVAL]
+
+f_isNearVA(price) =>
+    if not va_cache_valid or na(cached_dPOC)
+        false
+    else
+        pocDiff = math.abs(price - cached_dPOC) / cached_dPOC * 100
+        vahDiff = math.abs(price - cached_dVAH) / cached_dVAH * 100
+        valDiff = math.abs(price - cached_dVAL) / cached_dVAL * 100
+        pocDiff < vpProximityPercent or vahDiff < vpProximityPercent or valDiff < vpProximityPercent
+
+f_processScalpSignal(config, price, condition, bar) =>
+    if condition
+        modeMultiplier = scalpMode == "Aggressive" ? 1.2 : scalpMode == "Conservative" ? 0.8 : 1.0
+        adjustedScore = config.score * modeMultiplier
+        
+        isNearVA = f_isNearVA(price)
+        if isNearVA
+            adjustedScore *= 1.3
+        
+        if bar.momentum > 0 and config.score > 0
+            adjustedScore *= 1.1
+        else if bar.momentum < 0 and config.score < 0
+            adjustedScore *= 1.1
+        
+        // Only show if meets threshold or not hiding weak signals
+        if math.abs(adjustedScore) >= minScoreThreshold or not hideWeakSignals
+            displayText = useCompactLabels ? config.displayText : config.name
+            if isNearVA
+                displayText += "⭐"
+            
+            // Add label with collision detection
+            f_addLabelSafe(labelMgr, bar_index, price, displayText, config.signalColor, config.showAbove)
+            
+            // Store last signal info
+            if math.abs(adjustedScore) >= minScoreThreshold
+                lastSignalBar := bar_index
+                lastSignalPrice := close
+                lastSignalType := config.name
+            
+            // Alert
+            if alertOnSignal and barstate.isrealtime and math.abs(adjustedScore) >= minScoreThreshold
+                alert("VSA: " + config.name + " [" + str.tostring(adjustedScore, "#.#") + "]", alert.freq_once_per_bar)
+            
+            adjustedScore
+        else
+            0.0
+    else
+        0.0
+
+// === MAIN CALCULATIONS ===
+bar = f_analyzeBarScalp()
+
+// EMA calculations
+ema1 = ta.ema(close, ema1Length)
+ema2 = ta.ema(close, ema2Length)
+ema3 = ta.ema(close, ema3Length)
+
+// Trend determination
+trendStrength = 0.0
+if ema1 > ema2 and ema2 > ema3
+    trendStrength := 1.0
+else if ema1 < ema2 and ema2 < ema3
+    trendStrength := -1.0
+
+isUptrend = useEMARibbon ? (ema1 > ema2 and ema2 > ema3) : close > ema3
+
+// H/L levels
+lowest_low_val = ta.lowest(low, lookbackH_L)[1]
+highest_high_val = ta.highest(high, lookbackH_L)[1]
+
+// Update Value Area
+shouldUpdateVA = (useQuickSignals ? true : barstate.islast) and 
+                 (not va_cache_valid or bar_index - last_va_bar > VA_UPDATE_INTERVAL)
+
+if shouldUpdateVA
+    [newPOC, newVAH, newVAL] = f_calculateValueAreaFast()
+    if not na(newPOC)
+        cached_dPOC := newPOC
+        cached_dVAH := newVAH
+        cached_dVAL := newVAL
+        va_cache_valid := true
+        last_va_bar := bar_index
+
+// === SIGNAL DETECTION ===
+bullishScore = 0.0
+bearishScore = 0.0
+
+checkBar = useQuickSignals ? true : barstate.isconfirmed
+
+if checkBar
+    // Fix missing variable declarations
+    isBarDown = close < open
+    isBarHighVol = volume > ta.sma(volume, volLookback) * volMultiplier
+    barLocation = f_safeDivision(close - low, high - low)
+    
+    // Bullish Signals
+    isSpring = enableSpringUT and isBarDown and close > lowest_low_val and 
+               low < lowest_low_val and isBarHighVol and barLocation > 0.6
+    
+    isRapidReverseUp = enableRapidReverse and bar.isUp and bar[1].isDown and 
+                       bar.isHighVol and bar.momentum > 0.5
+    
+    isVolumeSpikeUp = enableVolumeSpike and bar.isUp and bar.volumeRatio > 2.0 and 
+                      bar.location > 0.7
+    
+    isMomentumShiftUp = enableMomentumShift and bar.momentum > 1.0 and 
+                        bar[1].momentum < 0 and bar.isUp
+    
+    isQuickTestSupport = enableQuickTest and bar.isDown and bar.isNarrow and 
+                         bar.isLowVol and close > lowest_low_val and bar.location > 0.5
+    
+    isExhaustionBottom = enableExhaustion and bar.isDown and bar.isWide and 
+                         bar.volumeRatio > 2.0 and bar.location > 0.6
+    
+    // Bearish Signals
+    isUpthrust = enableSpringUT and bar.isUp and close < highest_high_val and 
+                 high > highest_high_val and bar.isHighVol and bar.location < 0.4
+    
+    isRapidReverseDown = enableRapidReverse and bar.isDown and bar[1].isUp and 
+                         bar.isHighVol and bar.momentum < -0.5
+    
+    isVolumeSpikeDown = enableVolumeSpike and bar.isDown and bar.volumeRatio > 2.0 and 
+                        bar.location < 0.3
+    
+    isMomentumShiftDown = enableMomentumShift and bar.momentum < -1.0 and 
+                          bar[1].momentum > 0 and bar.isDown
+    
+    isQuickTestResistance = enableQuickTest and bar.isUp and bar.isNarrow and 
+                            bar.isLowVol and close < highest_high_val and bar.location < 0.5
+    
+    isExhaustionTop = enableExhaustion and bar.isUp and bar.isWide and 
+                      bar.volumeRatio > 2.0 and bar.location < 0.4
+    
+    // Process signals
+    bullishScore += f_processScalpSignal(array.get(bullishSignals, 0), low, isSpring, bar)
+    bullishScore += f_processScalpSignal(array.get(bullishSignals, 1), low, isRapidReverseUp, bar)
+    bullishScore += f_processScalpSignal(array.get(bullishSignals, 2), low, isVolumeSpikeUp, bar)
+    bullishScore += f_processScalpSignal(array.get(bullishSignals, 3), low, isMomentumShiftUp, bar)
+    bullishScore += f_processScalpSignal(array.get(bullishSignals, 4), low, isQuickTestSupport, bar)
+    bullishScore += f_processScalpSignal(array.get(bullishSignals, 5), low, isExhaustionBottom, bar)
+    
+    bearishScore += f_processScalpSignal(array.get(bearishSignals, 0), high, isUpthrust, bar)
+    bearishScore += f_processScalpSignal(array.get(bearishSignals, 1), high, isRapidReverseDown, bar)
+    bearishScore += f_processScalpSignal(array.get(bearishSignals, 2), high, isVolumeSpikeDown, bar)
+    bearishScore += f_processScalpSignal(array.get(bearishSignals, 3), high, isMomentumShiftDown, bar)
+    bearishScore += f_processScalpSignal(array.get(bearishSignals, 4), high, isQuickTestResistance, bar)
+    bearishScore += f_processScalpSignal(array.get(bearishSignals, 5), high, isExhaustionTop, bar)
+
+totalScore = bullishScore + bearishScore
+
+// === VISUAL ELEMENTS ===
+
+// EMA Ribbon
+p1 = plot(useEMARibbon ? ema1 : na, "EMA Fast", color.new(color.aqua, 70), 1)
+p2 = plot(useEMARibbon ? ema2 : na, "EMA Med", color.new(color.yellow, 70), 1)
+p3 = plot(useEMARibbon ? ema3 : na, "EMA Slow", color.new(color.orange, 70), 1)
+
+// Cloud
+if showEMACloud
+    fill(p1, p2, color=useEMARibbon ? (ema1 > ema2 ? color.new(color.green, 92) : color.new(color.red, 92)) : na)
+
+// Value Area Lines with proper management
+if showVALines and va_cache_valid and barstate.islast
+    // Delete old lines
+    for i = 0 to array.size(vaLines) - 1
+        if array.size(vaLines) > i
+            oldLine = array.get(vaLines, i)
+            if not na(oldLine)
+                line.delete(oldLine)
+    
+    // Create new lines
+    pocLine = line.new(bar_index - vpLookback, cached_dPOC, bar_index + vaLineExtend, cached_dPOC, 
+                       color=color.yellow, width=2, style=line.style_solid)
+    vahLine = line.new(bar_index - vpLookback, cached_dVAH, bar_index + vaLineExtend, cached_dVAH, 
+                       color=color.new(color.blue, 30), width=1, style=line.style_dotted)
+    valLine = line.new(bar_index - vpLookback, cached_dVAL, bar_index + vaLineExtend, cached_dVAL, 
+                       color=color.new(color.blue, 30), width=1, style=line.style_dotted)
+    
+    array.set(vaLines, 0, pocLine)
+    array.set(vaLines, 1, vahLine)
+    array.set(vaLines, 2, valLine)
+
+// Background for strong signals
+if showSignalBackground
+    strongSignal = math.abs(totalScore) > minScoreThreshold * 1.5
+    bgcolor(strongSignal ? (totalScore > 0 ? color.new(color.green, 94) : color.new(color.red, 94)) : na)
+
+// Momentum arrows with spacing
+if showMomentum and math.abs(bar.momentum) > 1.0
+    momOffset = f_getATR(14) * 0.5
+    momText = bar.momentum > 0 ? "↑" : "↓"
+    momColor = bar.momentum > 0 ? color.green : color.red
+    momPrice = bar.momentum > 0 ? low - momOffset : high + momOffset
+    
+    // Only show if no collision with signals
+    showMomArrow = true
+    for i = 0 to array.size(labelMgr.labelBars) - 1
+        if array.size(labelMgr.labelBars) > i and array.size(labelMgr.labelPrices) > i
+            if array.get(labelMgr.labelBars, i) == bar_index
+                labelPrice = array.get(labelMgr.labelPrices, i)
+                if math.abs(momPrice - labelPrice) < f_calculateSpacing()
+                    showMomArrow := false
+                    break
+    
+    if showMomArrow
+        label.new(bar_index, momPrice, momText, style=label.style_none, 
+                 textcolor=momColor, size=size.small)
+
+// Risk Management Levels
+if showRiskLevels and lastSignalBar == bar_index and math.abs(totalScore) >= minScoreThreshold
+    atr = f_getATR(14)
+    riskLineExtend = 15
+    
+    if totalScore > 0  // Bullish
+        slPrice = lastSignalPrice - (atr * stopLossATR)
+        tpPrice = lastSignalPrice + (atr * targetATR)
+        
+        slLine = line.new(bar_index, slPrice, bar_index + riskLineExtend, slPrice, 
+                         color=color.red, style=line.style_dashed, width=1)
+        tpLine = line.new(bar_index, tpPrice, bar_index + riskLineExtend, tpPrice, 
+                         color=color.green, style=line.style_dashed, width=1)
+        
+        if showRRRatio
+            rrRatio = targetATR / stopLossATR
+            rrText = "R:R " + str.tostring(rrRatio, "#.#")
+            rrPrice = tpPrice + (atr * 0.2)
+            label.new(bar_index + math.round(riskLineExtend/2), rrPrice, rrText, 
+                     style=label.style_none, textcolor=color.green, size=size.tiny)
+    
+    else if totalScore < 0  // Bearish
+        slPrice = lastSignalPrice + (atr * stopLossATR)
+        tpPrice = lastSignalPrice - (atr * targetATR)
+        
+        slLine = line.new(bar_index, slPrice, bar_index + riskLineExtend, slPrice, 
+                         color=color.red, style=line.style_dashed, width=1)
+        tpLine = line.new(bar_index, tpPrice, bar_index + riskLineExtend, tpPrice, 
+                         color=color.green, style=line.style_dashed, width=1)
+        
+        if showRRRatio
+            rrRatio = targetATR / stopLossATR
+            rrText = "R:R " + str.tostring(rrRatio, "#.#")
+            rrPrice = tpPrice - (atr * 0.2)
+            label.new(bar_index + math.round(riskLineExtend/2), rrPrice, rrText, 
+                     style=label.style_none, textcolor=color.green, size=size.tiny)
+
+// Info Panel with optimized layout
+if showInfoPanel and barstate.islast
+    panelPos = switch panelPosition
+        "top_right" => position.top_right
+        "bottom_right" => position.bottom_right
+        "top_left" => position.top_left
+        => position.top_right
+    
+    if na(infoPanel)
+        infoPanel := table.new(panelPos, 2, 10, bgcolor=color.new(color.black, 85), 
+                              border_width=1, border_color=color.new(color.gray, 50))
+    
+    // Header
+    table.cell(infoPanel, 0, 0, "SCALP", text_color=color.white, bgcolor=color.new(color.blue, 30))
+    table.cell(infoPanel, 1, 0, scalpMode, text_color=color.yellow, bgcolor=color.new(color.blue, 30))
+    
+    // Trend
+    table.cell(infoPanel, 0, 1, "Trend", text_color=color.gray, text_size=size.small)
+    trendText = trendStrength > 0 ? "↑ BULL" : trendStrength < 0 ? "↓ BEAR" : "→ NEUT"
+    trendColor = trendStrength > 0 ? color.green : trendStrength < 0 ? color.red : color.gray
+    table.cell(infoPanel, 1, 1, trendText, text_color=trendColor, text_size=size.small)
+    
+    // Score
+    table.cell(infoPanel, 0, 2, "Score", text_color=color.gray, text_size=size.small)
+    scoreColor = totalScore > 0 ? color.green : totalScore < 0 ? color.red : color.gray
+    table.cell(infoPanel, 1, 2, str.tostring(totalScore, "#.#"), text_color=scoreColor, text_size=size.small)
+    
+    // Momentum
+    table.cell(infoPanel, 0, 3, "Mom%", text_color=color.gray, text_size=size.small)
+    momColor = bar.momentum > 0 ? color.green : bar.momentum < 0 ? color.red : color.gray
+    table.cell(infoPanel, 1, 3, str.tostring(bar.momentum, "#.#"), text_color=momColor, text_size=size.small)
+    
+    // Volume
+    table.cell(infoPanel, 0, 4, "Vol", text_color=color.gray, text_size=size.small)
+    volText = bar.isHighVol ? "HIGH" : bar.isLowVol ? "LOW" : "NORM"
+    volColor = bar.isHighVol ? color.orange : bar.isLowVol ? color.blue : color.gray
+    table.cell(infoPanel, 1, 4, volText, text_color=volColor, text_size=size.small)
+    
+    // Range
+    table.cell(infoPanel, 0, 5, "Range", text_color=color.gray, text_size=size.small)
+    rangeText = bar.isWide ? "WIDE" : bar.isNarrow ? "NARR" : "NORM"
+    rangeColor = bar.isWide ? color.orange : bar.isNarrow ? color.blue : color.gray
+    table.cell(infoPanel, 1, 5, rangeText, text_color=rangeColor, text_size=size.small)
+    
+    // Near VA
+    table.cell(infoPanel, 0, 6, "VA", text_color=color.gray, text_size=size.small)
+    nearVA = f_isNearVA(close)
+    table.cell(infoPanel, 1, 6, nearVA ? "YES⭐" : "NO", 
+              text_color=nearVA ? color.yellow : color.gray, text_size=size.small)
+    
+    // Last Signal
+    table.cell(infoPanel, 0, 7, "Last", text_color=color.gray, text_size=size.small)
+    barsAgo = bar_index - lastSignalBar
+    lastSigText = lastSignalType != "" ? str.tostring(barsAgo) + "b" : "-"
+    table.cell(infoPanel, 1, 7, lastSigText, text_color=color.white, text_size=size.small)
+    
+    // Separator
+    table.cell(infoPanel, 0, 8, "━━━", text_color=color.gray, text_size=size.small)
+    table.cell(infoPanel, 1, 8, "━━━", text_color=color.gray, text_size=size.small)
+    
+    // Action
+    table.cell(infoPanel, 0, 9, "ACTION", text_color=color.white, text_size=size.small)
+    actionText = totalScore > minScoreThreshold ? "BUY" : totalScore < -minScoreThreshold ? "SELL" : "WAIT"
+    actionColor = totalScore > minScoreThreshold ? color.green : totalScore < -minScoreThreshold ? color.red : color.gray
+    actionBg = math.abs(totalScore) > minScoreThreshold ? color.new(actionColor, 85) : na
+    table.cell(infoPanel, 1, 9, actionText, text_color=actionColor, text_size=size.normal, bgcolor=actionBg)
+
+// Plot signals for strategy testing
+plotshape(totalScore > minScoreThreshold and not hideWeakSignals, "Buy Signal", 
+          shape.triangleup, location.belowbar, color.new(color.green, 20), size=size.tiny)
+plotshape(totalScore < -minScoreThreshold and not hideWeakSignals, "Sell Signal", 
+          shape.triangledown, location.abovebar, color.new(color.red, 20), size=size.tiny)
+
+// Score line for debugging
+plot(showScoreLine ? totalScore : na, "VSA Score", color=color.yellow, display=display.pane, linewidth=2)
+
+// Alert conditions
+alertcondition(totalScore > minScoreThreshold, "VSA Buy", "Strong BUY signal")
+alertcondition(totalScore < -minScoreThreshold, "VSA Sell", "Strong SELL signal")
+alertcondition(math.abs(totalScore) > minScoreThreshold and f_isNearVA(close), "VA Signal", "Signal near Value Area")

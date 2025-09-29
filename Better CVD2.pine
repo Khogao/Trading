@@ -1,0 +1,285 @@
+//@version=6
+// TITLE: Better CVD - Final (Pure CVD + Divergence Engine)
+// DESC: A complete order flow dashboard combining the feature-rich UI of "Better RSI" 
+// with the high-precision TV CVD calculation and a robust pivot-based divergence engine. No VSA.
+indicator("Better CVD - Final", "Better CVD2", overlay=false)
+import TradingView/ta/8
+
+// === GROUP: CVD CALCULATION SETTINGS ===
+const string GRP_CVD = "CVD Calculation"
+anchorInput = input.timeframe("D", "CVD Anchor Period", group = GRP_CVD, tooltip = "The timeframe at which the CVD calculation resets. 'D' is recommended for intraday.")
+useCustomTimeframeInput = input.bool(false, "Use Custom Lower Timeframe", group = GRP_CVD, tooltip = "Overrides the automatic selection of a lower timeframe for delta calculation. Use with caution.")
+lowerTimeframeInput = input.timeframe("1", "Lower Timeframe", group = GRP_CVD)
+
+// === GROUP: MA & BOLLINGER BANDS SETTINGS ===
+const string GRP_MA_BB = "MA & BB Settings"
+maTypeInput = input.string("SMA", "MA Type", options=["SMA", "EMA", "WMA", "VWMA"], group = GRP_MA_BB)
+maLengthInput = input.int(20, "MA Length", group = GRP_MA_BB)
+bbMultInput = input.float(2.0, "BB StdDev", minval=0.001, maxval=50, group = GRP_MA_BB)
+showBollingerBands = input.bool(true, "Show Bollinger Bands", group = GRP_MA_BB, tooltip="Shows Bollinger Bands on the CVD, acting as dynamic overbought/oversold levels.")
+
+// === GROUP: DIVERGENCE ENGINE SETTINGS ===
+const string GRP_DIVERGENCE = "Divergence Engine"
+showRegular = input.bool(true, "Show Regular Divergence", group = GRP_DIVERGENCE)
+showHidden = input.bool(true, "Show Hidden Divergence", group = GRP_DIVERGENCE)
+lookbackLeft = input.int(5, "Pivot Lookback Left", group = GRP_DIVERGENCE)
+lookbackRight = input.int(5, "Pivot Lookback Right", group = GRP_DIVERGENCE)
+rangeLower = input.int(5, "Min Bars Between Pivots", group = GRP_DIVERGENCE)
+rangeUpper = input.int(60, "Max Bars Between Pivots", group = GRP_DIVERGENCE)
+
+// Keep historical lines (for past connections visibility)
+keepHistory = input.bool(true, "Keep Historical Divergence Lines", group = GRP_DIVERGENCE)
+maxHistoryPerType = input.int(80, "Max History Lines Per Type", minval=5, maxval=300, group = GRP_DIVERGENCE)
+
+// NEW: Hidden line appearance
+hiddenStyleInput  = input.string("Dashed", "Hidden Line Style", options=["Dotted","Dashed","Solid"], group = GRP_DIVERGENCE)
+hiddenWidthInput  = input.int(2, "Hidden Line Width", minval=1, maxval=5, group = GRP_DIVERGENCE)
+hiddenOpacityInput = input.int(25, "Hidden Line Opacity (0-100)", minval=0, maxval=100, group = GRP_DIVERGENCE)
+hiddenLineStyle = hiddenStyleInput == "Dotted" ? line.style_dotted : hiddenStyleInput == "Dashed" ? line.style_dashed : line.style_solid
+hiddenBullColor = color.new(color.lime, hiddenOpacityInput)
+hiddenBearColor = color.new(color.red,  hiddenOpacityInput)
+
+// === GROUP: DISPLAY & TABLE ===
+const string GRP_DISPLAY = "Display & Table"
+plotStyle = input.string("Line with MA", "Plot Style", options=["Line with MA", "Candles"], group = GRP_DISPLAY)
+showCandleColors = input.bool(true, title="Color Price Candles on BB Breakout", group = GRP_DISPLAY, tooltip="Colors the main price candles when CVD breaks its Bollinger Bands.")
+showTable = input.bool(true, 'Show Multi-TF Table', group = GRP_DISPLAY)
+tablePosition = input.string("top_right", "Table Location", options=['top_left','top_right'], group = GRP_DISPLAY)
+
+// === CONSTANTS for Styling ===
+const color BULL_COLOR = color.new(color.lime, 0)
+const color BEAR_COLOR = color.new(color.red, 0)
+const color HIDDEN_BULL_COLOR = color.new(color.lime, 60)
+const color HIDDEN_BEAR_COLOR = color.new(color.red, 60)
+const color BULL_BG_COLOR = color.new(color.green, 90)
+const color BEAR_BG_COLOR = color.new(color.red, 90)
+
+// === MA helper ===
+ma(s, l, t) =>
+    switch t
+        "SMA" => ta.sma(s, l)
+        "EMA" => ta.ema(s, l)
+        "WMA" => ta.wma(s, l)
+        => ta.vwma(s, l)  // default VWMA
+
+// Lower TF resolver (works both in main scope and inside request.security)
+f_lowerTf() =>
+    if useCustomTimeframeInput
+        lowerTimeframeInput
+    else
+        switch
+            timeframe.isseconds => "1S"
+            timeframe.isintraday => "1" 
+            timeframe.isdaily => "5"
+            => "60"
+
+// Return CVD "close" (ONLY for use inside request.security)
+f_cvdCloseForSec() =>
+    [_o, _h, _l, _c] = ta.requestVolumeDelta(f_lowerTf(), anchorInput)
+    _c 
+
+// === CVD CALCULATION ENGINE ===
+// Main-scope CVD values
+[openVolume, maxVolume, minVolume, lastVolume] = ta.requestVolumeDelta(f_lowerTf(), anchorInput)
+// Use the close from the same call to avoid double work
+cvdSource = lastVolume
+
+var float cumVol = 0.0
+cumVol += nz(volume)
+if barstate.islast and cumVol == 0
+    runtime.error("This symbol has no volume data, CVD cannot be calculated.")
+
+// === DIVERGENCE ENGINE ===
+// Dùng giá trị pivot thật thay vì cvdSource[lookbackRight]
+plVal = ta.pivotlow(cvdSource, lookbackLeft, lookbackRight)
+phVal = ta.pivothigh(cvdSource, lookbackLeft, lookbackRight)
+plFound = not na(plVal)
+phFound = not na(phVal)
+
+// New: detect confirmation of pivots (just confirmed this bar)
+plJust = plFound and not plFound[1]
+phJust = phFound and not phFound[1]
+
+// Pivot index tại bar xác nhận
+plBar = plFound ? (bar_index - lookbackRight) : na
+phBar = phFound ? (bar_index - lookbackRight) : na
+// Pivot trước đó (giá trị & index)
+prevPlVal = ta.valuewhen(plFound, plVal, 1)
+prevPlBar = ta.valuewhen(plFound, plBar, 1)
+prevPhVal = ta.valuewhen(phFound, phVal, 1)
+prevPhBar = ta.valuewhen(phFound, phBar, 1)
+
+// Khoảng cách giữa 2 pivot theo index (ổn định, không lệch 1 bar)
+inRangePL = plJust and not na(prevPlBar) and (plBar - prevPlBar) >= rangeLower and (plBar - prevPlBar) <= rangeUpper
+inRangePH = phJust and not na(prevPhBar) and (phBar - prevPhBar) >= rangeLower and (phBar - prevPhBar) <= rangeUpper
+
+// So sánh giá tại đúng bar pivot (giá dùng high/low [lookbackRight] để khớp thời điểm pivot)
+priceLL_now = plJust and not na(ta.valuewhen(plFound, low[lookbackRight], 1))  and low[lookbackRight]  < ta.valuewhen(plFound, low[lookbackRight], 1)
+priceHH_now = phJust and not na(ta.valuewhen(phFound, high[lookbackRight], 1)) and high[lookbackRight] > ta.valuewhen(phFound, high[lookbackRight], 1)
+
+// Regular divergence
+cvdHL_now = plJust and not na(prevPlVal) and plVal > prevPlVal and inRangePL
+cvdLH_now = phJust and not na(prevPhVal) and phVal < prevPhVal and inRangePH
+bullCondNow = showRegular and priceLL_now and cvdHL_now
+bearCondNow = showRegular and priceHH_now and cvdLH_now
+
+// Hidden divergence
+priceHL_now = plJust and not na(ta.valuewhen(plFound, low[lookbackRight], 1))  and low[lookbackRight]  > ta.valuewhen(plFound, low[lookbackRight], 1)
+priceLH_now = phJust and not na(ta.valuewhen(phFound, high[lookbackRight], 1)) and high[lookbackRight] < ta.valuewhen(phFound, high[lookbackRight], 1)
+cvdLL_now   = plJust and not na(prevPlVal) and plVal < prevPlVal and inRangePL
+cvdHH_now   = phJust and not na(prevPhVal) and phVal > prevPhVal and inRangePH
+hiddenBullNow = showHidden and priceHL_now and cvdLL_now
+hiddenBearNow = showHidden and priceLH_now and cvdHH_now
+
+// === PLOTTING ===
+hline(0, "Zero Line", color.gray, linestyle=hline.style_dashed)
+
+// Toggle flags
+isLinePlot   = plotStyle == "Line with MA"
+isCandlePlot = plotStyle == "Candles"
+
+// Precompute MA
+cvdMA = ma(cvdSource, maLengthInput, maTypeInput)
+
+// Line style
+cvdLineColor = cvdSource > cvdSource[1] ? color.blue : color.orange
+pCVD = plot(cvdSource, "CVD", color=cvdLineColor, linewidth=2, display=isLinePlot ? display.all : display.none)
+pMA  = plot(cvdMA, "CVD MA", color=color.gray, linewidth=1, display=isLinePlot ? display.all : display.none)
+fill(pCVD, pMA, color=isLinePlot ? (cvdSource > cvdMA ? color.new(color.blue, 85) : color.new(color.orange, 85)) : na)
+
+// Candle style (using requestVolumeDelta OHLC)
+cCol = lastVolume >= openVolume ? color.teal : color.red
+plotcandle(openVolume, maxVolume, minVolume, lastVolume, "CVD", color=cCol, bordercolor=cCol, wickcolor=cCol, display=isCandlePlot ? display.all : display.none)
+
+// Bollinger Bands
+cvdMA_bb = ta.sma(cvdSource, maLengthInput)
+bbUpper = cvdMA_bb + ta.stdev(cvdSource, maLengthInput) * bbMultInput
+bbLower = cvdMA_bb - ta.stdev(cvdSource, maLengthInput) * bbMultInput
+plot(bbUpper, "BB Upper", color.gray, style=plot.style_line, display=showBollingerBands ? display.all : display.none)
+plot(bbLower, "BB Lower", color.gray, style=plot.style_line, display=showBollingerBands ? display.all : display.none)
+
+// BB breakout states (for alerts and candle coloring)
+cvd_is_overbought = showBollingerBands and cvdSource > bbUpper
+cvd_is_oversold   = showBollingerBands and cvdSource < bbLower
+
+// Color main price candles on CVD BB break
+barcolor(showCandleColors and cvd_is_overbought ? BEAR_BG_COLOR : na)
+barcolor(showCandleColors and cvd_is_oversold   ? BULL_BG_COLOR : na)
+
+// Giữ line riêng cho từng loại
+var line lineBull  = na
+var line lineBear  = na
+var line lineHBull = na
+var line lineHBear = na
+// NEW: history arrays
+var histBull  = array.new_line()
+var histBear  = array.new_line()
+var histHBull = array.new_line()
+var histHBear = array.new_line()
+
+// New: store last confirmed pivots to avoid re-drawing every bar
+var int   prevPLBar = na
+var float prevPLVal = na
+var int   prevPHBar = na
+var float prevPHVal = na
+
+// Draw only when a pivot is confirmed (smooth, no flicker)
+// Low pivots
+if plJust
+    currBar = bar_index - lookbackRight
+    // Regular Bull
+    if bullCondNow and not na(prevPLBar)
+        newLine = line.new(prevPLBar, prevPLVal, currBar, plVal, color=BULL_COLOR, width=3)
+        if keepHistory
+            array.push(histBull, newLine)
+            if array.size(histBull) > maxHistoryPerType
+                old = array.shift(histBull)
+                line.delete(old)
+        else
+            line.delete(lineBull)
+            lineBull := newLine
+        label.new(x=currBar, y=plVal, text="Bull", style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white, size=size.tiny)
+
+    // Hidden Bull
+    if hiddenBullNow and not na(prevPLBar)
+        newHLine = line.new(prevPLBar, prevPLVal, currBar, plVal, color=hiddenBullColor, width=hiddenWidthInput, style=hiddenLineStyle)
+        if keepHistory
+            array.push(histHBull, newHLine)
+            if array.size(histHBull) > maxHistoryPerType
+                old = array.shift(histHBull)
+                line.delete(old)
+        else
+            line.delete(lineHBull)
+            lineHBull := newHLine
+        label.new(x=currBar, y=plVal, text="Hidden Bull", style=label.style_label_up, color=color.new(color.green, 10), textcolor=color.white, size=size.small)
+
+    // update last low pivot (để nối line)
+    prevPLBar := currBar
+    prevPLVal := plVal
+
+// High pivots
+if phJust
+    currBar = bar_index - lookbackRight
+    // Regular Bear
+    if bearCondNow and not na(prevPHBar)
+        newLine = line.new(prevPHBar, prevPHVal, currBar, phVal, color=BEAR_COLOR, width=3)
+        if keepHistory
+            array.push(histBear, newLine)
+            if array.size(histBear) > maxHistoryPerType
+                old = array.shift(histBear)
+                line.delete(old)
+        else
+            line.delete(lineBear)
+            lineBear := newLine
+        label.new(x=currBar, y=phVal, text="Bear", style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.tiny)
+
+    // Hidden Bear
+    if hiddenBearNow and not na(prevPHBar)
+        newHLine = line.new(prevPHBar, prevPHVal, currBar, phVal, color=hiddenBearColor, width=hiddenWidthInput, style=hiddenLineStyle)
+        if keepHistory
+            array.push(histHBear, newHLine)
+            if array.size(histHBear) > maxHistoryPerType
+                old = array.shift(histHBear)
+                line.delete(old)
+        else
+            line.delete(lineHBear)
+            lineHBear := newHLine
+        label.new(x=currBar, y=phVal, text="Hidden Bear", style=label.style_label_down, color=color.new(color.red, 10), textcolor=color.white, size=size.small)
+
+// === MULTI-TF TABLE ===
+// Precompute per-bar values to avoid calling functions only inside local scope
+cvd_5   = request.security(syminfo.tickerid, "5",   f_cvdCloseForSec())
+ma_5    = request.security(syminfo.tickerid, "5",   ta.sma(f_cvdCloseForSec(), maLengthInput))
+cvd_15  = request.security(syminfo.tickerid, "15",  f_cvdCloseForSec())
+ma_15   = request.security(syminfo.tickerid, "15",  ta.sma(f_cvdCloseForSec(), maLengthInput))
+cvd_60  = request.security(syminfo.tickerid, "60",  f_cvdCloseForSec())
+ma_60   = request.security(syminfo.tickerid, "60",  ta.sma(f_cvdCloseForSec(), maLengthInput))
+cvd_240 = request.security(syminfo.tickerid, "240", f_cvdCloseForSec())
+ma_240  = request.security(syminfo.tickerid, "240", ta.sma(f_cvdCloseForSec(), maLengthInput))
+
+cell_col_5   = cvd_5   > ma_5   ? color.new(color.green, 70) : color.new(color.red, 70)
+cell_col_15  = cvd_15  > ma_15  ? color.new(color.green, 70) : color.new(color.red, 70)
+cell_col_60  = cvd_60  > ma_60  ? color.new(color.green, 70) : color.new(color.red, 70)
+cell_col_240 = cvd_240 > ma_240 ? color.new(color.green, 70) : color.new(color.red, 70)
+
+// Remove f_fillCell() and just update table here
+if showTable and barstate.islast
+    var table cvdTable = table.new(tablePosition, 2, 5, bgcolor=color.new(color.gray, 80), border_width=1)
+    table.cell(cvdTable, 0, 0, "Timeframe")
+    table.cell(cvdTable, 1, 0, "CVD")
+    table.cell(cvdTable, 0, 1, "5m")
+    table.cell(cvdTable, 1, 1, str.tostring(cvd_5, format.mintick), bgcolor=cell_col_5, text_color=color.white)
+    table.cell(cvdTable, 0, 2, "15m")
+    table.cell(cvdTable, 1, 2, str.tostring(cvd_15, format.mintick), bgcolor=cell_col_15, text_color=color.white)
+    table.cell(cvdTable, 0, 3, "1H")
+    table.cell(cvdTable, 1, 3, str.tostring(cvd_60, format.mintick), bgcolor=cell_col_60, text_color=color.white)
+    table.cell(cvdTable, 0, 4, "4H")
+    table.cell(cvdTable, 1, 4, str.tostring(cvd_240, format.mintick), bgcolor=cell_col_240, text_color=color.white)
+
+// === ALERTS ===
+alertcondition(bullCondNow,     "Regular Bullish CVD Divergence", "BetterCVD: Regular Bullish")
+alertcondition(bearCondNow,     "Regular Bearish CVD Divergence", "BetterCVD: Regular Bearish")
+alertcondition(hiddenBullNow,   "Hidden Bullish CVD Divergence",  "BetterCVD: Hidden Bullish")
+alertcondition(hiddenBearNow,   "Hidden Bearish CVD Divergence",  "BetterCVD: Hidden Bearish")
+alertcondition(cvd_is_overbought, "CVD Overbought (BB Break)",    "BetterCVD: CVD Overbought")
+alertcondition(cvd_is_oversold,   "CVD Oversold (BB Break)",      "BetterCVD: CVD Oversold")

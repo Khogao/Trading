@@ -1,0 +1,226 @@
+//@version=5
+indicator("KVS v3.0+", overlay=true, max_boxes_count=50, max_labels_count=50)
+
+// ============================================================================
+//                         KVS v3.0 - "THE RECTANGLE & THE LINE"
+//      Combines KVS 2.2 Event Detection with SMPA Premium/Discount Structure
+// ============================================================================
+
+// === P/D/E STRUCTURE SETTINGS ===
+var string grp_structure = "🏗️ Premium/Discount Structure"
+pd_swing_lookback = input.int(20, title="Swing Lookback for Range", group=grp_structure, minval=5)
+pd_show_zones = input.bool(true, title="Show P/D/E Zones", group=grp_structure)
+pd_transparency = input.int(90, title="Zone Transparency", group=grp_structure, minval=0, maxval=100)
+
+// === KVS EVENT DETECTION SETTINGS ===
+var string grp_detection = "🎯 KV Event Detection"
+kv_method = input.string("all", title="Detection Method",
+     options=["volume_impulse", "wyckoff", "all"], group=grp_detection)
+// split sensitivity into explicit z-score threshold and a volume multiplier
+kv_zscore_threshold = input.float(2.0, title="Volume Z-score Threshold (impulses)", minval=1.0, maxval=6.0, step=0.1, group=grp_detection)
+kv_vol_multiplier = input.float(2.0, title="Volume Multiplier (wyckoff / BC-SC)", minval=1.0, maxval=6.0, step=0.1, group=grp_detection)
+kv_lookback = input.int(20, title="Lookback Period", minval=10, maxval=50, group=grp_detection)
+
+// --- BC/SC options ---
+kv_include_bcsc = input.bool(true, title="Include BC/SC detection", group=grp_detection)
+kv_bcsc_use_zscore = input.bool(true, title="Use Z-score for BC/SC", group=grp_detection)
+kv_bcsc_zscore = input.float(3.0, title="BC/SC Z-score Threshold", minval=2.0, maxval=6.0, step=0.1, group=grp_detection)
+kv_bcsc_multiplier = input.float(2.5, title="BC/SC Volume Multiplier (fallback)", minval=1.5, maxval=6.0, step=0.1, group=grp_detection)
+
+// === VISUAL SETTINGS ===
+var string grp_visual = "🎨 Display Options"
+show_intel_markers = input.bool(true, title="Show Intel Markers (KV Events)", group=grp_visual)
+show_market_context = input.bool(true, title="Show Market Context Panel", group=grp_visual)
+
+// === DATA STRUCTURES ===
+type MarketContext
+    bool in_uptrend
+    bool in_downtrend
+    float trend_strength
+
+// === UTILITY & ANALYSIS FUNCTIONS ===
+f_calculateZScore(value, length) =>
+    mean = ta.sma(value, length)
+    std_dev = ta.stdev(value, length)
+    std_dev > 0 ? (value - mean) / std_dev : 0
+
+f_getMarketContext() =>
+    ema21 = ta.ema(close, 21), ema50 = ta.ema(close, 50)
+    uptrend = ema21 > ema50, downtrend = ema21 < ema50
+    strength = 0.0
+    if uptrend
+        strength := math.abs(ema21 - ema50) / ta.atr(14)
+    if downtrend
+        strength := math.abs(ema21 - ema50) / ta.atr(14)
+    MarketContext.new(uptrend, downtrend, strength)
+
+// --- KVS Event Detection Engine (from v2.2) ---
+f_detectKVEvents(context) =>
+    // Volume metrics
+    vol_zscore = f_calculateZScore(volume, kv_lookback)
+    vol_ma = ta.sma(volume, kv_lookback)
+    atr = ta.atr(14)
+    body_size = math.abs(close - open)
+    upper_wick = high - math.max(open, close)
+    lower_wick = math.min(open, close) - low
+    wick_range = math.max(1e-9, high - low)
+
+    // Impulses (use z-score threshold)
+    hasSignificantVolume = vol_zscore > kv_zscore_threshold
+    hasSignificantMove = body_size > atr * 0.5
+    bullish_impulse = hasSignificantVolume and close > open and hasSignificantMove
+    bearish_impulse = hasSignificantVolume and close < open and hasSignificantMove
+
+    // Wyckoff Events (use volume multiplier vs MA)
+    support_level = ta.lowest(low, kv_lookback)[1]
+    resistance_level = ta.highest(high, kv_lookback)[1]
+    spring = low < support_level and close > support_level and volume > vol_ma * kv_vol_multiplier
+    upthrust = high > resistance_level and close < resistance_level and volume > vol_ma * kv_vol_multiplier
+
+    // BC / SC (climactic volume) - optional, choose z-score or multiplier
+    bc = false
+    sc = false
+    if kv_include_bcsc
+        vol_is_extreme = kv_bcsc_use_zscore ? (vol_zscore > kv_bcsc_zscore) : (volume > vol_ma * kv_bcsc_multiplier)
+        bc := vol_is_extreme and (upper_wick / wick_range > 0.35) and (high >= ta.highest(high, kv_lookback))
+        sc := vol_is_extreme and (lower_wick / wick_range > 0.35) and (low <= ta.lowest(low, kv_lookback))
+
+    // Return the detected event (priority: BC/SC -> Wyckoff -> Impulses)
+    string event = na
+    color eventColor = na
+    int eventLocation = 0
+
+    if bc
+        event := "BC"
+        eventColor := color.red
+        eventLocation := 1
+    else if sc
+        event := "SC"
+        eventColor := color.green
+        eventLocation := -1
+    else if upthrust
+        event := "UT"
+        eventColor := color.red
+        eventLocation := 1
+    else if spring
+        event := "SP"
+        eventColor := color.green
+        eventLocation := -1
+    else if bearish_impulse
+        event := "BE"
+        eventColor := color.red
+        eventLocation := 1
+    else if bullish_impulse
+        event := "BI"
+        eventColor := color.green
+        eventLocation := -1
+
+    [event, eventColor, eventLocation]
+
+// === P/D/E ZONE DRAWING LOGIC (from SMPA) ===
+f_drawPDZones() =>
+    // Find the current operating range
+    swing_high = ta.pivothigh(high, pd_swing_lookback, pd_swing_lookback)
+    swing_low  = ta.pivotlow(low,  pd_swing_lookback, pd_swing_lookback)
+
+    // persistent boxes (create once)
+    var box premium_box = na
+    var box discount_box = na
+    var box eq_box = na
+    if na(premium_box)
+        premium_box := box.new(na, na, na, na, border_color=na)
+    if na(discount_box)
+        discount_box := box.new(na, na, na, na, border_color=na)
+    if na(eq_box)
+        eq_box := box.new(na, na, na, na, border_color=na, border_style=line.style_dashed)
+
+    // store last detected pivots
+    var float range_high = na
+    var float range_low  = na
+    var int   ph_bar     = na
+    var int   pl_bar     = na
+
+    if not na(swing_high)
+        // pivot value and its bar index (exact)
+        range_high := ta.valuewhen(swing_high != na, high, 0)
+        ph_bar     := ta.valuewhen(swing_high != na, bar_index, 0)
+    if not na(swing_low)
+        range_low  := ta.valuewhen(swing_low != na, low, 0)
+        pl_bar     := ta.valuewhen(swing_low != na, bar_index, 0)
+
+    // Only draw if both pivots known
+    if not na(range_high) and not na(range_low)
+        equilibrium = (range_high + range_low) * 0.5
+
+        // start_bar = older pivot's bar index
+        start_bar = math.min(range_high_bar, range_low_bar)
+
+        // pivot candle heights (pivot bars are pd_swing_lookback bars ago)
+        ph_high = high[pd_swing_lookback]
+        ph_low  = low[pd_swing_lookback]
+        ph_height = math.max(1e-9, ph_high - ph_low)
+
+        pl_high = high[pd_swing_lookback]
+        pl_low  = low[pd_swing_lookback]
+        pl_height = math.max(1e-9, pl_high - pl_low)
+
+        // Premium Zone (anchored at range_high) - height = pivot-high candle height
+        premium_top = range_high
+        premium_bottom = math.max(equilibrium, range_high - ph_height)  // không thấp hơn equilibrium
+
+        box.set_left(premium_box, start_bar)
+        box.set_top(premium_box, premium_top)
+        box.set_right(premium_box, bar_index + 20)
+        box.set_bottom(premium_box, premium_bottom)
+        box.set_bgcolor(premium_box, color.new(color.red, pd_transparency))
+
+        // Discount Zone (anchored at range_low) - height = pivot-low candle height
+        discount_bottom = range_low
+        discount_top = math.min(equilibrium, range_low + pl_height)  // không cao hơn equilibrium
+
+        box.set_left(discount_box, start_bar)
+        box.set_top(discount_box, discount_top)
+        box.set_right(discount_box, bar_index + 20)
+        box.set_bottom(discount_box, discount_bottom)
+        box.set_bgcolor(discount_box, color.new(color.green, pd_transparency))
+
+        // Equilibrium Zone: chiều cao = trung bình cộng chiều cao Premium & Discount
+        premium_h = math.max(0.0, premium_top - premium_bottom)
+        discount_h = math.max(0.0, discount_top - discount_bottom)
+        avg_h = (premium_h + discount_h) * 0.5
+        half_h_desired = avg_h * 0.5
+
+        // Không cho Equilibrium chồng lên Premium/Discount — giới hạn chiều cao theo không gian sẵn có
+        available_top = math.max(0.0, premium_bottom - equilibrium)
+        available_bottom = math.max(0.0, equilibrium - discount_top)
+        half_h = math.min(half_h_desired, math.min(available_top, available_bottom))
+
+        eq_top = equilibrium + half_h
+        eq_bottom = equilibrium - half_h
+
+        box.set_left(eq_line_box, start_bar)
+        box.set_top(eq_line_box, eq_top)
+        box.set_right(eq_line_box, bar_index + 20)
+        box.set_bottom(eq_line_box, eq_bottom)
+        box.set_bgcolor(eq_line_box, color.new(color.blue, pd_transparency))
+        box.set_border_color(eq_line_box, color.new(color.blue, 60))
+        box.set_border_style(eq_line_box, line.style_dashed)
+
+
+// Call PD/E drawing so the indicator actually produces drawings (boxes)
+if pd_show_zones
+    f_drawPDZones()
+
+// Draw KV event markers (call the detector and create labels)
+if show_intel_markers
+    // get market context + detection
+    ctx = f_getMarketContext()
+    [evt, evtColor, evtLoc] = f_detectKVEvents(ctx)
+
+    if not na(evt)
+        // position label above/below bar using ATR-based offset
+        offset = ta.atr(14) * 0.5
+        y = evtLoc == 1 ? high + offset : low - offset
+
+        // create a text-only label: transparent background so no bubble, text color = evtColor
+        label.new(bar_index, y, text=evt, style=label.style_label_center, color=color.new(color.black, 100), textcolor=evtColor, size=size.small)

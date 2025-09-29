@@ -1,0 +1,323 @@
+//@version=6
+// TITLE: Better CVD [Enhanced] - RSI-Style UI
+// DESC: Complete order flow dashboard with Better RSI's professional UI design and feature set
+indicator("Better CVD [Enhanced]", shorttitle="Better CVD+", format=format.price, precision=2, overlay=false)
+import TradingView/ta/8
+
+// ======== INPUTS (Better RSI Style) ========== //
+// --- CVD Core Settings ---
+const string GRP_CVD = "CVD Settings"
+anchorInput = input.timeframe("D", "CVD Anchor Period", group=GRP_CVD, tooltip="Khung thời gian reset CVD. 'D' được khuyến nghị cho intraday.")
+useCustomTimeframeInput = input.bool(false, "Use Custom Lower Timeframe", group=GRP_CVD)
+lowerTimeframeInput = input.timeframe("1", "Lower Timeframe", group=GRP_CVD)
+
+// --- MA Settings (Identical to Better RSI) ---
+const string GRP_MA = "MA Settings"
+maTypeInput = input.string("SMA", title="MA Type", options=["SMA", "EMA", "SMMA (RMA)", "WMA", "VWMA"], group=GRP_MA)
+maLengthInput = input.int(20, title="MA Length", group=GRP_MA)
+bbMultInput = input.float(2.0, minval=0.001, maxval=50, title="BB StdDev", group=GRP_MA)
+
+// --- Divergence Settings (Better RSI Style) ---
+const string GRP_DIVERGENCE = "CVD Divergence"
+showDivergence = input.bool(true, title="Show Regular Divergence", group=GRP_DIVERGENCE)
+ShowHDivergence = input.bool(false, title="Show Hidden Divergence", group=GRP_DIVERGENCE)
+lookbackLeft = input.int(5, title="Pivot Lookback Left", group=GRP_DIVERGENCE)
+lookbackRight = input.int(5, title="Pivot Lookback Right", group=GRP_DIVERGENCE)
+rangeUpper = input.int(60, title="Max Bars Between Pivots", group=GRP_DIVERGENCE)
+rangeLower = input.int(5, title="Min Bars Between Pivots", group=GRP_DIVERGENCE)
+
+// --- Bollinger Band Settings (Better RSI Style) ---
+const string GRP_BB = "Bollinger Band Settings"
+showBollingerBands = input.bool(true, title="Show Bollinger Bands", group=GRP_BB)
+showBBBreakouts = input.bool(true, title="Highlight Bollinger Band Breakouts", group=GRP_BB)
+showExtremeBreakouts = input.bool(true, title="Highlight Extreme CVD Breakouts", group=GRP_BB, tooltip="Highlight when CVD breaks BB and shows extreme order flow")
+
+// --- CVD Table (Better RSI Style) ---
+const string GRP_TABLE = "CVD TABLE"
+cvdShowTable = input(true, title='CVD Multi-TF Table', group=GRP_TABLE)
+cvdTablePosition = input.string(title='Location', defval='top_right', options=['top_left','top_right'], group=GRP_TABLE, inline='1')
+cvdTextSize = input.string(title=' Size', defval='small', options=['auto','tiny','small','normal','large','huge'], group=GRP_TABLE, inline='1')
+textColor = input.color(color.white, title="Text Color", group=GRP_TABLE)
+
+// --- Display Settings (Better RSI Style) ---
+const string GRP_DISPLAY = "Display Settings"
+showCVDClouds = input.bool(true, title="Show CVD Clouds", group=GRP_DISPLAY)
+showCandleColors = input.bool(true, title="Show Candle Colors", group=GRP_DISPLAY)
+plotStyle = input.string("Line with MA", title="Plot Style", options=["Line with MA", "Candles"], group=GRP_DISPLAY)
+
+// --- CVD Levels (Better RSI Style) ---
+const string GRP_LEVELS = "CVD Levels"
+enableAdditionalLevels = input.bool(true, title="Enable Dynamic CVD Levels", group=GRP_LEVELS)
+extremeMultiplier = input.float(2.5, title="Extreme Level Multiplier", minval=1.0, maxval=5.0, step=0.1, group=GRP_LEVELS)
+significantMultiplier = input.float(1.5, title="Significant Level Multiplier", minval=1.0, maxval=3.0, step=0.1, group=GRP_LEVELS)
+
+// --- Cloud Settings (Better RSI Style) ---
+const string GRP_CLOUD = "CVD Cloud Settings"
+maCloudLength1Input = input.int(5, title="CVD Cloud MA Length 1", group=GRP_CLOUD)
+maCloudLength2Input = input.int(12, title="CVD Cloud MA Length 2", group=GRP_CLOUD)
+maCloudTypeInput = input.string("EMA", title="CVD Cloud MA Type", options=["SMA", "EMA", "SMMA (RMA)", "WMA", "VWMA"], group=GRP_CLOUD)
+
+// ======== HELPER FUNCTIONS ========== //
+ma(source, length, type) =>
+    switch type
+        "SMA" => ta.sma(source, length)
+        "EMA" => ta.ema(source, length)
+        "SMMA (RMA)" => ta.rma(source, length)
+        "WMA" => ta.wma(source, length)
+        "VWMA" => ta.vwma(source, length)
+
+f_lowerTf() =>
+    if useCustomTimeframeInput
+        lowerTimeframeInput
+    else
+        switch
+            timeframe.isseconds => "1S"
+            timeframe.isintraday => "1"
+            timeframe.isdaily => "5"
+            => "60"
+
+f_cvdClose() =>
+    [_o, _h, _l, _c] = ta.requestVolumeDelta(f_lowerTf(), anchorInput)
+    _c
+
+// ======== CVD CALCULATIONS ========== //
+[openVolume, maxVolume, minVolume, lastVolume] = ta.requestVolumeDelta(f_lowerTf(), anchorInput)
+cvdSource = lastVolume
+
+// Volume validation
+var float cumVol = 0.0
+cumVol += nz(volume)
+if barstate.islast and cumVol == 0
+    runtime.error("Symbol has no volume data - CVD cannot be calculated.")
+
+// CVD MA
+cvdMA = ma(cvdSource, maLengthInput, maTypeInput)
+
+// ======== CVD CLOUD SYSTEM (Better RSI Style) ========== //
+cvdMA1 = ma(cvdSource, maCloudLength1Input, maCloudTypeInput)
+cvdMA2 = ma(cvdSource, maCloudLength2Input, maCloudTypeInput)
+
+// ======== BOLLINGER BANDS ========== //
+cvdMA_bb = ma(cvdSource, maLengthInput, maTypeInput)
+bbStdDev = ta.stdev(cvdSource, maLengthInput) * bbMultInput
+bbUpperBand = cvdMA_bb + bbStdDev
+bbLowerBand = cvdMA_bb - bbStdDev
+
+// BB Breakout conditions
+bbUpperBreakout = cvdSource > bbUpperBand
+bbLowerBreakout = cvdSource < bbLowerBand
+
+// Dynamic levels based on ATR-like concept for CVD
+cvdRange = ta.atr(20) // Use price ATR as proxy for volatility
+extremeUpperLevel = cvdMA + (cvdRange * extremeMultiplier)
+extremeLowerLevel = cvdMA - (cvdRange * extremeMultiplier)
+significantUpperLevel = cvdMA + (cvdRange * significantMultiplier)
+significantLowerLevel = cvdMA - (cvdRange * significantMultiplier)
+
+// Extreme breakout conditions
+extremeUpperBreakout = bbUpperBreakout and cvdSource > extremeUpperLevel
+extremeLowerBreakout = bbLowerBreakout and cvdSource < extremeLowerLevel
+
+// ======== DIVERGENCE ENGINE (Better RSI Style) ========== //
+// Colors
+bearColor = color.red
+bullColor = color.green
+noneColor = color.new(color.white, 100)
+
+// Pivot detection
+plFound = na(ta.pivotlow(cvdSource, lookbackLeft, lookbackRight)) ? false : true
+phFound = na(ta.pivothigh(cvdSource, lookbackLeft, lookbackRight)) ? false : true
+
+_inRange(cond) =>
+    bars = ta.barssince(cond == true)
+    rangeLower <= bars and bars <= rangeUpper
+
+// Regular Bullish Divergence
+cvdHL = cvdSource[lookbackRight] > ta.valuewhen(plFound, cvdSource[lookbackRight], 1) and _inRange(plFound[1])
+priceLL = low[lookbackRight] < ta.valuewhen(plFound, low[lookbackRight], 1)
+bullCondAlert = priceLL and cvdHL and plFound
+bullCond = showDivergence and bullCondAlert
+
+// Regular Bearish Divergence  
+cvdLH = cvdSource[lookbackRight] < ta.valuewhen(phFound, cvdSource[lookbackRight], 1) and _inRange(phFound[1])
+priceHH = high[lookbackRight] > ta.valuewhen(phFound, high[lookbackRight], 1)
+bearCondAlert = priceHH and cvdLH and phFound
+bearCond = showDivergence and bearCondAlert
+
+// Hidden Bullish Divergence
+// Price: Higher Low vs previous Low (compare lows on low pivots)
+priceHL = low[lookbackRight] > ta.valuewhen(plFound, low[lookbackRight], 1)
+cvdLL = cvdSource[lookbackRight] < ta.valuewhen(plFound, cvdSource[lookbackRight], 1) and _inRange(plFound[1])
+hiddenBullCondAlert = priceHL and cvdLL and plFound
+hiddenBullCond = ShowHDivergence and hiddenBullCondAlert
+
+// Hidden Bearish Divergence
+// Price: Lower High vs previous High (compare highs on high pivots)
+cvdHH = cvdSource[lookbackRight] > ta.valuewhen(phFound, cvdSource[lookbackRight], 1) and _inRange(phFound[1])
+priceLH = high[lookbackRight] < ta.valuewhen(phFound, high[lookbackRight], 1)
+hiddenBearCondAlert = priceLH and cvdHH and phFound
+hiddenBearCond = ShowHDivergence and hiddenBearCondAlert
+
+// ======== PLOTTING (Better RSI Style) ========== //
+// Zero line
+hline(0, "Zero Line", color=color.new(color.gray, 50), linestyle=hline.style_dashed)
+
+// Dynamic levels
+upperExtreme = hline(enableAdditionalLevels ? extremeUpperLevel : na, "Extreme Upper", color=color.new(color.red, 30))
+upperSignificant = hline(enableAdditionalLevels ? significantUpperLevel : na, "Significant Upper", color=color.new(color.orange, 50))
+midline = hline(0, "CVD Middle", color=color.new(color.gray, 50))
+lowerSignificant = hline(enableAdditionalLevels ? significantLowerLevel : na, "Significant Lower", color=color.new(color.orange, 50))
+lowerExtreme = hline(enableAdditionalLevels ? extremeLowerLevel : na, "Extreme Lower", color=color.new(color.red, 30))
+
+// Background fill between levels
+fill(upperExtreme, lowerExtreme, color=color.rgb(126, 87, 194, 95), title="CVD Range Fill")
+
+// Plot CVD Line/Candles
+isLinePlot = plotStyle == "Line with MA"
+cvdLineColor = cvdSource > cvdMA ? color.new(color.blue, 0) : color.new(color.orange, 0)
+pCVD = plot(isLinePlot ? cvdSource : na, "CVD", color=cvdLineColor, linewidth=2)
+pMA = plot(isLinePlot ? cvdMA : na, "CVD MA", color=color.new(color.purple, 0), linewidth=1)
+
+// CVD Candles
+cCol = lastVolume >= openVolume ? color.new(color.teal, 30) : color.new(color.red, 30)
+plotcandle(not isLinePlot ? openVolume : na, not isLinePlot ? maxVolume : na, not isLinePlot ? minVolume : na, not isLinePlot ? lastVolume : na, "CVD Candles", color=cCol, bordercolor=cCol, wickcolor=cCol)
+
+// ======== CVD CLOUDS (Better RSI Style) ========== //
+p1 = plot(showCVDClouds ? cvdMA1 : na, title="CVD MA Line 1", linewidth=1, color=color.new(color.green, 100))
+p2 = plot(showCVDClouds ? cvdMA2 : na, title="CVD MA Line 2", linewidth=1, color=color.new(color.red, 100))
+fill(p1, p2, color=cvdMA1 > cvdMA2 ? color.new(color.green, 70) : color.new(color.red, 70), title="CVD Cloud Fill")
+
+// ======== BOLLINGER BANDS ========== //
+bbUpper = plot(showBollingerBands ? bbUpperBand : na, title="BB Upper", color=color.gray, style=plot.style_line)
+bbLower = plot(showBollingerBands ? bbLowerBand : na, title="BB Lower", color=color.gray, style=plot.style_line)
+fill(bbUpper, bbLower, color=color.new(color.gray, 95), title="BB Fill")
+
+// Fill gradients (Better RSI Style)
+midLinePlot = plot(0, color=na, editable=false, display=display.none)
+fill(pCVD, midLinePlot, cvdSource, extremeUpperLevel, top_color=color.new(color.green, 0), bottom_color=color.new(color.green, 100), title="Positive CVD Gradient")
+fill(pCVD, midLinePlot, extremeLowerLevel, cvdSource, top_color=color.new(color.red, 100), bottom_color=color.new(color.red, 0), title="Negative CVD Gradient")
+
+// Background alerts
+bgcolor(showBBBreakouts and bbUpperBreakout ? color.new(color.green, 90) : na, title="CVD Above Upper BB")
+bgcolor(showBBBreakouts and bbLowerBreakout ? color.new(color.red, 90) : na, title="CVD Below Lower BB")
+bgcolor(showExtremeBreakouts and extremeUpperBreakout ? color.new(color.yellow, 90) : na, title="CVD Extreme Breakout Above")
+bgcolor(showExtremeBreakouts and extremeLowerBreakout ? color.new(color.yellow, 90) : na, title="CVD Extreme Breakout Below")
+
+// ======== DIVERGENCE PLOTTING (Better RSI Style) ========== //
+// Bullish Regular Divergence
+plot(
+    plFound ? cvdSource[lookbackRight] : na,
+    offset=-lookbackRight,
+    title="Regular Bullish",
+    linewidth=2,
+    color=(bullCond ? bullColor : noneColor)
+)
+
+plotshape(
+    bullCond ? cvdSource[lookbackRight] : na,
+    offset=-lookbackRight,
+    title="Regular Bullish Label",
+    text=" Bull ",
+    style=shape.labelup,
+    location=location.absolute,
+    color=bullColor,
+    textcolor=textColor
+)
+
+// Bearish Regular Divergence
+plot(
+    phFound ? cvdSource[lookbackRight] : na,
+    offset=-lookbackRight,
+    title="Regular Bearish",
+    linewidth=2,
+    color=(bearCond ? bearColor : noneColor)
+)
+
+plotshape(
+    bearCond ? cvdSource[lookbackRight] : na,
+    offset=-lookbackRight,
+    title="Regular Bearish Label",
+    text="Bear",
+    style=shape.labeldown,
+    location=location.absolute,
+    color=bearColor,
+    textcolor=textColor
+)
+
+// Hidden Divergence
+plot(
+    phFound ? cvdSource[lookbackRight] : na,
+    offset=-lookbackRight,
+    title="Hidden Bearish",
+    linewidth=2,
+    color=(hiddenBearCond ? bearColor : noneColor)
+)
+
+plotshape(
+    hiddenBearCond ? cvdSource[lookbackRight] : na,
+    offset=-lookbackRight,
+    title="Hidden Bearish Label",
+    text="Hidden Bear",
+    style=shape.labeldown,
+    location=location.absolute,
+    color=bearColor,
+    textcolor=textColor
+)
+
+plot(
+    plFound ? cvdSource[lookbackRight] : na,
+    offset=-lookbackRight,
+    title="Hidden Bullish",
+    linewidth=2,
+    color=(hiddenBullCond ? bullColor : noneColor)
+)
+
+plotshape(
+    hiddenBullCond ? cvdSource[lookbackRight] : na,
+    offset=-lookbackRight,
+    title="Hidden Bullish Label",
+    text="Hidden Bull",
+    style=shape.labelup,
+    location=location.absolute,
+    color=bullColor,
+    textcolor=textColor
+)
+
+// ======== MULTI-TF CVD TABLE (Better RSI Style) ========== //
+// Table dimensions (Better RSI Style)
+width_c0 = 0
+width_c1 = 4
+
+// Map string -> position enum (required by table.new)
+cvd_pos = cvdTablePosition == 'top_right' ? position.top_right : position.top_left
+var table cvd_Table = table.new(position=cvd_pos, columns=2, rows=5, bgcolor=color.rgb(18,22,33,50), frame_color=color.black, frame_width=1, border_color=color.black, border_width=1)
+
+if cvdShowTable
+    table.cell(table_id=cvd_Table, column=0, row=0, text=" CVD 5m:", width=width_c0, text_color=textColor, text_size=cvdTextSize, text_halign=text.align_right)    
+    table.cell(table_id=cvd_Table, column=0, row=1, text=" CVD 15m:", width=width_c0, text_color=textColor, text_size=cvdTextSize, text_halign=text.align_right)
+    table.cell(table_id=cvd_Table, column=0, row=2, text=" CVD 1h:", width=width_c0, text_color=textColor, text_size=cvdTextSize, text_halign=text.align_right)
+    table.cell(table_id=cvd_Table, column=0, row=3, text=" CVD 4h:", width=width_c0, text_color=textColor, text_size=cvdTextSize, text_halign=text.align_right)
+    table.cell(table_id=cvd_Table, column=0, row=4, text=" CVD 1d:", width=width_c0, text_color=textColor, text_size=cvdTextSize, text_halign=text.align_right)
+
+    table.cell(table_id=cvd_Table, column=1, row=0, text=str.format("{0,number,#.##} ", cvd5m),  width=width_c1, text_color=textColor, bgcolor=(cvd5m  > cvdMA5m  ? bullColor : bearColor), text_size=cvdTextSize, text_halign=text.align_left)    
+    table.cell(table_id=cvd_Table, column=1, row=1, text=str.format("{0,number,#.##} ", cvd15m), width=width_c1, text_color=textColor, bgcolor=(cvd15m > cvdMA15m ? bullColor : bearColor), text_size=cvdTextSize, text_halign=text.align_left)
+    table.cell(table_id=cvd_Table, column=1, row=2, text=str.format("{0,number,#.##} ", cvd1h),  width=width_c1, text_color=textColor, bgcolor=(cvd1h  > cvdMA1h  ? bullColor : bearColor), text_size=cvdTextSize, text_halign=text.align_left)
+    table.cell(table_id=cvd_Table, column=1, row=3, text=str.format("{0,number,#.##} ", cvd4h),  width=width_c1, text_color=textColor, bgcolor=(cvd4h  > cvdMA4h  ? bullColor : bearColor), text_size=cvdTextSize, text_halign=text.align_left)
+    table.cell(table_id=cvd_Table, column=1, row=4, text=str.format("{0,number,#.##} ", cvd1d),  width=width_c1, text_color=textColor, bgcolor=(cvd1d  > cvdMA1d  ? bullColor : bearColor), text_size=cvdTextSize, text_halign=text.align_left)
+
+// ======== CANDLE COLORING (Better RSI Style) ========== //
+// CVD-based candle coloring
+barcolor(showCandleColors and extremeUpperBreakout ? color.new(color.lime, 25) : na, title="Extreme Bullish CVD")
+barcolor(showCandleColors and extremeLowerBreakout ? color.new(color.red, 25) : na, title="Extreme Bearish CVD")
+barcolor(showCandleColors and bbUpperBreakout ? color.new(color.green, 50) : na, title="CVD Above BB")
+barcolor(showCandleColors and bbLowerBreakout ? color.new(color.orange, 50) : na, title="CVD Below BB")
+barcolor(showCandleColors and cvdSource > cvdMA ? color.new(color.blue, 75) : na, title="CVD Above MA")
+barcolor(showCandleColors and cvdSource < cvdMA ? color.new(color.purple, 75) : na, title="CVD Below MA")
+
+// ======== ALERTS ========== //
+alertcondition(bullCondAlert, title='CVD Regular Bullish Divergence', message="CVD Regular Bullish Divergence detected")
+alertcondition(bearCondAlert, title='CVD Regular Bearish Divergence', message="CVD Regular Bearish Divergence detected")
+alertcondition(hiddenBullCondAlert, title='CVD Hidden Bullish Divergence', message="CVD Hidden Bullish Divergence detected")
+alertcondition(hiddenBearCondAlert, title='CVD Hidden Bearish Divergence', message="CVD Hidden Bearish Divergence detected")
+alertcondition(extremeUpperBreakout, title='CVD Extreme Bullish Breakout', message="CVD Extreme Bullish Breakout")
+alertcondition(extremeLowerBreakout, title='CVD Extreme Bearish Breakout', message="CVD Extreme Bearish Breakout")

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quy luật của Xạ thủ</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Roboto Mono', monospace;
+      background-color: #0a0a0a;
+      color: #e5e5e5;
+    }
+    .font-orbitron {
+      font-family: 'Orbitron', sans-serif;
+    }
+    .card {
+      background-color: #1a1a1a;
+      border: 1px solid #333;
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+      backdrop-filter: blur(10px);
+      background-color: rgba(26, 26, 26, 0.8);
+    }
+    .card:hover {
+      transform: translateY(-10px) scale(1.02);
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.2);
+    }
+    .rule-number {
+      -webkit-text-stroke: 1px rgba(255, 255, 255, 0.2);
+    }
+    .gold-text {
+      background: linear-gradient(120deg, #fde047, #eab308, #facc15);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .platinum-text {
+      background: linear-gradient(120deg, #e2e8f0, #94a3b8, #cbd5e1);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+  </style>
+</head>
+<body class="p-4 sm:p-8">
+  <div class="max-w-7xl mx-auto">
+    <header class="text-center mb-12">
+      <h1 class="font-orbitron text-4xl sm:text-6xl font-bold platinum-text tracking-wider">QUY LUẬT CỦA XẠ THỦ</h1>
+      <p class="text-slate-400 mt-2 text-lg">MỘT BẢN HIẾN PHÁP VỀ SỰ KIÊN NHẪN & KỶ LUẬT</p>
+    </header>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+      <div class="card rounded-2xl p-8 flex flex-col">
+        <span class="font-orbitron text-8xl font-black text-slate-700 rule-number">01</span>
+        <h2 class="text-2xl font-bold text-slate-200 mt-4">TA LÀ XẠ THỦ, KHÔNG PHẢI NGƯỜI LÍNH.</h2>
+        <p class="text-slate-400 mt-4 flex-grow">"Một người lính chiến đấu trong mọi trận đánh. Một xạ thủ <span class="gold-text font-bold">chọn</span> trận đánh sẽ định đoạt cả cuộc chiến."</p>
+      </div>
+
+      <div class="card rounded-2xl p-8 flex flex-col">
+        <span class="font-orbitron text-8xl font-black text-slate-700 rule-number">02</span>
+        <h2 class="text-2xl font-bold text-slate-200 mt-4">SĂN VOI, KHÔNG SĂN THỎ.</h2>
+        <p class="text-slate-400 mt-4 flex-grow">"Nhiệm vụ là chờ đợi một cơ hội Hạng A+. Một cú Spring trong Giai đoạn Tích lũy là một con voi. Mọi thứ khác chỉ là <span class="gold-text font-bold">tiếng ồn</span>."</p>
+      </div>
+
+      <div class="card rounded-2xl p-8 flex flex-col">
+        <span class="font-orbitron text-8xl font-black text-slate-700 rule-number">03</span>
+        <h2 class="text-2xl font-bold text-slate-200 mt-4">YÊU SỰ TĨNH LẶNG.</h2>
+        <p class="text-slate-400 mt-4 flex-grow">"Cuộc chiến thực sự không phải với thị trường, mà là với sự nhàm chán. Tìm kiếm sự phấn khích trong một <span class="gold-text font-bold">phân tích hoàn hảo</span>, không phải trong hành động bóp cò."</p>
+      </div>
+
+      <div class="card rounded-2xl p-8 flex flex-col">
+        <span class="font-orbitron text-8xl font-black text-slate-700 rule-number">04</span>
+        <h2 class="text-2xl font-bold text-slate-200 mt-4">BẢN ĐỒ TRƯỚC, ỐNG NGẮM SAU.</h2>
+        <p class="text-slate-400 mt-4 flex-grow">"Dành 60% năng lượng cho Bản đồ (Wyckoff 4H/1D) để hiểu chiến dịch. Chỉ dùng 40% cho Ống ngắm (VSA 15m/1H) để <span class="gold-text font-bold">định thời điểm</span> cho phát bắn."</p>
+      </div>
+      
+      <div class="card rounded-2xl p-8 flex flex-col md:col-span-2">
+        <span class="font-orbitron text-8xl font-black text-slate-700 rule-number">05</span>
+        <h2 class="text-2xl font-bold text-slate-200 mt-4">MỘT PHÁT BẮN, MỘT MẠNG.</h2>
+        <p class="text-slate-400 mt-4 flex-grow">"Vứt bỏ khẩu súng lục. Vũ khí duy nhất của cậu là súng bắn tỉa. Bất kỳ một cú trade nào không tuân theo Giao thức Xạ thủ đều là một hành động <span class="gold-text font-bold">phản bội</span> lại chính mình."</p>
+      </div>
+    </div>
+    
+    <footer class="text-center mt-12 text-slate-600">
+      <p>&copy; 2025 - The Sniper's Code. Forged in Patience.</p>
+    </footer>
+  </div>
+</body>
+</html>
