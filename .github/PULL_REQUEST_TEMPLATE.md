@@ -20,4 +20,3 @@ Describe the change in one or two sentences.
 ## Details
 
 ...describe tests, config used, example outputs...
-

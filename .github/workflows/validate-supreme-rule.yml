@@ -1,0 +1,47 @@
+name: Validate Supreme Rule
+
+on:
+  pull_request:
+    paths:
+      - '**/*.pine'
+      - '.github/**'
+      - 'docs/**'
+      - 'templates/**'
+  push:
+    branches:
+      - main
+
+jobs:
+  check-supreme-rule:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure TRADING_RULES.md exists
+        run: |
+          if [ ! -f docs/TRADING_RULES.md ]; then
+            echo "docs/TRADING_RULES.md missing"; exit 1; fi
+
+      - name: Check for conservative defaults in templates
+        run: |
+          # Look for templates/pine_header.template and ensure defaults
+          if [ -f templates/pine_header.template ]; then
+            grep -q "enable_recommended_sl_tp = input.bool(false" templates/pine_header.template || (echo "enable_recommended_sl_tp default not false" && exit 1)
+            grep -q "auto_place_orders = input.bool(false" templates/pine_header.template || (echo "auto_place_orders default not false" && exit 1)
+            grep -q "auto_manage_sl_tp = input.bool(false" templates/pine_header.template || (echo "auto_manage_sl_tp default not false" && exit 1)
+            grep -q "confirm_auto_actions = input.bool(false" templates/pine_header.template || (echo "confirm_auto_actions default not false" && exit 1)
+          fi
+
+      - name: Lint changed Pine scripts for forbidden auto-exec
+        run: |
+          # For each changed .pine file in PR, ensure there are no direct strategy.entry calls unless guarded
+          git fetch origin ${{ github.base_ref }} || true
+          CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- '*.pine' || true)
+          if [ -n "$CHANGED" ]; then
+            echo "$CHANGED" | while read -r f; do
+              if grep -q "strategy.entry" "$f" || grep -q "strategy.exit" "$f"; then
+                if ! grep -q "can_execute" "$f"; then
+                  echo "Forbidden unguarded strategy call in $f"; exit 1
+                fi
+              fi
+            done
+          fi
