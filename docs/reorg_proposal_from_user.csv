@@ -1,5 +1,53 @@
-﻿current_path,filename,classification,analysis,new_path
-indicators/cvd/Better-01.pine,Better-01.pine,cvd,"Append -CVD suffix for CVD family",indicators/cvd/Better-01-CVD.pine
-indicators/cvd/Better-02.pine,Better-02.pine,cvd,"Append -CVD suffix for CVD family",indicators/cvd/Better-02-CVD.pine
-indicators/cvd/Better-03.pine,Better-03.pine,cvd,"Append -CVD suffix for CVD family",indicators/cvd/Better-03-CVD.pine
-indicators/cvd/Better-04.pine,Better-04.pine,cvd,"Append -CVD suffix for CVD family",indicators/cvd/Better-04-CVD.pine
+current_path,filename,classification,analysis,new_path
+D:\Work\Coding\Trading\EZ3.pine,EZ3.pine,Composite (PA+VSA),Một phiên bản của họ EZZ/KV.,D:\Work\Coding\Trading\indicators\key_level\archive\EZ3.pine
+D:\Work\Coding\Trading\Ideas.pine,Ideas.pine,Notes,Không phải chỉ báo.,D:\Work\Coding\Trading\z_archive\notes\Ideas.pine
+D:\Work\Coding\Trading\VPP4.pine,VPP4.pine,Volume Profile,Phiên bản quan trọng của họ VPP.,D:\Work\Coding\Trading\indicators\volume_profile\VPP_v4_0.pine
+D:\Work\Coding\Trading\VPP41.pine,VPP41.pine,Volume Profile,Phiên bản lặp lại của VPP v4.1.,D:\Work\Coding\Trading\indicators\volume_profile\archive\VPP_v4_1_copy.pine
+D:\Work\Coding\Trading\VPP42.pine,VPP42.pine,Volume Profile,"Phiên bản quan trọng, tiền thân của v5.",D:\Work\Coding\Trading\indicators\volume_profile\VPP_v4_2_Final.pine
+D:\Work\Coding\Trading\vsa-functions.pine,vsa-functions.pine,Library,Thư viện hàm VSA.,D:\Work\Coding\Trading\libraries\vsa-functions.pine
+D:\Work\Coding\Trading\WSH Velo.pine,WSH Velo.pine,Composite (Wyckoff+SMC),Bản sao WSH v5.2.,D:\Work\Coding\Trading\indicators\hybrid\wyckoff_smc\archive\WSH_Velo_v5_2_copy.pine
+D:\Work\Coding\Trading\indicators\cvd\Better-01-CVD.pine,Better-01-CVD.pine,Composite (VSA+CVD),Better-01,D:\Work\Coding\Trading\indicators\order_flow\archive\bette_series\Better-01-CVD.pine
+D:\Work\Coding\Trading\indicators\cvd\Better-02-CVD.pine,Better-02-CVD.pine,Composite (VSA+CVD),Better-02,D:\Work\Coding\Trading\indicators\order_flow\archive\bette_series\Better-02-CVD.pine
+D:\Work\Coding\Trading\indicators\cvd\Better-03-CVD.pine,Better-03-CVD.pine,Composite (VSA+CVD),Better-03,D:\Work\Coding\Trading\indicators\order_flow\archive\bette_series\Better-03-CVD.pine
+D:\Work\Coding\Trading\indicators\cvd\Better-04-CVD.pine,Better-04-CVD.pine,Composite (VSA+CVD),Better-04,D:\Work\Coding\Trading\indicators\order_flow\Better_CVD_v4-CVD.pine
+D:\Work\Coding\Trading\indicators\cvd\C+V+D.pine,C+V+D.pine,Composite (VSA+CVD),C+V+D,D:\Work\Coding\Trading\indicators\order_flow\archive\C+V+D_legacy.pine
+D:\Work\Coding\Trading\indicators\cvd\CVD Pro.pine,CVD Pro.pine,Composite (VSA+CVD),CVD Pro,D:\Work\Coding\Trading\indicators\order_flow\CVD_Pro.pine
+D:\Work\Coding\Trading\indicators\cvd\Vol+CVD.pine,Vol+CVD.pine,Composite (VSA+CVD),Vol+CVD,D:\Work\Coding\Trading\indicators\order_flow\archive\Vol+CVD_legacy.pine
+D:\Work\Coding\Trading\indicators\kv\Eclaude.pine,Eclaude.pine,Composite (PA+VSA),Eclaude, D:\Work\Coding\Trading\indicators\key_level\KV_Zone_Advanced.pine
+D:\Work\Coding\Trading\indicators\kv\EZ-01.pine,EZ-01.pine,Composite (PA+VSA),EZ-01, D:\Work\Coding\Trading\indicators\key_level\archive\ezz_series\EZ-01.pine
+D:\Work\Coding\Trading\indicators\kv\EZ-02.pine,EZ-02.pine,Composite (PA+VSA),EZ-02, D:\Work\Coding\Trading\indicators\key_level\archive\ezz_series\EZ-02.pine
+D:\Work\Coding\Trading\indicators\kv\EZZ-01.pine,EZZ-01.pine,Composite (PA+VSA),EZZ-01, D:\Work\Coding\Trading\indicators\key_level\archive\ezz_series\EZZ-01.pine
+D:\Work\Coding\Trading\indicators\kv\EZZ-02.pine,EZZ-02.pine,Composite (PA+VSA),EZZ-02, D:\Work\Coding\Trading\indicators\key_level\archive\ezz_series\EZZ-02.pine
+D:\Work\Coding\Trading\indicators\kv\EZZ-03.pine,EZZ-03.pine,Composite (PA+VSA),EZZ-03, D:\Work\Coding\Trading\indicators\key_level\archive\ezz_series\EZZ-03.pine
+D:\Work\Coding\Trading\indicators\kv\EZZ-04.pine,EZZ-04.pine,Composite (PA+VSA),EZZ-04, D:\Work\Coding\Trading\indicators\key_level\archive\ezz_series\EZZ-04.pine
+D:\Work\Coding\Trading\indicators\kv\EZZ-05.pine,EZZ-05.pine,Composite (PA+VSA),EZZ-05, D:\Work\Coding\Trading\indicators\key_level\archive\ezz_series\EZZ-05.pine
+D:\Work\Coding\Trading\indicators\kv\EZZ-06.pine,EZZ-06.pine,Composite (PA+VSA),EZZ-06, D:\Work\Coding\Trading\indicators\key_level\archive\ezz_series\EZZ-06.pine
+D:\Work\Coding\Trading\indicators\kv\EZZ-07.pine,EZZ-07.pine,Composite (PA+VSA),EZZ-07, D:\Work\Coding\Trading\indicators\key_level\archive\ezz_series\EZZ-07.pine
+D:\Work\Coding\Trading\indicators\kv\EZZ-08.pine,EZZ-08.pine,Composite (PA+VSA),EZZ-08, D:\Work\Coding\Trading\indicators\key_level\archive\ezz_series\EZZ-08.pine
+D:\Work\Coding\Trading\indicators\kv\EZZII.pine,EZZII.pine,Composite (PA+VSA),EZZII, D:\Work\Coding\Trading\indicators\key_level\archive\EZZII_Gemini_Flip_copy.pine
+D:\Work\Coding\Trading\indicators\kv\EZZY.PINE,EZZY.PINE,Composite (PA+VSA),EZZY, D:\Work\Coding\Trading\indicators\key_level\EZZ_Gemini_Flip.pine
+D:\Work\Coding\Trading\indicators\kvs\KVS 30.pine,KVS 30.pine,Composite (PA+VSA),KVS 30, D:\Work\Coding\Trading\indicators\key_level\archive\KVS_30.pine
+D:\Work\Coding\Trading\indicators\other\Leviathan.pine,Leviathan.pine,Composite,Leviathan, D:\Work\Coding\Trading\indicators\composite\Leviathan.pine
+D:\Work\Coding\Trading\indicators\other\PI-01.pine,PI-01.pine,Wyckoff/VSA,Core PI family, D:\Work\Coding\Trading\indicators\vsa\pi_family\core_evolution\PI-01.pine
+D:\Work\Coding\Trading\indicators\other\PI-02.pine,PI-02.pine,Wyckoff/VSA,Core PI family, D:\Work\Coding\Trading\indicators\vsa\pi_family\core_evolution\PI-02.pine
+D:\Work\Coding\Trading\indicators\other\PI-06.pine,PI-06.pine,Wyckoff/VSA,Core PI family, D:\Work\Coding\Trading\indicators\vsa\pi_family\core_evolution\PI-06.pine
+D:\Work\Coding\Trading\indicators\other\PI-07.pine,PI-07.pine,Wyckoff/VSA,Core PI family, D:\Work\Coding\Trading\indicators\vsa\pi_family\core_evolution\PI-07.pine
+D:\Work\Coding\Trading\indicators\other\PI-08.pine,PI-08.pine,Wyckoff/VSA,Core PI family, D:\Work\Coding\Trading\indicators\vsa\pi_family\core_evolution\PI-08.pine
+D:\Work\Coding\Trading\indicators\other\PI-09.pine,PI-09.pine,Wyckoff/VSA,Core PI family, D:\Work\Coding\Trading\indicators\vsa\pi_family\core_evolution\PI-09.pine
+D:\Work\Coding\Trading\indicators\other\PI-10.pine,PI-10.pine,Wyckoff/VSA,Core PI family, D:\Work\Coding\Trading\indicators\vsa\pi_family\core_evolution\PI-10.pine
+D:\Work\Coding\Trading\indicators\other\PI-11.pine,PI-11.pine,Wyckoff/VSA,Core PI family, D:\Work\Coding\Trading\indicators\vsa\pi_family\core_evolution\PI-11.pine
+D:\Work\Coding\Trading\indicators\other\PI-12.pine,PI-12.pine,Wyckoff/VSA,Core PI family, D:\Work\Coding\Trading\indicators\vsa\pi_family\core_evolution\PI-12.pine
+D:\Work\Coding\Trading\indicators\other\PI-13.pine,PI-13.pine,Wyckoff/VSA,Core PI family, D:\Work\Coding\Trading\indicators\vsa\pi_family\core_evolution\PI-13.pine
+D:\Work\Coding\Trading\indicators\other\PI-14.pine,PI-14.pine,Wyckoff/VSA,Core PI family, D:\Work\Coding\Trading\indicators\vsa\pi_family\core_evolution\PI-14.pine
+D:\Work\Coding\Trading\indicators\other\PI-15.pine,PI-15.pine,Wyckoff/VSA,Core PI family, D:\Work\Coding\Trading\indicators\vsa\pi_family\core_evolution\PI-15.pine
+D:\Work\Coding\Trading\indicators\other\PI-16.pine,PI-16.pine,Wyckoff/VSA,Core PI family, D:\Work\Coding\Trading\indicators\vsa\pi_family\core_evolution\PI-16.pine
+D:\Work\Coding\Trading\production\PI-03.pine,PI-03.pine,Wyckoff/VSA,Core PI family,D:\Work\Coding\Trading\indicators\vsa\pi_family\core_evolution\PI-03.pine
+D:\Work\Coding\Trading\production\PI-04.pine,PI-04.pine,Wyckoff/VSA,Core PI family,D:\Work\Coding\Trading\indicators\vsa\pi_family\core_evolution\PI-04.pine
+D:\Work\Coding\Trading\production\PI-05.pine,PI-05.pine,Wyckoff/VSA,Core PI family,D:\Work\Coding\Trading\indicators\vsa\pi_family\core_evolution\PI-05.pine
+D:\Work\Coding\Trading\production\PI-17.pine,PI-17.pine,Wyckoff/VSA,Core PI family,D:\Work\Coding\Trading\indicators\vsa\pi_family\core_evolution\PI-17.pine
+D:\Work\Coding\Trading\indicators\other\PI-18.pine,PI-18.pine,Wyckoff/VSA,Core PI family, D:\Work\Coding\Trading\indicators\vsa\pi_family\core_evolution\PI-18.pine
+D:\Work\Coding\Trading\indicators\other\PICE-01.pine,PICE-01.pine,Composite (VSA+TA),PICE-01, D:\Work\Coding\Trading\indicators\vsa\pi_family\confluence_engine\PICE-01.pine
+D:\Work\Coding\Trading\indicators\other\PICE-02.pine,PICE-02.pine,Composite (VSA+TA),PICE-02, D:\Work\Coding\Trading\indicators\vsa\pi_family\confluence_engine\PICE-02.pine
+D:\Work\Coding\Trading\indicators\other\PICE-03.pine,PICE-03.pine,Composite (VSA+TA),PICE-03, D:\Work\Coding\Trading\indicators\vsa\pi_family\confluence_engine\PICE-03.pine
+D:\Work\Coding\Trading\indicators\other\PICE-04.pine,PICE-04.pine,Composite (VSA+TA),PICE-04, D:\Work\Coding\Trading\indicators\vsa\pi_family\confluence_engine\PICE-04.pine
+ 

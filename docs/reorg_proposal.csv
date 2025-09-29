@@ -35,11 +35,11 @@
 "Better-03.pine","D:\work\coding\trading\indicators\cvd\Better-03.pine","repair-or-archive","archive/needs-fix/Better-03.pine"
 "Better-04.pine","D:\work\coding\trading\indicators\cvd\Better-04.pine","sr-review-and-fix","work/sr-review/Better-04.pine"
 "EZ-01.pine","D:\work\coding\trading\indicators\kv\EZ-01.pine","sr-review-and-fix","work/sr-review/EZ-01.pine"
-"EZ-02.pine","D:\work\coding\trading\indicators\kv\EZ-02.pine","repair-or-archive","archive/needs-fix/EZ-02.pine"
-"EZZ-01.pine","D:\work\coding\trading\indicators\kv\EZZ-01.pine","repair-or-archive","archive/needs-fix/EZZ-01.pine"
-"EZZ-02.pine","D:\work\coding\trading\indicators\kv\EZZ-02.pine","sr-review-and-fix","work/sr-review/EZZ-02.pine"
-"EZZ-03.pine","D:\work\coding\trading\indicators\kv\EZZ-03.pine","sr-review-and-fix","work/sr-review/EZZ-03.pine"
-"EZZ-04.pine","D:\work\coding\trading\indicators\kv\EZZ-04.pine","sr-review-and-fix","work/sr-review/EZZ-04.pine"
+indicators/cvd/Better-01-CVD.pine,Better-01-CVD.pine,cvd,Better-01,indicators/order_flow/archive/bette_series/Better-01-CVD.pine
+indicators/cvd/Better-02-CVD.pine,Better-02-CVD.pine,cvd,Better-02,indicators/order_flow/archive/bette_series/Better-02-CVD.pine
+indicators/cvd/Better-03-CVD.pine,Better-03-CVD.pine,cvd,Better-03,indicators/order_flow/archive/bette_series/Better-03-CVD.pine
+indicators/cvd/Better-04-CVD.pine,Better-04-CVD.pine,cvd,Better-04,indicators/order_flow/Better_CVD_v4-CVD.pine
+# End of file
 "EZZ-05.pine","D:\work\coding\trading\indicators\kv\EZZ-05.pine","sr-review-and-fix","work/sr-review/EZZ-05.pine"
 "EZZ-06.pine","D:\work\coding\trading\indicators\kv\EZZ-06.pine","sr-review-and-fix","work/sr-review/EZZ-06.pine"
 "EZZ-07.pine","D:\work\coding\trading\indicators\kv\EZZ-07.pine","repair-or-archive","archive/needs-fix/EZZ-07.pine"
