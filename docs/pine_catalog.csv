@@ -1,0 +1,222 @@
+path,filename,declared_name,total_lines,nonempty_lines,token_count,unique_tokens,shingle_count,keywords,header_sample
+D:\Work\Coding\Trading\indicators\composite\Leviathan.pine,Leviathan.pine,Leviathan - Key Level Engine v2.0,203,177,876,170,720,volume|sma|ma|va|range,"© 2025 Gemini AI - Project Leviathan v2.0 (Foundation)
+@version=5
+SPRINT 1: Xây dựng Nền tảng - Key Level Engine dựa trên kiến trúc đã được xác thực."
+D:\Work\Coding\Trading\indicators\cvd\Better-01-CVD.pine,Better-01-CVD.pine,Better CVD - Final,187,163,914,219,818,volume|cvd|cv|ema|sma|rma|ma|delta|va|range|wick,"@version=6
+TITLE: Better CVD - Final (Pure CVD + Divergence Engine)
+DESC: A complete order flow dashboard combining the feature-rich UI of ""Better RSI""
+with the high-precision TV CVD calculation and a robust pivot-based divergence engine. No VSA."
+D:\Work\Coding\Trading\indicators\cvd\Better-02-CVD.pine,Better-02-CVD.pine,Better CVD - Final,285,247,1266,239,1108,volume|cvd|cv|ema|sma|rma|ma|delta|va|range|wick,"@version=6
+TITLE: Better CVD - Final (Pure CVD + Divergence Engine)
+DESC: A complete order flow dashboard combining the feature-rich UI of ""Better RSI""
+with the high-precision TV CVD calculation and a robust pivot-based divergence engine. No VSA."
+D:\Work\Coding\Trading\indicators\cvd\Better-03-CVD.pine,Better-03-CVD.pine,Better CVD [Enhanced],323,274,0,0,0,,"@version=6
+TITLE: Better CVD [Enhanced] - RSI-Style UI
+DESC: Complete order flow dashboard with Better RSI's professional UI design and feature set"
+D:\Work\Coding\Trading\indicators\cvd\Better-04-CVD.pine,Better-04-CVD.pine,Better CVD Pro,368,311,1709,311,1461,volume|cvd|cv|ema|sma|rma|ma|delta|va|range|wick,"@version=6
+TITLE: Better CVD Pro - Professional Order Flow Dashboard
+DESC: Master build combining Better CVD2's accurate engine with Better RSI's professional UI"
+D:\Work\Coding\Trading\indicators\cvd\C+V+D.pine,C+V+D.pine,Cvd+Vol+Div (v2.0 - Dual Divergence),172,148,851,191,768,volume|cvd|cv|sma|ma|delta|va|range|supply|wick,"@version=5
+TITLE: VSA + CVD Overlay (v2.0 - Dual Divergence)
+DESC: Upgraded to include both traditional Volume divergence and high-precision CVD divergence."
+D:\Work\Coding\Trading\indicators\cvd\CVD Pro.pine,CVD Pro.pine,CVD Pro,299,252,1248,265,1160,volume|cvd|cv|vsa|ema|sma|rma|ma|signal|confluence|delta|buy|sell|va|range|wick,"@version=6
+TITLE: CVD Pro (Final Build)
+DESC: The definitive order flow and volume analysis tool, combining VSA, CVD, and an advanced divergence engine."
+D:\Work\Coding\Trading\indicators\cvd\Vol+CVD.pine,Vol+CVD.pine,VSA Volume + CVD (Analysis Engine),69,56,239,88,231,volume|cvd|cv|vsa|ema|sma|rma|ma|delta|va|range,@version=6
+D:\Work\Coding\Trading\indicators\hybrid\WSH_Velo_v5_2_copy.pine,WSH_Velo_v5_2_copy.pine,Wyckoff-SMC Hybrid [v5.2 Patched],386,308,1930,335,1467,volume|wyckoff|scalp|scalping|ema|sma|rma|ma|signal|delta|buy|sell|va|range|session|liquidity|supply|demand|gap|wick,"@version=5
+Wyckoff-SMC Hybrid v5.2 - Patched & Upgraded"
+D:\Work\Coding\Trading\indicators\kv\Eclaude.pine,Eclaude.pine,Eclaude,342,276,1057,218,962,volume|sma|rma|ma|signal|buy|sell|va|wick,@version=5
+D:\Work\Coding\Trading\indicators\kv\EZ-01.pine,EZ-01.pine,EZ,76,66,399,110,358,volume|sma|ma|buy|sell|va|range|wick,"This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+© lenguyenphi"
+D:\Work\Coding\Trading\indicators\kv\EZ-02.pine,EZ-02.pine,EZZ,135,116,791,146,626,volume|sma|ma|buy|sell|va|range|wick,"This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+© lenguyenphi"
+D:\Work\Coding\Trading\indicators\kv\EZ3.pine,EZ3.pine,EZ2,168,142,710,152,618,volume|sma|ma|buy|sell|va|range|wick,"This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+© lenguyenphi"
+D:\Work\Coding\Trading\indicators\kv\EZZ-02.pine,EZZ-02.pine,EZZ1,459,404,2437,273,2066,volume|sma|ma|signal|buy|sell|va|gap|wick,@version=5
+D:\Work\Coding\Trading\indicators\kv\EZZ-03.pine,EZZ-03.pine,EZZ2,292,245,1332,253,1138,volume|profile|scalp|sma|ma|signal|buy|sell|va|range|gap|wick,@version=5
+D:\Work\Coding\Trading\indicators\kv\EZZ-04.pine,EZZ-04.pine,EZZ1,396,358,1897,234,1614,volume|sma|ma|signal|buy|sell|va|gap|wick,@version=5
+D:\Work\Coding\Trading\indicators\kv\EZZ-06.pine,EZZ-06.pine,EZZ 3.0 Final - Complete Syntax Fixed,537,456,2393,304,1864,volume|sma|rma|ma|signal|buy|sell|va|range|session|gap|wick,@version=5
+D:\Work\Coding\Trading\indicators\kv\EZZ-07.pine,EZZ-07.pine,EZZ 2.8 (Flip Zone Logic),210,187,629,162,595,trend|ma|va|wick,@version=5
+D:\Work\Coding\Trading\indicators\kv\EZZ-08.pine,EZZ-08.pine,EZZ1-CGPT (Hybrid Wyckoff/PA • Temp Zones),784,713,4021,619,3438,volume|sma|rma|ma|signal|buy|sell|va|range|gap|wick,"© 2025 Phi & Ace — EZZ1-CGPT (Hybrid Wyckoff/PA • Temp Zones) v1.0.1
+CHANGELOG v1.0.1 (bugfix-only, Pine v5):
+- P0: Intrabar invalidate ACTIVE zone immediately on breach (even before HTF close).
+- P0: One-variable-per-line for all `var` declarations (Pine syntax).
+- P0: Removed nested helper inside get_ctx(); moved f_ctx_pair to global scope.
+- P1: Removed unused helper; minor hygiene.
+NOTE: Feature-freeze — no new features added.
+
+WHAT: Multi-TF KV Zones (5m,15m,1h,2h,4h,1D) + TEMP1/TEMP2 state.
+WHY : Keep Wyckoff “memory” (TEMP1) while following PA trend (TEMP2).
+B/S: Signals computed on current chart TF, normalized by ATR + zone bounds of the selected context TF.
+@version=5"
+D:\Work\Coding\Trading\indicators\kv\EZZ1-v1.6.3-(Wyckoff-VSA-KV-Gate-Weights-Sweep-WR)-Final-1.pine,EZZ1-v1.6.3-(Wyckoff-VSA-KV-Gate-Weights-Sweep-WR)-Final-1.pine,EZZ1 v1.6.3 (Wyckoff/VSA + KV + Gate + Weights + Δ + Sweep + WR) — Final,752,668,3643,553,3252,volume|vsa|scalp|ema|sma|rma|ma|signal|delta|buy|sell|va|range|session|supply|demand|gap|wick,@version=5
+D:\Work\Coding\Trading\indicators\kv\EZZ1-v1.6.3-(Wyckoff-VSA-KV-Gate-Weights-Sweep-WR)-Final.pine,EZZ1-v1.6.3-(Wyckoff-VSA-KV-Gate-Weights-Sweep-WR)-Final.pine,EZZ1 v1.6.3 (Wyckoff/VSA + KV + Gate + Weights + Δ + Sweep + WR) — Final,752,668,3643,553,3252,volume|vsa|scalp|ema|sma|rma|ma|signal|delta|buy|sell|va|range|session|supply|demand|gap|wick,@version=5
+D:\Work\Coding\Trading\indicators\kv\EZZII.pine,EZZII.pine,EZZ1 KV-TF v1.0,384,348,1948,316,1648,volume|trend|ema|sma|ma|signal|buy|sell|va|gap|wick,@version=5
+D:\Work\Coding\Trading\indicators\kv\EZZY-1.pine,EZZY-1.pine,EZZY,761,671,3628,557,3233,volume|vsa|scalp|ema|sma|rma|ma|signal|delta|buy|sell|va|range|session|supply|demand|gap|wick,@version=5
+D:\Work\Coding\Trading\indicators\kv\EZZY-2.pine,EZZY-2.pine,EZZY,761,671,3628,557,3233,volume|vsa|scalp|ema|sma|rma|ma|signal|delta|buy|sell|va|range|session|supply|demand|gap|wick,@version=5
+D:\Work\Coding\Trading\indicators\kv\KVS 30.pine,KVS 30.pine,KVS v3.0+,226,190,790,179,726,volume|trend|ema|sma|ma|va|range|wick,@version=5
+D:\Work\Coding\Trading\indicators\PI family\PI-01.pine,PI-01.pine,PI v2.1 TRULY CLEAN,269,221,1088,233,1018,volume|cv|vwap|vsa|scalp|trend|ema|sma|ma|signal|buy|sell|poc|va|vwap|range|supply|demand,"© 2025 Gemini AI - PI v2.1 TRULY CLEAN VERSION
+@version=5"
+D:\Work\Coding\Trading\indicators\PI family\PI-02.pine,PI-02.pine,PI v14.1 (Syntax Fix),274,245,1770,267,1484,volume|cv|vpp|vsa|trend|ema|sma|rma|ma|signal|poc|va|range|supply|demand,"© 2025 Gemini AI - Phi's Trade System VSA (v14.1 Syntax Fix)
+@version=5
+THAY ĐỔI: Sửa lỗi cú pháp nghiêm trọng trong hàm getTimeframeLookback."
+D:\Work\Coding\Trading\indicators\PI family\PI-03.pine,PI-03.pine,PI (Final Stable),245,237,1676,286,1530,volume|cv|valuearea|vpp|vsa|trend|ema|sma|rma|ma|signal|buy|sell|poc|va|range|supply|demand,"© 2025 Gemini AI - Phi's VSA Engine (PI FINAL STABLE)
+@version=5
+THAY ĐỔI: Hiệu chỉnh lại toàn bộ hệ thống định vị nhãn (yloc.price)."
+D:\Work\Coding\Trading\indicators\PI family\PI-04.pine,PI-04.pine,PI v2.1 (Syntax Corrected),330,281,1597,271,1487,volume|cv|valuearea|vpp|vsa|trend|ema|sma|rma|ma|signal|buy|sell|poc|va|range|supply|demand,"© 2025 Gemini AI - Phi's VSA Engine (PI v2.1 Syntax Corrected)
+@version=5"
+D:\Work\Coding\Trading\indicators\PI family\PI-05.pine,PI-05.pine,PI v2.1 Scalping,33,26,122,64,118,volume|scalp|sma|rma|ma|signal|va|range,"filepath: /TradingView-Pine-Scripts/TradingView-Pine-Scripts/src/indicators/PI21-Scalping.pine
+© 2025 Gemini AI - PI v2.1 Scalping
+@version=5"
+D:\Work\Coding\Trading\indicators\PI family\PI-06.pine,PI-06.pine,PI v2.1 CLEAN,405,334,1441,272,1355,volume|cv|vwap|vsa|scalp|trend|ema|sma|ma|signal|buy|sell|poc|va|vwap|range|supply|demand,"© 2025 Gemini AI - PI v2.1 CLEAN VERSION (Zero Errors)
+@version=5"
+D:\Work\Coding\Trading\indicators\PI family\PI-07.pine,PI-07.pine,PI v3.0 ZeroLag Ultimate,254,204,1032,180,935,volume|cumulative|vsa|trend|ema|sma|rma|ma|signal|orderflow|imbalance|delta|buy|sell|va|range,"© 2025 Gemini AI - PI v3.0 ZeroLag Ultimate (VSA + Market Cipher + Order Flow)
+@version=5"
+D:\Work\Coding\Trading\indicators\PI family\PI-08.pine,PI-08.pine,PI v2.5,332,278,1354,258,1266,volume|cv|valuearea|vpp|vsa|trend|ema|sma|rma|ma|signal|buy|sell|poc|va|range|supply|demand,"© 2025 Gemini AI - PI v2.1 Fixed (No LinePool System)
+@version=5"
+D:\Work\Coding\Trading\indicators\PI family\PI-09.pine,PI-09.pine,PI v2.5 Claude,644,553,2983,386,2235,volume|cv|valuearea|vpp|vsa|trend|ema|sma|rma|ma|signal|buy|sell|poc|va|range|supply|demand,"© 2025 Gemini AI - PI v2.1 Fixed (No LinePool System)
+@version=5"
+D:\Work\Coding\Trading\indicators\PI family\PI-10.pine,PI-10.pine,VSA-Wyckoff Analyst (TF Presets),460,422,2001,281,1527,volume|cv|vsa|trend|ema|sma|ma|signal|confluence|buy|sell|va|range|supply|demand,@version=5
+D:\Work\Coding\Trading\indicators\PI family\PI-11.pine,PI-11.pine,PI v2.1 Scalping,411,345,1879,317,1735,volume|cv|valuearea|vpp|vsa|scalp|scalping|trend|ema|sma|rma|ma|signal|buy|sell|poc|va|range|supply|demand,"© 2025 Gemini AI - PI v2.1 Scalping Edition
+@version=5"
+D:\Work\Coding\Trading\indicators\PI family\PI-12.pine,PI-12.pine,PI v2.5,398,339,1796,300,1655,volume|cv|valuearea|vpp|vsa|trend|ema|sma|rma|ma|signal|buy|sell|poc|va|range|supply|demand,"© 2025 Gemini AI - PI v2.1 Fixed (No LinePool System)
+@version=5"
+D:\Work\Coding\Trading\indicators\PI family\PI-15.pine,PI-15.pine,PI v10.3 (Annotated S/R),205,190,1373,215,1113,volume|cv|vpp|vsa|trend|ema|sma|rma|ma|signal|poc|va|range|supply|demand,"© 2025 Gemini AI - Phi's Trade System VSA (v10.3 Annotated S/R)
+@version=5
+THAY ĐỔI: Di chuyển đường S/R sang phải và thêm chú thích về tác dụng."
+D:\Work\Coding\Trading\indicators\PI family\PI-16.pine,PI-16.pine,VW - Pure VSA/Wyckoff (VSCode Optimized),130,109,472,130,447,volume|sma|ma|signal|va|range,@version=5
+D:\Work\Coding\Trading\indicators\PI family\PI-17.pine,PI-17.pine,PI v2.1 Scalping,25,19,82,51,77,volume|scalp|scalping|sma|ma|signal|va,"filepath: /TradingView-Pine-Scripts/TradingView-Pine-Scripts/src/indicators/PI21-Scalping.pine
+© 2025 Gemini AI - PI v2.1 Scalping
+@version=5"
+D:\Work\Coding\Trading\indicators\PI family\PI-18.pine,PI-18.pine,Pi 3.4 Professional,635,544,2348,394,2229,volume|vpp|profile|vsa|trend|ema|sma|rma|ma|buy|sell|poc|va|range|session,"This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+© lenguyenphi
+© 2025 Pi 3.4 Professional - Clean Architecture (No Repainting)
+@version=5"
+D:\Work\Coding\Trading\indicators\PI family\Pi-3.2-VPP-1.pine,Pi-3.2-VPP-1.pine,Pi 3.2 + VPP,714,598,2968,377,2322,volume|vpp|profile|vsa|trend|ema|sma|rma|ma|buy|sell|poc|va|range|session|supply|demand,"This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+© lenguyenphi
+© 2025 Pi 3.2 Clean + VPP Engine (v3.4 - Hybrid Power)
+@version=5"
+D:\Work\Coding\Trading\indicators\PI family\Pi-3.2-VPP-2.pine,Pi-3.2-VPP-2.pine,Pi 3.2 + VPP,623,522,2609,378,2313,volume|vpp|profile|vsa|trend|ema|sma|rma|ma|buy|sell|poc|va|range|session|supply|demand,"This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+© lenguyenphi
+© 2025 Pi 3.2 Clean + VPP Engine (v3.4 - Hybrid Power)
+@version=5"
+D:\Work\Coding\Trading\indicators\PI family\Pi-3.2-VPP.pine,Pi-3.2-VPP.pine,Pi 3.2 + VPP,714,598,2968,377,2322,volume|vpp|profile|vsa|trend|ema|sma|rma|ma|buy|sell|poc|va|range|session|supply|demand,"This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+© lenguyenphi
+© 2025 Pi 3.2 Clean + VPP Engine (v3.4 - Hybrid Power)
+@version=5"
+D:\Work\Coding\Trading\indicators\PI family\PICE-01.pine,PICE-01.pine,PI Confluence Engine v1.6,193,173,0,0,0,,"© 2025 Gemini AI - Phi's Confluence Engine (v1.6)
+@version=5
+THAY ĐỔI: Tinh chỉnh hiển thị nhãn (bỏ nền) và thêm tùy chọn màu sắc/kiểu cho EMA."
+D:\Work\Coding\Trading\indicators\PI family\PICE-02.pine,PICE-02.pine,PI Confluence Engine v1.3,262,219,618,166,584,volume|vsa|trend|ema|sma|ma|signal|va|range|wick,"© 2025 Gemini AI - Phi's Confluence Engine (v1.3)
+@version=5
+THAY ĐỔI: Sửa lỗi khai báo biến, thêm tùy chỉnh cho RSI, thêm comment giải thích logic."
+D:\Work\Coding\Trading\indicators\PI family\PICE-03.pine,PICE-03.pine,PI Confluence Engine v1.4.2,201,177,0,0,0,,"© 2025 Gemini AI - Phi's Confluence Engine (v1.4.2)
+@version=5
+THAY ĐỔI: Sửa lỗi cú pháp cuối cùng trong Dashboard."
+D:\Work\Coding\Trading\indicators\PI family\PICE-04.pine,PICE-04.pine,PI Confluence Engine v1.7,206,185,0,0,0,,"© 2025 Gemini AI - Phi's Confluence Engine (v1.7)
+@version=5
+THAY ĐỔI: Khôi phục logic plot() cho EMA để đảm bảo hiệu suất và sự ổn định."
+D:\Work\Coding\Trading\indicators\PI family\VP-01.pine,VP-01.pine,,241,216,1027,234,1012,volume|sma|rma|ma|poc|va|range|session,"@version=5
+TITLE: VP Production v1.0
+DESC: Incorporates final polishes for robustness and clarity. This is the production baseline."
+D:\Work\Coding\Trading\indicators\PI family\VP-02.pine,VP-02.pine,,266,242,1161,250,1140,volume|sma|rma|ma|poc|va|range|session,"@version=5
+TITLE: VP Production v1.1
+DESC: Added dedicated lines for VAH & VAL for clearer visibility."
+D:\Work\Coding\Trading\indicators\SMPA family\Leviathan.pine,Leviathan.pine,Leviathan - Key Level Engine v2.0,204,179,313,78,261,ma|va|range,"© 2025 Gemini AI - Project Leviathan v2.0 (Foundation)
+@version=5
+SPRINT 1: Xây dựng Nền tảng - Key Level Engine dựa trên kiến trúc đã được xác thực."
+D:\Work\Coding\Trading\indicators\SMPA family\PILIT-01.pine,PILIT-01.pine,VSA Pure,180,143,813,168,731,volume|vwap|vsa|trend|sma|ma|signal|va|vwap|range,"© lenguyenphi — Pi Lite — VSA Daytrade (v6 + TV CVD)
+@version=6"
+D:\Work\Coding\Trading\indicators\SMPA family\PILIT-02.pine,PILIT-02.pine,BTC VSA Pro+ Complete,678,574,1332,206,1214,volume|cvd|cv|vsa|trend|ema|sma|rma|ma|signal|buy|sell|va|range|supply|demand,"© Charlie Expert Analysis
+BTC Day Trading VSA Pro+ Enhanced - Complete Professional System
+Comprehensive VSA with BC/SC confirmation system, CVD divergence detection
+Visual presentation optimized for day trading Bitcoin markets
+@version=5"
+D:\Work\Coding\Trading\indicators\SMPA family\PLS original.pine,PLS original.pine,PLS v4.1 (Clear Signals),190,169,1071,223,1023,volume|cv|vpp|vsa|ema|sma|rma|ma|signal|buy|sell|poc|va|range,"© 2025 Gemini AI - Phi's Trade System (v4.1 - Clearer Signals)
+@version=5
+THAY ĐỔI: Đơn giản hóa màu sắc tín hiệu. Mua = Xanh, Bán = Đỏ để dễ nhận biết."
+D:\Work\Coding\Trading\indicators\SMPA family\Shark.pine,Shark.pine,MTF Precision Scalp VSA,412,328,1413,256,1291,volume|profile|vsa|scalp|scalping|trend|ema|sma|ma|signal|confluence|va|range,"© 2025 Multi-Timeframe Precision Scalping VSA - Professional Edition v6
+@version=6"
+D:\Work\Coding\Trading\indicators\SMPA family\SMBR-01.pine,SMBR-01.pine,SMBR-MFT,300,269,1088,167,874,sma|rma|ma|va,"This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+© Phi
+@version=5"
+D:\Work\Coding\Trading\indicators\SMPA family\SMBR-02.pine,SMBR-02.pine,SM Breakout Signals [Phi] + VSA,463,407,1767,248,1469,volume|profile|vsa|wyckoff|ema|sma|rma|ma|signal|buy|sell|va|range|supply|demand,"This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+© Phi - Enhanced with VSA for Scalping
+@version=5"
+D:\Work\Coding\Trading\indicators\SMPA family\SMBR-03.pine,SMBR-03.pine,,415,380,1970,245,1378,sma|rma|ma|va,"This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+© Phi
+@version=5"
+D:\Work\Coding\Trading\indicators\SMPA family\SMPA ORG.pine,SMPA ORG.pine,SM Price Action,843,704,2932,437,2621,trend|sma|rma|ma|confluence|delta|va|range|gap|wick,"@version=5
+---------------------------------------------------------------------------------------------------------------------}
+CONSTANTS & STRINGS & INPUTS
+---------------------------------------------------------------------------------------------------------------------{"
+D:\Work\Coding\Trading\indicators\SMPA family\SMPA-01.pine,SMPA-01.pine,SMPA+ Fixed,774,647,3439,472,3081,trend|sma|rma|ma|confluence|delta|va|range|gap|wick,@version=5
+D:\Work\Coding\Trading\indicators\SMPA family\SMPA-03.pine,SMPA-03.pine,SM Price Action + VSA (Strict),400,336,1588,351,1492,volume|vsa|trend|ema|sma|rma|ma|signal|confluence|buy|sell|va|range|supply|demand|gap,"@version=5
+============================================================================
+SM Price Action + VSA (Strict VSA) combined
+Generated: combine SMPA-ORG + VSA Pro (Strict)
+@version=5"
+D:\Work\Coding\Trading\indicators\SMPA family\SMPA-04.pine,SMPA-04.pine,SM Price Action + Signals,317,258,873,186,791,trend|sma|rma|ma|signal|confluence|fvg|buy|sell|va|gap,"Enhanced LuxAlgo SM Price Action với Trading Signals
+@version=5"
+D:\Work\Coding\Trading\indicators\SMPA family\SMPA-05.pine,SMPA-05.pine,SMPA+ Fixed,382,343,1606,299,1497,trend|sma|rma|ma|confluence|va|range|gap,@version=5
+D:\Work\Coding\Trading\indicators\SMPA family\SMPA-06.pine,SMPA-06.pine,SMPA+,1261,1089,4361,416,2424,trend|sma|rma|ma|confluence|va|range|gap,"@version=5
+---------------------------------------------------------------------------------------------------------------------}
+CONSTANTS & STRINGS & INPUTS
+---------------------------------------------------------------------------------------------------------------------{"
+D:\Work\Coding\Trading\indicators\SMPA family\SP.pine,SP.pine,ScalpPro (SP) Ultimate v2.2,154,129,970,188,849,volume|trend|ema|sma|rma|ma|confluence|buy|sell|va|range|session,"© 2025 Gemini AI - ScalpPro (SP) Ultimate v2.2
+@version=5"
+D:\Work\Coding\Trading\indicators\SMPA family\VSA-Scalping-Engine-Pro-1.pine,VSA-Scalping-Engine-Pro-1.pine,VSA Scalping Engine Pro,550,506,2720,388,2404,volume|valuearea|vpp|scalp|trend|ema|sma|rma|ma|signal|poc|va|range,"© 2025 VSA Scalping Engine - UI Optimized Version
+@version=5"
+D:\Work\Coding\Trading\indicators\SMPA family\VSA-Scalping-Engine-Pro-2.pine,VSA-Scalping-Engine-Pro-2.pine,VSA Scalping Engine Pro,618,512,2703,385,2386,volume|valuearea|vpp|scalp|trend|ema|sma|rma|ma|signal|poc|va|range,"© 2025 VSA Scalping Engine - UI Optimized Version
+@version=5
+UI OPTIMIZED: Tránh labels chồng chéo, spacing tốt hơn"
+D:\Work\Coding\Trading\indicators\SMPA family\VSA-Scalping-Engine-Pro.pine,VSA-Scalping-Engine-Pro.pine,VSA Scalping Engine Pro,550,506,2720,388,2404,volume|valuearea|vpp|scalp|trend|ema|sma|rma|ma|signal|poc|va|range,"© 2025 VSA Scalping Engine - UI Optimized Version
+@version=5"
+D:\Work\Coding\Trading\indicators\trend\Squeeze.pine,Squeeze.pine,Squeeze Momentum Indicator [LazyBear] (v6 fixed),51,42,184,71,178,ema|sma|ma|va|range,@version=6
+D:\Work\Coding\Trading\indicators\trend\STAI-01.pine,STAI-01.pine,SuperTrend AI,270,215,196,72,175,ma|signal|va,"This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/
+© LuxAlgo"
+D:\Work\Coding\Trading\indicators\trend\STAI-02.pine,STAI-02.pine,SuperTrend AI,358,295,196,72,175,ma|signal|va,"This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/
+© LuxAlgo"
+D:\Work\Coding\Trading\indicators\trend\TEST-01.pine,TEST-01.pine,EZZ 2.8 (Flip Zone Logic),208,185,296,98,269,ma|va,"© 2025 Greg's Vault - EZZ 2.8 (Flip Zone Logic)
+Final feature upgrade. All future versions will focus on bug fixing and optimization.
+@version=5"
+D:\Work\Coding\Trading\indicators\trend\TEST-02.pine,TEST-02.pine,VSA-Wyckoff Analyst,515,463,2219,292,1620,volume|cv|vsa|trend|ema|sma|rma|ma|signal|confluence|buy|sell|va|range|liquidity|supply|demand,@version=5
+D:\Work\Coding\Trading\indicators\trend\TEST-03.pine,TEST-03.pine,EZZ 2.8 Gemini (Final & Stable),261,235,770,167,684,trend|ma|va,@version=5
+D:\Work\Coding\Trading\indicators\trend\TEST-04.pine,TEST-04.pine,,0,0,0,0,0,,
+D:\Work\Coding\Trading\indicators\vp\value-area.pine,value-area.pine,,1,1,0,0,0,,This file is intentionally left blank.
+D:\Work\Coding\Trading\indicators\vp\version5-1.pine,version5-1.pine,,480,427,2071,351,1934,volume|profile|sma|rma|ma|poc|va|range|session,"@version=5
+TITLE: VP Production v4.2 (Final Build)
+DESC: A production-ready, feature-complete Volume Profile indicator with preset profiles and automated structure analysis."
+D:\Work\Coding\Trading\indicators\vp\version5-2.pine,version5-2.pine,,456,404,2022,348,1895,volume|profile|sma|rma|ma|poc|va|range|session,"@version=5
+TITLE: VP Production v4.2 (Final Build)
+DESC: A production-ready, feature-complete Volume Profile indicator with preset profiles and automated structure analysis."
+D:\Work\Coding\Trading\indicators\vp\version5-3.pine,version5-3.pine,,460,406,2024,347,1897,volume|profile|sma|rma|ma|poc|va|range|session,"@version=5
+TITLE: VP Production v4.2 (Final Build)
+DESC: A production-ready, feature-complete Volume Profile indicator with preset profiles and automated structure analysis."
+D:\Work\Coding\Trading\indicators\vp\version5-4.pine,version5-4.pine,,373,329,1616,302,1512,volume|profile|sma|rma|ma|poc|va|range|session,"@version=5
+TITLE: VP Production v4.2 (Final Build)
+DESC: A production-ready, feature-complete Volume Profile indicator with preset profiles and automated structure analysis."
+D:\Work\Coding\Trading\indicators\vp\version5-5.pine,version5-5.pine,,334,312,1615,302,1507,volume|profile|sma|rma|ma|poc|va|range|session,"@version=5
+TITLE: VP Production v4.1 (Final Build)
+DESC: A production-ready, feature-complete Volume Profile indicator with preset profiles and automated structure analysis."
+D:\Work\Coding\Trading\indicators\vp\version5-6.pine,version5-6.pine,,450,404,2038,355,1908,volume|profile|sma|rma|ma|poc|va|range|session,"@version=5
+TITLE: VP Production v4.3 (VPP43) + HTF Lines
+DESC: Giữ nguyên engine VP của VPP43, bổ sung 3 đường HTF POC/VAH/VAL qua request.security (no repaint)."
+D:\Work\Coding\Trading\indicators\vp\version5-7.pine,version5-7.pine,,460,410,2042,358,1912,volume|profile|sma|rma|ma|poc|va|range|session,"@version=5
+TITLE: VP Production v5 (VPP5) + HTF Lines
+DESC: Giữ nguyên engine VP của VPP43, bổ sung 3 đường HTF POC/VAH/VAL qua request.security (no repaint)."
+D:\Work\Coding\Trading\indicators\vp\version5.pine,version5.pine,,480,427,2071,351,1934,volume|profile|sma|rma|ma|poc|va|range|session,"@version=5
+TITLE: VP Production v4.2 (Final Build)
+DESC: A production-ready, feature-complete Volume Profile indicator with preset profiles and automated structure analysis."
+D:\Work\Coding\Trading\indicators\vp\VP-03.pine,VP-03.pine,,421,358,338,127,329,volume|profile|volume_profile|sma|ma|poc|va|range|session,@version=5
+D:\Work\Coding\Trading\indicators\vp\VP-04.pine,VP-04.pine,,499,439,1509,275,1374,volume|profile|volume_profile|sma|rma|ma|poc|va|range|session|wick,@version=6
+D:\Work\Coding\Trading\indicators\wyckoff\Wish 5.2 hybrid.pine,Wish 5.2 hybrid.pine,Wyckoff-SMC Hybrid [v5.2 Patched],307,281,1511,232,1337,volume|wyckoff|scalp|scalping|ema|sma|rma|ma|buy|sell|va|range|supply|demand|wick,"@version=5
+Wyckoff-SMC Hybrid v5.2 - Patched & Upgraded"
+D:\Work\Coding\Trading\indicators\wyckoff\WSH Velo.pine,WSH Velo.pine,Wyckoff-SMC Hybrid [v5.2 Patched],368,304,1444,332,1274,volume|wyckoff|scalp|scalping|ema|sma|ma|buy|sell|va|range|liquidity|gap|wick,"@version=5
+Wyckoff-SMC Hybrid v5.2 - Patched & Upgraded"
+D:\Work\Coding\Trading\indicators\wyckoff\WSH-01.pine,WSH-01.pine,Wyckoff-SMC Hybrid [v5.0],336,311,1642,258,1454,volume|wyckoff|ema|sma|rma|ma|signal|buy|sell|va|range|liquidity|supply|demand|gap|wick,"@version=5
+Wyckoff-SMC Hybrid v5.0 - The Architect's Edition"
+D:\Work\Coding\Trading\indicators\wyckoff\WSH-03.pine,WSH-03.pine,Wyckoff-SMC Hybrid [v5.1] — Scalper,451,405,2367,355,2104,volume|wyckoff|scalp|ema|sma|rma|ma|signal|delta|buy|sell|va|range|session|liquidity|supply|demand|gap|wick,"@version=5
+Wyckoff-SMC Hybrid v5.1 — Scalper Edition (keeps Wyckoff narrative, adds scalper filters)"
+D:\Work\Coding\Trading\indicators\wyckoff\WSH-04.pine,WSH-04.pine,Wyckoff-SMC Hybrid [v5.0],294,269,1525,229,1332,volume|wyckoff|ema|sma|rma|ma|signal|buy|sell|va|range|liquidity|supply|demand|wick,"@version=5
+Wyckoff-SMC Hybrid v5.0 - The Architect's Edition"

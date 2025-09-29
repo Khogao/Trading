@@ -1,0 +1,205 @@
+// © 2025 Gemini AI - Phi's Trade System VSA (v10.3 Annotated S/R)
+// @version=5
+// THAY ĐỔI: Di chuyển đường S/R sang phải và thêm chú thích về tác dụng.
+indicator("PI v10.3 (Annotated S/R)", shorttitle="PI v10.3", overlay=true, max_labels_count=500)
+
+// --- PHẦN 0: CÁC HÀM TÙY CHỈNH ---
+f_manualSum(source, length) =>
+    _sum = 0.0
+    for i = 0 to length - 1
+        _sum += nz(source[:i])
+    _sum
+
+// --- PHẦN 1: BẢNG ĐIỀU KHIỂN & CÀI ĐẶT ---
+var string GRP_DISPLAY = "Cai Dat Hien Thi"
+textColorOption = input.string("Den", title="Mau Chu Cho Bang", options=["Den", "Trang"], group=GRP_DISPLAY)
+var color dynamicTextColor = textColorOption == "Den" ? color.black : color.white
+showInfoPanel = input.bool(true, title="Bat/Tat Bang Thong Tin", group=GRP_DISPLAY)
+showLegend = input.bool(true, title="Bat/Tat Bang Chu Giai", group=GRP_DISPLAY, inline="legend")
+legendPositionOption = input.string("Trai Duoi", title="Vi Tri", options=["Trai Tren", "Phai Tren", "Trai Duoi", "Phai Duoi"], group=GRP_DISPLAY, inline="legend")
+
+var string GRP_VP = "Dynamic Value Area (Thich Ung)"
+showVALines = input.bool(true, title="Bat/Tat Duong POC, VAH, VAL", group=GRP_VP)
+useAutoLookback = input.bool(true, title="Tu Dong Chon Lookback", group=GRP_VP, tooltip="Nếu bật, indicator sẽ tự chọn lookback bên dưới dựa trên timeframe. Nếu tắt, sẽ dùng lookback thủ công.")
+vpLookback_1m = input.int(30, title="Lookback cho 1m", group=GRP_VP, inline="tf_1m")
+vpLookback_5m = input.int(15, title="cho 5m", group=GRP_VP, inline="tf_5m")
+vpLookback_15m = input.int(20, title="cho 15m", group=GRP_VP, inline="tf_15m")
+vpLookback_manual = input.int(240, title="Lookback Thu Cong", group=GRP_VP)
+vpProximityPercent = input.float(0.2, title="Bien do Tim kiem quanh duong VA (%)", group=GRP_VP, minval=0.01, step=0.05)
+
+var string GRP_TR_LINES = "Duong Trading Range"
+showTRLines = input.bool(true, title="Bat/Tat Ve Duong S/R", group=GRP_TR_LINES)
+trLineOffset = input.int(10, title="Do dai ke duong sang phai (so nen)", group=GRP_TR_LINES)
+
+var string GRP_SIGNALS = "Cac Tin Hieu VSA"
+showSpringUpthrust = input.bool(true, title="Bat/Tat: Spring & Upthrust", group=GRP_SIGNALS)
+showNoSupplyDemand = input.bool(true, title="Bat/Tat: No Supply & No Demand", group=GRP_SIGNALS)
+showClimacticVol = input.bool(true, title="Bat/Tat: Volume Cuc Dai (Climax)", group=GRP_SIGNALS)
+showStoppingVol = input.bool(true, title="Bat/Tat: Khoi Luong Chan Da (Stopping Vol)", group=GRP_SIGNALS)
+showEffortVsResult = input.bool(true, title="Bat/Tat: No Luc vs. Ket Qua (Effort)", group=GRP_SIGNALS)
+
+var string GRP_PARAMS = "Tham So Tinh Toan"
+lookback = input.int(20, title="Do dai tim Kiem H/K", group=GRP_PARAMS)
+volMultiplier = input.float(2.0, title="He so Volume Dot Bien", group=GRP_PARAMS)
+lowVolMultiplier = input.float(0.5, title="He so Volume Can Kiet", group=GRP_PARAMS)
+climaxLookback = input.int(50, title="Do dai tim Volume Cuc Dai", group=GRP_PARAMS)
+scoreLookback = input.int(20, title="Do dai tinh Diem VSA", group=GRP_PARAMS)
+
+var string GRP_TREND = "Bo Loc Xu Huong"
+useTrendFilter = input.bool(true, title="Bat/Tat: Bo loc Xu Huong (EMA)", group=GRP_TREND)
+emaLength = input.int(200, title="Do dai EMA Xu Huong", group=GRP_TREND)
+
+// --- PHẦN 2: TÍNH TOÁN DYNAMIC VALUE AREA ---
+int vpLookback = useAutoLookback ? timeframe.period == "1" ? vpLookback_1m : timeframe.period == "5" ? vpLookback_5m : timeframe.period == "15" ? vpLookback_15m : vpLookback_manual : vpLookback_manual
+
+var line pocLine = na, var line vahLine = na, var line valLine = na
+var float dPOC = na, var float dVAH = na, var float dVAL = na
+
+if barstate.islast and showVALines
+    int rowCount = 200
+    var price_rows = array.new_float(rowCount, 0)
+    var volume_rows = array.new_float(rowCount, 0)
+    float lookback_high = ta.highest(high, vpLookback), float lookback_low = ta.lowest(low, vpLookback)
+    float step_price = (lookback_high - lookback_low) / (rowCount - 1)
+    if step_price > 0
+        for i = 0 to rowCount - 1
+            array.set(price_rows, i, lookback_low + step_price * i)
+            array.set(volume_rows, i, 0)
+        total_volume = 0.0
+        for i = 0 to vpLookback - 1
+            vol = volume[:i], price = (high[:i] + low[:i]) / 2
+            total_volume += vol
+            int price_row_index = math.round((price - lookback_low) / step_price)
+            if price_row_index >= 0 and price_row_index < rowCount
+                array.set(volume_rows, price_row_index, array.get(volume_rows, price_row_index) + vol)
+        float poc_volume = array.max(volume_rows)
+        int poc_index = array.indexof(volume_rows, poc_volume)
+        dPOC := array.get(price_rows, poc_index)
+        float va_volume_target = total_volume * 0.7
+        float va_volume_current = poc_volume
+        int up_index = poc_index + 1, int down_index = poc_index - 1
+        while va_volume_current < va_volume_target and (up_index < rowCount or down_index >= 0)
+            vol_up = up_index < rowCount ? array.get(volume_rows, up_index) : 0
+            vol_down = down_index >= 0 ? array.get(volume_rows, down_index) : 0
+            if vol_up == 0 and vol_down == 0
+                break
+            if vol_up > vol_down
+                va_volume_current += vol_up, up_index += 1
+            else
+                va_volume_current += vol_down, down_index -= 1
+        dVAH := array.get(price_rows, math.min(rowCount - 1, up_index - 1))
+        dVAL := array.get(price_rows, math.max(0, down_index + 1))
+        line.delete(pocLine), line.delete(vahLine), line.delete(valLine)
+        pocLine := line.new(bar_index - vpLookback, dPOC, bar_index, dPOC, color=color.new(color.yellow, 25), width=2)
+        vahLine := line.new(bar_index - vpLookback, dVAH, bar_index, dVAH, color=color.new(color.red, 25), width=2)
+        valLine := line.new(bar_index - vpLookback, dVAL, bar_index, dVAL, color=color.new(color.green, 25), width=2)
+
+// --- PHẦN 3 & 4 (LOGIC VSA GIỮ NGUYÊN, THÊM KIỂM TRA VA) ---
+barRange = high - low
+avgVolume = ta.sma(volume, lookback)
+closeLocation = (close - low) / (barRange > 0 ? barRange : 1)
+trendEma = ta.ema(close, emaLength)
+bullishSignal = 0.0, bearishSignal = 0.0
+isDownBar = close < open, isUpBar = close > open
+
+isNearVA(price) => (math.abs(price - dPOC) / dPOC * 100 < vpProximityPercent) or (math.abs(price - dVAH) / dVAH * 100 < vpProximityPercent) or (math.abs(price - dVAL) / dVAL * 100 < vpProximityPercent)
+plotRightOffset = bar_index + trLineOffset
+
+lowestLow = ta.lowest(low, lookback)[1]
+if (showSpringUpthrust and isSpring)
+    bullishSignal := 2.0, signalText = showVALines and isNearVA(low) ? "SPR ⭐" : "SPR"
+    label.new(bar_index, low, yloc=yloc.belowbar, text=signalText, style=label.style_none, textcolor=color.green, size=size.normal)
+    if showTRLines
+        line.new(bar_index, low, plotRightOffset, low, color=color.new(color.green, 20), width=2)
+        label.new(plotRightOffset, low, text="Hỗ trợ tiềm năng", style=label.style_none, textcolor=color.green, size=size.small, yloc=yloc.price)
+highestHigh = ta.highest(high, lookback)[1]
+if (showSpringUpthrust and isUpthrust)
+    bearishSignal := -2.0, signalText = showVALines and isNearVA(high) ? "UT ⭐" : "UT"
+    label.new(bar_index, high, yloc=yloc.abovebar, text=signalText, style=label.style_none, textcolor=color.red, size=size.normal)
+    if showTRLines
+        line.new(bar_index, high, plotRightOffset, high, color=color.new(color.red, 20), width=2)
+        label.new(plotRightOffset, high, text="Kháng cự tiềm năng", style=label.style_none, textcolor=color.red, size=size.small, yloc=yloc.price)
+isClimacticVol = volume == ta.highest(volume, climaxLookback)
+if (showClimacticVol and isClimacticVol)
+    if (isDownBar)
+        bullishSignal := math.max(bullishSignal, 1.5), signalText = showVALines and isNearVA(low) ? "SC ⭐" : "SC"
+        label.new(bar_index, low, yloc=yloc.belowbar, text=signalText, style=label.style_none, textcolor=color.green, size=size.normal)
+        if showTRLines
+            line.new(bar_index, low, plotRightOffset, low, color=color.new(color.green, 20), width=2)
+            label.new(plotRightOffset, low, text="Hỗ trợ tiềm năng (SC)", style=label.style_none, textcolor=color.green, size=size.small, yloc=yloc.price)
+    else
+        bearishSignal := math.min(bearishSignal, -1.5), signalText = showVALines and isNearVA(high) ? "BC ⭐" : "BC"
+        label.new(bar_index, high, yloc=yloc.abovebar, text=signalText, style=label.style_none, textcolor=color.red, size=size.normal)
+        if showTRLines
+            line.new(bar_index, high, plotRightOffset, high, color=color.new(color.red, 20), width=2)
+            label.new(plotRightOffset, high, text="Kháng cự tiềm năng (BC)", style=label.style_none, textcolor=color.red, size=size.small, yloc=yloc.price)
+isNarrowRange = barRange < ta.sma(barRange, lookback) * 0.7, isLowVolume = volume < (avgVolume * lowVolMultiplier)
+isNoSupply = isDownBar and isNarrowRange and isLowVolume
+if (showNoSupplyDemand and isNoSupply)
+    bullishSignal := math.max(bullishSignal, 1.0)
+    label.new(bar_index, na, yloc=yloc.belowbar, text="NS", style=label.style_none, textcolor=color.gray, size=size.small)
+isNoDemand = isUpBar and isNarrowRange and isLowVolume
+if (showNoSupplyDemand and isNoDemand)
+    bearishSignal := math.min(bearishSignal, -1.0)
+    label.new(bar_index, na, yloc=yloc.abovebar, text="ND", style=label.style_none, textcolor=color.gray, size=size.small)
+isStoppingVol = isDownBar and volume > (avgVolume * volMultiplier) and closeLocation > 0.5
+if (showStoppingVol and isStoppingVol)
+    bullishSignal := math.max(bullishSignal, 2.0)
+    label.new(bar_index, na, yloc=yloc.belowbar, text="StV", style=label.style_none, textcolor=color.blue, size=size.normal)
+isEffortFailRise = isUpBar and volume > (avgVolume * volMultiplier) and isNarrowRange
+if (showEffortVsResult and isEffortFailRise)
+    bearishSignal := math.min(bearishSignal, -2.0)
+    label.new(bar_index, na, yloc=yloc.abovebar, text="EFR", style=label.style_none, textcolor=color.orange, size=size.normal)
+isEffortFailFall = isDownBar and volume > (avgVolume * volMultiplier) and isNarrowRange
+if (showEffortVsResult and isEffortFailFall)
+    bullishSignal := math.max(bullishSignal, 2.0)
+    label.new(bar_index, na, yloc=yloc.belowbar, text="EFF", style=label.style_none, textcolor=color.orange, size=size.normal)
+
+// --- PHẦN 5: HIỂN THỊ THÔNG TIN QUA MÀU SẮC ---
+barScore = bullishSignal + bearishSignal
+vsaScore = f_manualSum(barScore, scoreLookback)
+// plot(vsaScore, "Score", color.new(color.black, 100), trackprice=true) // ĐÃ VÔ HIỆU HÓA: Dòng này vẽ đường chart của Score.
+isScoreRising = vsaScore > vsaScore[:1], isScoreFalling = vsaScore < vsaScore[:1]
+candleColor = if vsaScore > 0
+    isScoreRising ? color.new(color.green, 40) : color.new(color.green, 80)
+else if vsaScore < 0
+    isScoreFalling ? color.new(color.red, 40) : color.new(color.maroon, 60)
+else
+    na
+// barcolor(candleColor) // ĐÃ VÔ HIỆU HÓA: Dòng này dùng để tô màu thân nến.
+isUptrend = close > trendEma
+bgColor = useTrendFilter ? (isUptrend ? color.new(color.green, 90) : color.new(color.red, 90)) : na
+// bgcolor(bgColor) // ĐÃ VÔ HIỆU HÓA: Dòng này dùng để tô màu nền biểu đồ.
+
+// --- PHẦN 6: HIỂN THỊ CÁC BẢNG ---
+var table legendTable = na, var table infoTable = na
+if barstate.islast
+    table.delete(infoTable), table.delete(legendTable)
+    if showInfoPanel
+        infoTable := table.new(position.top_right, 1, 3, bgcolor=color.new(color.black, 25), border_width=1)
+        string trendContext = useTrendFilter ? (isUptrend ? "Up" : "Down") : "N/A"
+        string biasText = vsaScore > 0 ? "Buy Pressure" : vsaScore < 0 ? "Sell Pressure" : "Neutral"
+        table.cell(infoTable, 0, 0, "Trend: " + trendContext, text_color=dynamicTextColor, text_halign=text.align_left)
+        table.cell(infoTable, 0, 1, "Bias: " + biasText, text_color=dynamicTextColor, text_halign=text.align_left)
+        table.cell(infoTable, 0, 2, "Score: " + str.tostring(vsaScore, "#.##"), text_color=dynamicTextColor, text_halign=text.align_left)
+    if showLegend
+        var _position = position.bottom_left
+        if legendPositionOption == "Trai Tren"
+            _position := position.top_left
+        if legendPositionOption == "Phai Tren"
+            _position := position.top_right
+        if legendPositionOption == "Trai Duoi"
+            _position := position.bottom_left
+        if legendPositionOption == "Phai Duoi"
+            _position := position.bottom_right
+        legendTable := table.new(_position, 2, 9, bgcolor=color.new(color.gray, 80), border_width=1)
+        table.cell(legendTable, 0, 0, "VIET TAT", text_color=dynamicTextColor, text_halign=text.align_center)
+        table.cell(legendTable, 1, 0, "Y NGHIA", text_color=dynamicTextColor, text_halign=text.align_center)
+        table.cell(legendTable, 0, 1, "SPR", text_color=color.green), table.cell(legendTable, 1, 1, "Spring", text_color=dynamicTextColor)
+        table.cell(legendTable, 0, 2, "UT", text_color=color.red), table.cell(legendTable, 1, 2, "Upthrust", text_color=dynamicTextColor)
+        table.cell(legendTable, 0, 3, "SC", text_color=color.green), table.cell(legendTable, 1, 3, "Selling Climax", text_color=dynamicTextColor)
+        table.cell(legendTable, 0, 4, "BC", text_color=color.red), table.cell(legendTable, 1, 4, "Buying Climax", text_color=dynamicTextColor)
+        table.cell(legendTable, 0, 5, "StV", text_color=color.blue), table.cell(legendTable, 1, 5, "Stopping Volume", text_color=dynamicTextColor)
+        table.cell(legendTable, 0, 6, "NS/ND", text_color=color.gray), table.cell(legendTable, 1, 6, "No Supply/Demand", text_color=dynamicTextColor)
+        table.cell(legendTable, 0, 7, "EFR", text_color=color.orange), table.cell(legendTable, 1, 7, "Effort Fail to Rise", text_color=dynamicTextColor)
+        table.cell(legendTable, 0, 8, "EFF", text_color=color.orange), table.cell(legendTable, 1, 8, "Effort Fail to Fall", text_color=dynamicTextColor)

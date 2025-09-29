@@ -1,0 +1,180 @@
+// © lenguyenphi — Pi Lite — VSA Daytrade (v6 + TV CVD)
+//@version=6
+indicator("VSA Pure", shorttitle="VSA", overlay=true, max_labels_count=300)
+import TradingView/ta/8
+
+// ===== Inputs =====
+var string GRP_VOL = "Volume & Anatomy"
+volLookback     = input.int(14, "Volume Lookback", minval=5, group=GRP_VOL)
+volMultiplier   = input.float(2.2, "High Vol × Avg", step=0.1, group=GRP_VOL)
+lowVolMultiplier= input.float(0.6, "Low Vol × Avg",  step=0.1, group=GRP_VOL)
+climaxLookback  = input.int(30, "Climax Percentile Lookback", minval=10, group=GRP_VOL)
+narrowRangeK    = input.float(0.75, "Narrow if < k × SMA(range)", step=0.05, group=GRP_VOL)
+wideRangeK      = input.float(1.25, "Wide if > k × SMA(range)",   step=0.05, group=GRP_VOL)
+bullCloseLoc    = input.float(0.60, "Bullish Close Location >", step=0.05, group=GRP_VOL)
+showLabels      = input.bool(true, "Show Signal Labels", group=GRP_VOL)
+showIcons       = input.bool(true, "Show Chart Icons", group=GRP_VOL)
+labelOffsetAbove = input.float(0.5, "Label Offset Above", minval=0.1, step=0.1, group=GRP_VOL)
+labelOffsetBelow = input.float(1.5, "Label Offset Below", minval=0.2, step=0.1, group=GRP_VOL)
+iconOffset = 0.5
+
+// ===== Utils =====
+f_safeDiv(n, d) => d != 0 and not na(d) ? n / d : na
+f_vol_percentile(len) =>
+    float rank = 0.0
+    for i = 1 to len
+        rank += volume > volume[i] ? 1.0 : 0.0
+    rank / len * 100.0
+f_vwap_va(src, len, k) =>
+    wsum  = math.sum(src * volume, len)
+    vsum  = math.sum(volume, len)
+    vwap  = f_safeDiv(wsum, vsum)
+    diff  = src - nz(vwap)
+    wvar  = f_safeDiv(math.sum(volume * diff * diff, len), vsum)
+    wstd  = math.sqrt(math.max(wvar, 0))
+    [vwap, nz(vwap) + k * wstd, nz(vwap) - k * wstd]
+
+// ===== VSA Core =====
+rng    = high - low
+rngSMA = ta.sma(rng, volLookback)
+avgV   = ta.sma(volume, volLookback)
+isNarrow = rng < rngSMA * narrowRangeK
+isWide   = rng > rngSMA * wideRangeK
+isHighV  = volume > avgV * volMultiplier
+isLowV   = volume < avgV * lowVolMultiplier
+locClose = f_safeDiv(close - low, rng)
+volPR    = f_vol_percentile(climaxLookback)
+
+
+
+
+// ===== VSA Signals (Standardized) =====
+// Helper: close location in bar (0=low, 1=high)
+cl = nz(locClose, 0.5)
+
+// Selling Climax (SC): Wide range down, very high volume, closes off the low
+isSC = rng > rngSMA * wideRangeK and volume > avgV * volMultiplier and close < open and cl > 0.2 and volPR >= 95
+
+// Buying Climax (BC): Wide range up, very high volume, closes off the high
+isBC = rng > rngSMA * wideRangeK and volume > avgV * volMultiplier and close > open and cl < 0.8 and volPR >= 95
+
+// Upthrust (UT): Wide range up, closes near low, high volume, makes new high
+isUT = high > high[1] and rng > rngSMA * wideRangeK and cl < 0.3 and volume > avgV * volMultiplier and close < open
+
+// Reverse Upthrust (RUT): Wide range down, closes near high, high volume, makes new low
+isRUT = low < low[1] and rng > rngSMA * wideRangeK and cl > 0.7 and volume > avgV * volMultiplier and close > open
+
+// Spring (SP): Makes new low, closes above mid, volume high or above average
+isSP = low < low[1] and close > open and cl > 0.5 and (volume > avgV * 1.2 or volPR >= 80)
+
+// Shakeout (SO): Wide range down, closes well above low, high volume, makes new low
+isSO = low < low[1] and rng > rngSMA * wideRangeK and cl > 0.6 and volume > avgV * volMultiplier and close > open
+
+// Stopping Volume (StV): Down bar, closes above mid, high volume, not wide range
+isStV = close < open and cl > 0.5 and volume > avgV * volMultiplier and rng < rngSMA * wideRangeK
+
+// No Supply (NS): Up bar, narrow range, low volume, closes in upper half
+isNS = close > open and isNarrow and isLowV and cl > 0.5
+
+// No Demand (ND): Down bar, narrow range, low volume, closes in lower half
+isND = close < open and isNarrow and isLowV and cl < 0.5
+
+// Test Bar: Up bar, narrow range, low volume, closes in upper half, not new high
+isTest = close > open and isNarrow and isLowV and cl > 0.6 and high < high[1]
+
+// Effort to Rise (EvR): Up bar, narrow range, high volume, closes in upper half
+isEvR = close > open and isNarrow and isHighV and cl > 0.7
+
+// Effort to Fall (EvF): Down bar, narrow range, high volume, closes in lower half
+isEvF = close < open and isNarrow and isHighV and cl < 0.3
+
+// Sign of Strength (SOS): Up bar, closes near high, high volume, not new high
+isSOS = close > open and cl > 0.7 and volume > avgV * volMultiplier and high < high[1]
+
+// Sign of Weakness (SOW): Down bar, closes near low, high volume, not new low
+isSOW = close < open and cl < 0.3 and volume > avgV * volMultiplier and low > low[1]
+
+
+
+
+// ===== Tổng hợp tín hiệu VSA trên 1 nến =====
+var string[] vsaNames = array.new_string()
+var string[] vsaIcons = array.new_string()
+var color[]  vsaColors = array.new_color()
+var float[]  vsaYs = array.new_float()
+var string[] vsaLocs = array.new_string()
+
+array.clear(vsaNames)
+array.clear(vsaIcons)
+array.clear(vsaColors)
+array.clear(vsaYs)
+array.clear(vsaLocs)
+
+f_addVSA(cond, name, icon, col, y, loc) =>
+    if cond
+        array.push(vsaNames, name)
+        array.push(vsaIcons, icon)
+        array.push(vsaColors, col)
+        array.push(vsaYs, y)
+        array.push(vsaLocs, loc == location.abovebar ? "abovebar" : "belowbar")
+
+f_addVSA(isSC,   "SC",   "💥", color.lime,    low, location.belowbar)
+f_addVSA(isBC,   "BC",   "💥", color.orange,  high + labelOffsetAbove, location.abovebar)
+f_addVSA(isUT,   "UT",   "⛔", color.red,     high + labelOffsetAbove, location.abovebar)
+f_addVSA(isRUT,  "RUT",  "R",  color.blue,    high + labelOffsetAbove, location.abovebar)
+f_addVSA(isSP,   "SP",   "S",  color.fuchsia, low, location.belowbar)
+f_addVSA(isSO,   "SO",   "S",  color.purple,  low, location.belowbar)
+f_addVSA(isSOS,  "SOS",  "⬆", color.green,   high + labelOffsetAbove, location.abovebar)
+f_addVSA(isSOW,  "SOW",  "⬇", color.red,     low, location.belowbar)
+f_addVSA(isStV,  "StV",  "⤴", color.teal,    low, location.belowbar)
+f_addVSA(isTest, "Test", "✓", color.aqua,    low, location.belowbar)
+f_addVSA(isNS,   "NS",   "N",  color.gray,    low, location.belowbar)
+f_addVSA(isND,   "ND",   "N",  color.gray,    high + labelOffsetAbove, location.abovebar)
+f_addVSA(isEvR,  "EvR",  "•", color.maroon,  high + labelOffsetAbove, location.abovebar)
+f_addVSA(isEvF,  "EvF",  "•", color.blue,    low, location.belowbar)
+
+vsaSigStr = array.size(vsaNames) > 0 ? array.join(vsaNames, "+") : na
+vsaIconStr = array.size(vsaIcons) > 0 ? array.join(vsaIcons, "") : na
+// Nếu có nhiều màu, lấy màu đầu tiên (hoặc có thể cải tiến thành màu trung tính nếu muốn)
+vsaCol = array.size(vsaColors) > 0 ? array.get(vsaColors, 0) : na
+vsaY = array.size(vsaYs) > 0 ? array.get(vsaYs, 0) : na
+vsaLoc = array.size(vsaLocs) > 0 ? array.get(vsaLocs, 0) : na
+
+
+// Hiển thị icon ghép bằng label (vì plotchar không nhận biến động)
+
+var label vsaIconLabel = na
+// Xác định yloc cho label icon: true nếu trên, false nếu dưới
+vsaLocAbove = vsaLoc == "abovebar"
+if showIcons and not na(vsaIconStr) and not na(vsaY) and not na(vsaLoc)
+    if not na(vsaIconLabel)
+        label.delete(vsaIconLabel)
+        vsaIconLabel := na
+    vsaIconLabel := label.new(bar_index, vsaY, vsaIconStr, style=label.style_label_center, yloc=vsaLocAbove ? yloc.abovebar : yloc.belowbar, color=na, textcolor=vsaCol, size=size.small)
+
+// Labels: màu chữ xanh cho bull, đỏ cho bear
+
+trendTextCol = close > open ? color.green : color.red
+makeSignalLabel(txt, y, yloc_) =>
+    label.new(bar_index, y, txt, style=label.style_label_left, yloc=yloc_, color=na, textcolor=trendTextCol, size=size.small)
+labelBelow() => math.min(low, close, open) - labelOffsetBelow - iconOffset
+
+if showLabels and not na(vsaSigStr)
+    makeSignalLabel(vsaSigStr, vsaY, vsaLocAbove ? yloc.price : yloc.belowbar)
+
+
+// Alerts
+alertcondition(isSOS,  "SOS",  "Sign of Strength (SOS)")
+alertcondition(isSOW,  "SOW",  "Sign of Weakness (SOW)")
+alertcondition(isSC,   "SC",   "Selling Climax")
+alertcondition(isBC,   "BC",   "Buying Climax")
+alertcondition(isStV,  "SV",  "Stopping Volume")
+alertcondition(isTest, "TS", "Test Bar (No Supply test)")
+alertcondition(isEvF,  "EF",  "Effort vs Result (Fall)")
+alertcondition(isEvR,  "ER",  "Effort vs Result (Rise)")
+alertcondition(isUT,   "UT",  "Upthrust")
+alertcondition(isND,   "ND",  "No Demand")
+alertcondition(isNS,   "NS",  "No Supply")
+alertcondition(isSO,   "SO",  "Shakeout")
+alertcondition(isSP,   "SP",  "Spring")
+alertcondition(isRUT,  "RUT", "Reverse Upthrust")
