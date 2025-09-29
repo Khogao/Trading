@@ -1,0 +1,5 @@
+current_path,new_path,reason
+indicators/cvd/Better-01.pine,indicators/cvd/Better-01-CVD.pine,Append -CVD suffix for CVD family per naming policy
+indicators/cvd/Better-02.pine,indicators/cvd/Better-02-CVD.pine,Append -CVD suffix for CVD family per naming policy
+indicators/cvd/Better-03.pine,indicators/cvd/Better-03-CVD.pine,Append -CVD suffix for CVD family per naming policy
+indicators/cvd/Better-04.pine,indicators/cvd/Better-04-CVD.pine,Append -CVD suffix for CVD family per naming policy
