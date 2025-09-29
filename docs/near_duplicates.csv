@@ -1,0 +1,24 @@
+group_id,file,keeper,notes
+1,D:\Work\Coding\Trading\indicators\vp\VPP-05.pine,YES,KEEP
+1,D:\Work\Coding\Trading\indicators\vp\VPP-06.pine,NO,
+1,D:\Work\Coding\Trading\indicators\vp\VPP_v4_2_Final.pine,NO,
+2,D:\Work\Coding\Trading\indicators\vp\VPP41.pine,YES,KEEP
+2,D:\Work\Coding\Trading\indicators\vp\VPP_v4_0.pine,NO,
+3,D:\Work\Coding\Trading\indicators\vp\VPP-07.pine,NO,
+3,D:\Work\Coding\Trading\indicators\vp\VPP5.pine,YES,KEEP
+4,D:\Work\Coding\Trading\indicators\kv\EZZ-05.pine,NO,
+4,D:\Work\Coding\Trading\indicators\kv\EZZY.PINE,YES,KEEP
+5,D:\Work\Coding\Trading\indicators\SMPA family\SCALP-01.pine,YES,KEEP
+5,D:\Work\Coding\Trading\indicators\SMPA family\SCALP-02.pine,NO,
+6,D:\Work\Coding\Trading\indicators\PI family\PI 34.pine,YES,KEEP
+6,D:\Work\Coding\Trading\indicators\PI family\PI-13.pine,NO,
+
+file_a,file_b,similarity
+D:\Work\Coding\Trading\indicators\vp\VPP-06.pine,D:\Work\Coding\Trading\indicators\vp\VPP_v4_2_Final.pine,0.9822
+D:\Work\Coding\Trading\indicators\vp\VPP41.pine,D:\Work\Coding\Trading\indicators\vp\VPP_v4_0.pine,0.9797
+D:\Work\Coding\Trading\indicators\SMPA family\SCALP-01.pine,D:\Work\Coding\Trading\indicators\SMPA family\SCALP-02.pine,0.9567
+D:\Work\Coding\Trading\indicators\PI family\PI 34.pine,D:\Work\Coding\Trading\indicators\PI family\PI-13.pine,0.9345
+D:\Work\Coding\Trading\indicators\vp\VPP-07.pine,D:\Work\Coding\Trading\indicators\vp\VPP5.pine,0.9303
+D:\Work\Coding\Trading\indicators\kv\EZZ-05.pine,D:\Work\Coding\Trading\indicators\kv\EZZY.PINE,0.9238
+D:\Work\Coding\Trading\indicators\vp\VPP-05.pine,D:\Work\Coding\Trading\indicators\vp\VPP-06.pine,0.9232
+D:\Work\Coding\Trading\indicators\vp\VPP-05.pine,D:\Work\Coding\Trading\indicators\vp\VPP_v4_2_Final.pine,0.9069
