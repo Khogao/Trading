@@ -1,0 +1,183 @@
+
+//@version=5
+// TITLE: VP+CVD Strategy v1
+// DESC: A unified strategy combining Volume Profile (reconstructed logic) and CVD+VSA Pro.
+// This is a foundational strategy based on Charlie's analysis for systematic trading.
+// Author: Gemini (based on Khogao's indicators)
+
+strategy("VP+CVD Strategy v1", "VPCVDS_v1", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=5, commission_type=strategy.commission.percent, commission_value=0.04)
+
+// =================================================================================
+// === SECTION 1: INPUTS & SETTINGS
+// =================================================================================
+
+// --- GROUP: Volume Profile Settings ---
+const string GRP_VP = "Volume Profile Settings"
+vp_lookback = input.int(200, "Lookback Period", group = GRP_VP)
+vp_num_bars = input.int(200, "Number of Bins (Resolution)", minval=10, maxval=500, group = GRP_VP)
+vp_value_area_percent = input.float(70.0, "Value Area %", group = GRP_VP)
+vp_color_poc = input.color(color.new(color.red, 50), "POC Color", group = GRP_VP)
+vp_color_va = input.color(color.new(color.blue, 85), "VA Color", group = GRP_VP)
+
+// --- GROUP: CVD Calculation Settings ---
+const string GRP_CVD = "CVD Calculation"
+anchorInput = input.timeframe("D", "CVD Anchor Period", group = GRP_CVD)
+maTypeInput = input.string("EMA", "CVD MA Type", options=["SMA", "EMA", "WMA"], group = GRP_CVD)
+maLengthInput = input.int(21, "CVD MA Length", group = GRP_CVD)
+
+// --- GROUP: Strategy Settings ---
+const string GRP_STRAT = "Strategy Settings"
+risk_reward_ratio = input.float(2.0, "Risk/Reward Ratio", group = GRP_STRAT, minval=0.1)
+stop_loss_atr_mult = input.float(1.5, "Stop Loss ATR Multiplier", group = GRP_STRAT, minval=0.1)
+use_cvd_confirmation = input.bool(true, "Require CVD Confirmation for Entry", group = GRP_STRAT)
+use_vsa_confirmation = input.bool(false, "Require VSA Confirmation for Entry", group = GRP_STRAT, tooltip="If true, requires a relevant VSA signal (e.g., Strength/NS for long, Weakness/ND for short) to enter.")
+
+// --- GROUP: VSA Settings (Simplified from CVP) ---
+const string GRP_VSA = "VSA Signals (for confirmation)"
+vsaVolumeLength = input.int(20, "VSA Volume MA Length", group=GRP_VSA)
+vsa_zscore_sensitivity = input.float(1.8, "VSA Z-score Sensitivity", group=GRP_VSA)
+
+
+// =================================================================================
+// === SECTION 2: CORE LOGIC & CALCULATIONS
+// =================================================================================
+
+// --- Volume Profile Logic (Reconstructed) ---
+f_calculate_vp(lookback, num_bins) =>
+    float[] prices = array.new_float(num_bins, 0)
+    float[] volumes = array.new_float(num_bins, 0)
+    
+    float min_price = ta.lowest(low, lookback)
+    float max_price = ta.highest(high, lookback)
+    float bin_size = (max_price - min_price) / num_bins
+
+    if bin_size > 0
+        for i = 0 to lookback - 1
+            if not na(volume[i]) and not na(close[i])
+                float price_in_bar = (high[i] + low[i]) / 2
+                int bin_index = math.round((price_in_bar - min_price) / bin_size)
+                if bin_index >= 0 and bin_index < num_bins
+                    array.set(volumes, bin_index, array.get(volumes, bin_index) + volume[i])
+
+    // Find POC
+    float max_vol = 0
+    int poc_index = 0
+    for i = 0 to num_bins - 1
+        if array.get(volumes, i) > max_vol
+            max_vol := array.get(volumes, i)
+            poc_index := i
+    
+    float poc = min_price + poc_index * bin_size
+
+    // Calculate Value Area
+    float total_volume = array.sum(volumes)
+    float va_volume_target = total_volume * (vp_value_area_percent / 100)
+    
+    float current_va_volume = array.get(volumes, poc_index)
+    int upper_band_index = poc_index
+    int lower_band_index = poc_index
+
+    while current_va_volume < va_volume_target and (upper_band_index < num_bins - 1 or lower_band_index > 0)
+        float upper_vol = upper_band_index < num_bins - 1 ? array.get(volumes, upper_band_index + 1) : 0
+        float lower_vol = lower_band_index > 0 ? array.get(volumes, lower_band_index - 1) : 0
+
+        if upper_vol > lower_vol and upper_band_index < num_bins - 1
+            upper_band_index += 1
+            current_va_volume += upper_vol
+        else if lower_band_index > 0
+            lower_band_index -= 1
+            current_va_volume += lower_vol
+        else if upper_band_index < num_bins - 1 // Exhausted lower side
+            upper_band_index += 1
+            current_va_volume += upper_vol
+        else // Exhausted both sides
+            break
+
+    float vah = min_price + upper_band_index * bin_size
+    float val = min_price + lower_band_index * bin_size
+    
+    [poc, vah, val]
+
+// --- CVD Logic (from CVD+VSA Pro) ---
+f_cvdClose() =>
+    [_o, _h, _l, _c] = request.security(syminfo.tickerid, "1", anchorInput) // Hardcoded to 1min for delta, resets on anchor
+    _c 
+
+cvd_source = f_cvdClose()
+cvd_ma = maTypeInput == "SMA" ? ta.sma(cvd_source, maLengthInput) : maTypeInput == "WMA" ? ta.wma(cvd_source, maLengthInput) : ta.ema(cvd_source, maLengthInput)
+
+// --- VSA Logic (Simplified for confirmation) ---
+f_zscore(series, length) =>
+    _ma = ta.sma(series, length)
+    _sd = ta.stdev(series, length)
+    _sd == 0 ? 0.0 : (series - _ma) / _sd
+
+vol_z = f_zscore(volume, vsaVolumeLength)
+is_high_volume = vol_z >= vsa_zscore_sensitivity
+_range_eps = 1e-8
+normClosePos = (close - low) / math.max(high - low, _range_eps)
+
+// Strength/Weakness signals
+vsa_strength = is_high_volume and close > open and normClosePos > 0.6
+vsa_weakness = is_high_volume and close < open and normClosePos < 0.4
+vsa_no_supply = ta.lowest(volume, 2) < ta.lowest(volume, 10) * 0.9 and close > open
+vsa_no_demand = ta.lowest(volume, 2) < ta.lowest(volume, 10) * 0.9 and close < open
+
+// --- Calculate strategy variables ---
+[poc, vah, val] = f_calculate_vp(vp_lookback, vp_num_bars)
+atr = ta.atr(14)
+
+// =================================================================================
+// === SECTION 3: PLOTTING
+// =================================================================================
+
+// Plot VP levels
+plot(poc, "POC", color=vp_color_poc, style=plot.style_linebr)
+plot(vah, "VAH", color=vp_color_va, style=plot.style_linebr)
+plot(val, "VAL", color=vp_color_va, style=plot.style_linebr)
+fill(plot1=vah, plot2=val, color=color.new(color.blue, 90), title="Value Area")
+
+// Plot CVD in a separate pane for visual confirmation
+// Note: Strategy logic uses the calculated values, not the plot.
+pane_cvd = plot(cvd_source, "CVD", color=cvd_source > cvd_ma ? color.teal : color.orange, style=plot.style_area, pane=true)
+plot(cvd_ma, "CVD MA", color=color.gray, pane=true)
+hline(0, "CVD Zero", color.gray, linestyle=hline.style_dashed, pane=true)
+
+
+// =================================================================================
+// === SECTION 4: STRATEGY LOGIC
+// =================================================================================
+
+// --- Entry Conditions ---
+// CVD Confirmation
+cvd_bullish_confirm = not use_cvd_confirmation or (cvd_source > cvd_ma and ta.crossover(cvd_source, cvd_ma))
+cvd_bearish_confirm = not use_cvd_confirmation or (cvd_source < cvd_ma and ta.crossunder(cvd_source, cvd_ma))
+
+// VSA Confirmation
+vsa_bullish_confirm = not use_vsa_confirmation or vsa_strength or vsa_no_supply
+vsa_bearish_confirm = not use_vsa_confirmation or vsa_weakness or vsa_no_demand
+
+// Long Entry: Price pulls back into the lower value area and finds support, with CVD/VSA confirmation.
+long_setup = close > val and close < poc and cvd_bullish_confirm and vsa_bullish_confirm
+
+// Short Entry: Price rallies into the upper value area and finds resistance, with CVD/VSA confirmation.
+short_setup = close < vah and close > poc and cvd_bearish_confirm and vsa_bearish_confirm
+
+// --- Execution Logic ---
+if (long_setup)
+    stop_loss_price = val - (atr * stop_loss_atr_mult)
+    take_profit_price = close + (close - stop_loss_price) * risk_reward_ratio
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Exit Long", from_entry="Long", stop=stop_loss_price, limit=take_profit_price)
+
+if (short_setup)
+    stop_loss_price = vah + (atr * stop_loss_atr_mult)
+    take_profit_price = close - (stop_loss_price - close) * risk_reward_ratio
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Exit Short", from_entry="Short", stop=stop_loss_price, limit=take_profit_price)
+
+// --- Trade Management ---
+// Cancel entry if price moves away before entry
+strategy.cancel_if(not long_setup, "Long")
+strategy.cancel_if(not short_setup, "Short")
+

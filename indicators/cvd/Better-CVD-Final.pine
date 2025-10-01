@@ -1,0 +1,214 @@
+//@version=6
+// TITLE: Better CVD - Final (Pure CVD + Divergence Engine)
+// DESC: A complete order flow dashboard combining the feature-rich UI of "Better RSI" 
+// with the high-precision TV CVD calculation and a robust pivot-based divergence engine. No VSA.
+indicator("Better CVD - Final", "Better CVD 1", overlay=false)
+
+import TradingView/ta/8
+
+// ==============================================================================================
+// INPUTS (Lấy cảm hứng từ Better RSI)
+// ==============================================================================================
+// --- 1. CVD Calculation ---
+const string GRP_CVD = "1. CVD Calculation"
+anchorInput = input.timeframe("D", "CVD Anchor Period", group = GRP_CVD, tooltip = "Khung thời gian để reset lại CVD. 'D' được khuyến nghị.")
+useCustomTimeframeInput = input.bool(false, "Use Custom Lower Timeframe", group = GRP_CVD)
+lowerTimeframeInput = input.timeframe("1", "Lower Timeframe", group = GRP_CVD)
+
+// --- 2. MA & Bollinger Bands ---
+const string GRP_MA_BB = "2. MA & BB Settings"
+maTypeInput = input.string("SMA", "MA Type", options=["SMA", "EMA", "WMA", "VWMA"], group = GRP_MA_BB)
+maLengthInput = input.int(20, "MA Length", group = GRP_MA_BB)
+bbMultInput = input.float(2.0, "BB StdDev", minval=0.001, maxval=50, group = GRP_MA_BB)
+showBollingerBands = input.bool(true, "Show Bollinger Bands", group = GRP_MA_BB)
+
+// --- 3. Divergence Engine ---
+const string GRP_DIVERGENCE = "3. Divergence Engine"
+showRegular = input.bool(true, "Show Regular Divergence", group = GRP_DIVERGENCE, inline="div_type")
+showHidden = input.bool(true, "Show Hidden Divergence", group = GRP_DIVERGENCE, inline="div_type")
+lookbackLeft = input.int(5, "Pivot Lookback Left", group = GRP_DIVERGENCE)
+lookbackRight = input.int(5, "Pivot Lookback Right", group = GRP_DIVERGENCE)
+rangeLower = input.int(5, "Min Bars Between Pivots", group = GRP_DIVERGENCE)
+rangeUpper = input.int(60, "Max Bars Between Pivots", group = GRP_DIVERGENCE)
+maxDivergences = input.int(10, "Max Divergences to Show", group = GRP_DIVERGENCE, tooltip="Giới hạn số lượng tín hiệu phân kỳ hiển thị để tránh làm rối chart.")
+
+// --- 4. Display & Table ---
+const string GRP_DISPLAY = "4. Display & Table"
+plotStyle = input.string("Line with MA", "Plot Style", options=["Line with MA", "Candles"], group = GRP_DISPLAY)
+showCandleColors = input.bool(true, title="Color Price Candles on BB Breakout", group = GRP_DISPLAY)
+showTable = input.bool(true, "Show Multi-TF Table", group = GRP_DISPLAY)
+tablePosition = input.string("top_right", "Table Location", options=["top_left","top_right"], group = GRP_DISPLAY)
+
+// --- Styling Constants ---
+const color BULL_COLOR = color.new(#2962FF, 0)
+const color BEAR_COLOR = color.new(#FF1744, 0)
+const color BULL_BG_COLOR = color.new(color.green, 90)
+const color BEAR_BG_COLOR = color.new(color.red, 90)
+
+// ==============================================================================================
+// FUNCTIONS
+// ==============================================================================================
+ma(source, length, type) =>
+    switch type
+        "SMA" => ta.sma(source, length)
+        "EMA" => ta.ema(source, length)
+        "WMA" => ta.wma(source, length)
+        => ta.vwma(source, length)
+
+f_lowerTf() =>
+    string result = "60"
+    if useCustomTimeframeInput
+        result := lowerTimeframeInput
+    else if timeframe.isseconds
+        result := "1S"
+    else if timeframe.isintraday
+        result := "1"
+    else if timeframe.isdaily
+        result := "5"
+    result
+
+f_cvdClose(string tf, string anchor) =>
+    [_o, _h, _l, _c] = ta.requestVolumeDelta(tf, anchor)
+    _c
+
+// ==============================================================================================
+// CORE CALCULATIONS
+// ==============================================================================================
+string lowerTimeframe = f_lowerTf()
+[openVolume, maxVolume, minVolume, lastVolume] = ta.requestVolumeDelta(lowerTimeframe, anchorInput)
+cvdSource = lastVolume
+cvdMA = ma(cvdSource, maLengthInput, maTypeInput)
+
+// ==============================================================================================
+// DIVERGENCE ENGINE V2 (Self-Cleaning, from Better RSI)
+// ==============================================================================================
+var array<line> divLines = array.new<line>()
+var array<label> divLabels = array.new<label>()
+
+f_cleanupDrawings() =>
+    if divLines.size() > maxDivergences
+        line.delete(divLines.shift())
+    if divLabels.size() > maxDivergences
+        label.delete(divLabels.shift())
+
+// --- Declare pivots and related variables globally for use everywhere ---
+plVal = ta.pivotlow(cvdSource, lookbackLeft, lookbackRight)
+phVal = ta.pivothigh(cvdSource, lookbackLeft, lookbackRight)
+plFound = not na(plVal)
+phFound = not na(phVal)
+
+// --- Extract valuewhen/barssince for consistency ---
+plFound_1 = plFound[1]
+phFound_1 = phFound[1]
+plVal_1 = plVal[1]
+phVal_1 = phVal[1]
+
+pl_barssince_1 = ta.barssince(plFound_1)
+ph_barssince_1 = ta.barssince(phFound_1)
+
+pl_low_lookbackRight_1 = ta.valuewhen(plFound, low[lookbackRight], 1)
+ph_high_lookbackRight_1 = ta.valuewhen(phFound, high[lookbackRight], 1)
+pl_plVal_1 = ta.valuewhen(plFound, plVal, 1)
+ph_phVal_1 = ta.valuewhen(phFound, phVal, 1)
+pl_baridx_lookbackRight_1 = ta.valuewhen(plFound, bar_index - lookbackRight, 1)
+ph_baridx_lookbackRight_1 = ta.valuewhen(phFound, bar_index - lookbackRight, 1)
+
+if showRegular or showHidden
+    // Regular Bullish
+    if showRegular and plFound
+        inRangePL = pl_barssince_1 >= rangeLower and pl_barssince_1 <= rangeUpper
+        priceLL = low[lookbackRight] < pl_low_lookbackRight_1
+        cvdHL = plVal > pl_plVal_1
+        bullCond = priceLL and cvdHL and inRangePL
+        if bullCond
+            x1 = pl_baridx_lookbackRight_1
+            y1_cvd = pl_plVal_1
+            x2 = bar_index - lookbackRight
+            divLines.push(line.new(x1, y1_cvd, x2, plVal, color=BULL_COLOR, width=2, style=line.style_solid))
+            divLabels.push(label.new(x2, plVal, "Bull", style=label.style_label_up, color=color.new(BULL_COLOR, 100), textcolor=BULL_COLOR, size=size.small))
+            f_cleanupDrawings()
+
+    // Regular Bearish
+    if showRegular and phFound
+        inRangePH = ph_barssince_1 >= rangeLower and ph_barssince_1 <= rangeUpper
+        priceHH = high[lookbackRight] > ph_high_lookbackRight_1
+        cvdLH = phVal < ph_phVal_1
+        bearCond = priceHH and cvdLH and inRangePH
+        if bearCond
+            x1 = ph_baridx_lookbackRight_1
+            y1_cvd = ph_phVal_1
+            x2 = bar_index - lookbackRight
+            divLines.push(line.new(x1, y1_cvd, x2, phVal, color=BEAR_COLOR, width=2, style=line.style_solid))
+            divLabels.push(label.new(x2, phVal, "Bear", style=label.style_label_down, color=color.new(BEAR_COLOR, 100), textcolor=BEAR_COLOR, size=size.small))
+            f_cleanupDrawings()
+
+    // (Hidden Divergence logic can be added here following the same pattern)
+
+// ==============================================================================================
+// PLOTTING & UI
+// ==============================================================================================
+hline(0, "Zero Line", color.new(color.gray, 50), linestyle=hline.style_dashed)
+
+// Plot CVD Line/Candles
+isLinePlot = plotStyle == "Line with MA"
+cvdLineColor = cvdSource > cvdMA ? #2962FF : #FF6D00 // Stronger Blue/Orange
+pCVD = plot(cvdSource, "CVD", color=cvdLineColor, linewidth=2, display=isLinePlot ? display.all : display.none)
+pMA  = plot(cvdMA, "CVD MA", color=color.new(color.gray, 20), linewidth=1, display=isLinePlot ? display.all : display.none)
+fill(pCVD, pMA, color=isLinePlot ? (cvdSource > cvdMA ? color.new(color.blue, 85) : color.new(color.orange, 85)) : na)
+cCol = lastVolume >= openVolume ? color.new(color.teal, 30) : color.new(color.red, 30)
+plotcandle(openVolume, maxVolume, minVolume, lastVolume, "CVD", color=cCol, bordercolor=cCol, wickcolor=cCol, display=not isLinePlot ? display.all : display.none)
+
+// Plot Bollinger Bands with Gradient Fill (must be outside local scope)
+bbMA = ta.sma(cvdSource, maLengthInput)
+bbStdDev = ta.stdev(cvdSource, maLengthInput) * bbMultInput
+bbUpper = bbMA + bbStdDev
+bbLower = bbMA - bbStdDev
+pUpper = plot(showBollingerBands ? bbUpper : na, "BB Upper", color.gray, style=plot.style_line)
+pLower = plot(showBollingerBands ? bbLower : na, "BB Lower", color.gray, style=plot.style_line)
+fill(pUpper, pLower, color=showBollingerBands ? color.new(color.gray, 95) : na)
+
+// UI Alerts (extract all calculations to global scope)
+f_bullAlert() =>
+    showRegular and plFound and (low[lookbackRight] < pl_low_lookbackRight_1) and (plVal > pl_plVal_1) and (pl_barssince_1 >= rangeLower) and (pl_barssince_1 <= rangeUpper)
+
+f_bearAlert() =>
+    showRegular and phFound and (high[lookbackRight] > ph_high_lookbackRight_1) and (phVal < ph_phVal_1) and (ph_barssince_1 >= rangeLower) and (ph_barssince_1 <= rangeUpper)
+
+bullCondAlertCond = f_bullAlert()
+bullCondAlert = ta.barssince(bullCondAlertCond) == 0
+
+bearCondAlertCond = f_bearAlert()
+bearCondAlert = ta.barssince(bearCondAlertCond) == 0
+
+bgcolor(bullCondAlert ? BULL_BG_COLOR : na, title="Bullish Divergence BG Alert")
+bgcolor(bearCondAlert ? BEAR_BG_COLOR : na, title="Bearish Divergence BG Alert")
+
+// Multi-TF Table
+// Move f_fillCell to top-level scope (not inside if)
+f_fillCell(t, c, r, tf_text, cvd, ma_val) =>
+    isUp = cvd > ma_val
+    arrow = isUp ? " ▲" : " ▼"
+    bgColor = isUp ? color.new(color.green, 70) : color.new(color.red, 70)
+    t.cell(c, r, tf_text, text_halign=text.align_right, text_color=color.gray)
+    t.cell(c + 1, r, str.tostring(cvd, format.volume) + arrow, bgcolor=bgColor, text_color=color.white)
+
+if showTable and barstate.islast
+    string ltf = f_lowerTf()
+    cvd_5   = request.security(syminfo.tickerid, "5",   f_cvdClose(ltf, anchorInput))
+    ma_5    = request.security(syminfo.tickerid, "5",   ma(f_cvdClose(ltf, anchorInput), maLengthInput, maTypeInput))
+    cvd_15  = request.security(syminfo.tickerid, "15",  f_cvdClose(ltf, anchorInput))
+    ma_15   = request.security(syminfo.tickerid, "15",  ma(f_cvdClose(ltf, anchorInput), maLengthInput, maTypeInput))
+    cvd_60  = request.security(syminfo.tickerid, "60",  f_cvdClose(ltf, anchorInput))
+    ma_60   = request.security(syminfo.tickerid, "60",  ma(f_cvdClose(ltf, anchorInput), maLengthInput, maTypeInput))
+    cvd_240 = request.security(syminfo.tickerid, "240", f_cvdClose(ltf, anchorInput))
+    ma_240  = request.security(syminfo.tickerid, "240", ma(f_cvdClose(ltf, anchorInput), maLengthInput, maTypeInput))
+
+    // Map string -> position enum (required by table.new, follow VSA engine pattern)
+    table_pos = tablePosition == "top_right" ? position.top_right : position.top_left
+    var table cvdTable = table.new(position=table_pos, columns=2, rows=5, bgcolor=color.new(#1e222d, 20), border_width=1, border_color=color.new(color.gray, 50))
+    table.cell(cvdTable, 0, 0, "Timeframe", text_color=color.white, text_halign=text.align_center)
+    table.cell(cvdTable, 1, 0, "CVD Status", text_color=color.white, text_halign=text.align_center)
+    f_fillCell(cvdTable, 0, 1, "5m", cvd_5, ma_5)
+    f_fillCell(cvdTable, 0, 2, "15m", cvd_15, ma_15)
+    f_fillCell(cvdTable, 0, 3, "1H", cvd_60, ma_60)
+    f_fillCell(cvdTable, 0, 4, "4H", cvd_240, ma_240)

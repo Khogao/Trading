@@ -1,0 +1,31 @@
+{
+    // Path to the Claude CLI used by the Anthropic extension (Windows)
+    // The extension will usually detect `claude` on PATH, but explicitly
+    // pointing to the binary helps when automatic detection fails.
+    "claude.path": "C:\\Users\\lengu\\AppData\\Roaming\\npm\\claude.cmd",
+    // Enable auto-connect so Claude can integrate with the IDE and index the workspace
+    "claude.autoConnect": true,
+    // Additional directories for Claude to index for richer workspace context
+    "claude.additionalDirectories": [
+        "indicators",
+        "scripts",
+        "templates"
+    ],
+    // Permission mode controls how Claude handles tool permissions.
+    // "bypassPermissions" allows agent-like autonomous tool use (dangerous). Alternatives: "acceptEdits", "default", "plan".
+    "claude.permissionMode": "bypassPermissions",
+    // If you prefer explicit opt-out of permission prompts use this (equivalent CLI: --dangerously-skip-permissions)
+    "claude.dangerouslySkipPermissions": true,
+    // Misc: experimental permission (kept here only if you want it)
+    "claudeCodeChat.permissions.yoloMode": true,
+    // Force default integrated terminal to Windows PowerShell when running in Windows
+    "terminal.integrated.defaultProfile.windows": "PowerShell",
+    // Suggest: disable WSL auto-forwarding for this workspace (user may still open WSL manually)
+    "remote.WSL.enabled": false,
+    // Custom user preference: if true, assistants/tools should provide non-technical, plain-language
+    // explanations with benefits, pros and cons, and simple next steps. Useful for users without
+    // an IT/coding background. Change to false if you prefer concise/technical answers.
+    "user.prefersNonTechnicalExplanations": true,
+    // Short hint of user's background; used by assistants to tailor phrasing.
+    "user.background": "non-IT"
+}

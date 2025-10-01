@@ -1,0 +1,12 @@
+// Example Pine v5/v6 JSON alert template. Paste into your Pine script's alert() or alertcondition message field.
+// Make sure alert message sends this JSON string exactly.
+{
+  "symbol": "{{ticker}}",
+  "timeframe": "{{interval}}",
+  "script": "MY_INDICATOR_NAME",
+  "signal": "BUY",
+  "price": {{close}},
+  "volume": {{volume}},
+  "cvd": {{custom_cvd_variable}},
+  "extra": {"note": "optional"}
+}
