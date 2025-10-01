@@ -1,7 +1,7 @@
 //@version=5
 // TITLE: VP Production v5 (VPP5) + HTF Lines
 // DESC: Giữ nguyên engine VP của VPP43, bổ sung 3 đường HTF POC/VAH/VAL qua request.security (no repaint).
-indicator(title='VP Production v5', shorttitle='VPP5', overlay=true, max_bars_back=5000, max_boxes_count=500, max_lines_count=500, dynamic_requests=true)
+indicator(title='VP Production v5 Plus', shorttitle='VPP5+', overlay=true, max_bars_back=5000, max_boxes_count=500, max_lines_count=500, dynamic_requests=true)
 
 // === INPUTS ===
 var GRP_PROFILE = "🔥 1. Master Profile"

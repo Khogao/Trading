@@ -190,6 +190,9 @@ var label[] divLabels = array.new<label>()
 divLabelLimit = 100
 // companion array to track label x positions and avoid duplicates at same pivot
 var int[] divLabelXs = array.new_int()
+// separate arrays to manage CVD+Volume labels on the Volume pane (they are not price divergences)
+var label[] volDivLabels = array.new<label>()
+var int[] volDivLabelXs = array.new_int()
 
 // === HÀM HELPER: TẠO LABEL PHÂN KỲ (giảm code lặp) ===
 f_createDivLabel(int x, float y, string labelText, bool isBearish, color bgColor, label[] labelArray, int[] labelXArray, int maxLabels) =>
@@ -203,6 +206,18 @@ f_createDivLabel(int x, float y, string labelText, bool isBearish, color bgColor
         array.pop(labelXArray)
     newLabel
 
+// === HELPER: Check if integer array contains value (dùng cho VSA/div labels) ===
+f_array_has_int(_arr, _val) =>
+    _n = array.size(_arr)
+    if _n == 0
+        false
+    else
+        found = false
+        for _i = 0 to _n - 1
+            if array.get(_arr, _i) == _val
+                found := true
+        found
+
 // === DIVERGENCE LINES (CVD+Price) trên price chart ===
 // Tính ATR cho offset labels
 atr_for_labels = ta.atr(14)
@@ -214,11 +229,21 @@ bearDivColor = bearCond ? BEAR_COLOR : hiddenBearCond ? HIDDEN_BEAR_COLOR : colo
 plot(plFound ? low[lookbackRight] : na, offset=-lookbackRight, title="Bull Divergence Lines", linewidth=2, color=bullDivColor)
 plot(phFound ? high[lookbackRight] : na, offset=-lookbackRight, title="Bear Divergence Lines", linewidth=2, color=bearDivColor)
 
-// Plotshape cho CVD+Price divergence labels (4 plotshape với const text)
-plotshape(bullCond ? low[lookbackRight] - (atr_for_labels * bullLabelOffset) : na, offset=-lookbackRight, title="Bull Label", text="Bull", style=shape.labelup, location=location.absolute, color=BULL_COLOR, textcolor=color.white, size=size.tiny)
-plotshape(bearCond ? high[lookbackRight] + (atr_for_labels * bearLabelOffset) : na, offset=-lookbackRight, title="Bear Label", text="Bear", style=shape.labeldown, location=location.absolute, color=BEAR_COLOR, textcolor=color.white, size=size.tiny)
-plotshape(hiddenBullCond ? low[lookbackRight] - (atr_for_labels * bullLabelOffset) : na, offset=-lookbackRight, title="H.Bull Label", text="H.Bull", style=shape.labelup, location=location.absolute, color=HIDDEN_BULL_COLOR, textcolor=color.white, size=size.tiny)
-plotshape(hiddenBearCond ? high[lookbackRight] + (atr_for_labels * bearLabelOffset) : na, offset=-lookbackRight, title="H.Bear Label", text="H.Bear", style=shape.labeldown, location=location.absolute, color=HIDDEN_BEAR_COLOR, textcolor=color.white, size=size.tiny)
+// Use label.new for CVD+Price divergence labels to reduce plotcount (labels aren't counted as plots)
+// Create labels at the pivot bar position (bar_index - lookbackRight) with lifecycle managed by f_createDivLabel
+priceLabelX = bar_index - lookbackRight
+if bullCond
+    if not f_array_has_int(divLabelXs, priceLabelX)
+        f_createDivLabel(priceLabelX, low[lookbackRight] - (atr_for_labels * bullLabelOffset), "Bull", false, BULL_COLOR, divLabels, divLabelXs, divLabelLimit)
+if bearCond
+    if not f_array_has_int(divLabelXs, priceLabelX)
+        f_createDivLabel(priceLabelX, high[lookbackRight] + (atr_for_labels * bearLabelOffset), "Bear", true, BEAR_COLOR, divLabels, divLabelXs, divLabelLimit)
+if hiddenBullCond
+    if not f_array_has_int(divLabelXs, priceLabelX)
+        f_createDivLabel(priceLabelX, low[lookbackRight] - (atr_for_labels * bullLabelOffset), "H.Bull", false, HIDDEN_BULL_COLOR, divLabels, divLabelXs, divLabelLimit)
+if hiddenBearCond
+    if not f_array_has_int(divLabelXs, priceLabelX)
+        f_createDivLabel(priceLabelX, high[lookbackRight] + (atr_for_labels * bearLabelOffset), "H.Bear", true, HIDDEN_BEAR_COLOR, divLabels, divLabelXs, divLabelLimit)
 bgcolor(bullCond or hiddenBullCond ? BULL_BG_COLOR : na, title="Bullish Divergence BG Alert")
 bgcolor(bearCond or hiddenBearCond ? BEAR_BG_COLOR : na, title="Bearish Divergence BG Alert")
 cvd_is_overbought = cvdSource > bbUpper
@@ -257,17 +282,7 @@ if showTable and barstate.islast
 
 // alerts are declared later after VSA logic to ensure volume guards are available
 
-// === HELPER: Check if integer array contains value (dùng cho VSA labels) ===
-f_array_has_int(_arr, _val) =>
-    _n = array.size(_arr)
-    if _n == 0
-        false
-    else
-        found = false
-        for _i = 0 to _n - 1
-            if array.get(_arr, _i) == _val
-                found := true
-        found
+
 
 // === NHOM 6: VSA SIGNALS (Top 10 cho Crypto) ===
 const string GRP_VSA = "💡 VSA Signals"
@@ -530,12 +545,21 @@ plot(phFound ? ((volume[lookbackRight] * volumeYScale) + volumeZeroOffset) : na,
 vol_range = (ta.highest(volume, 20) - ta.lowest(volume, 20)) * volumeYScale
 vol_label_offset = vol_range * 0.05  // 5% của scaled volume range
 
-// Labels VBull/VBear trên Volume chart tại volume của CVD pivots, apply Y scale
+// Labels VBull/VBear on Volume chart: use label.new to avoid using plotshape (saves plot slots)
 isRegularCvdVol = bullCond or hiddenBullCond or bearCond or hiddenBearCond
-plotshape(cvdVolBull and isRegularCvdVol ? ((volume[lookbackRight] * volumeYScale) + volumeZeroOffset - vol_label_offset) : na, offset=-lookbackRight, title="VBull Label", text="VBull", style=shape.labelup, location=location.absolute, color=color.blue, textcolor=color.white, size=size.tiny)
-plotshape(cvdVolBear and isRegularCvdVol ? ((volume[lookbackRight] * volumeYScale) + volumeZeroOffset + vol_label_offset) : na, offset=-lookbackRight, title="VBear Label", text="VBear", style=shape.labeldown, location=location.absolute, color=color.orange, textcolor=color.white, size=size.tiny)
-plotshape(cvdVolBull and not isRegularCvdVol ? ((volume[lookbackRight] * volumeYScale) + volumeZeroOffset - vol_label_offset) : na, offset=-lookbackRight, title="H.VBull Label", text="H.VBull", style=shape.labelup, location=location.absolute, color=color.new(color.blue, 60), textcolor=color.white, size=size.tiny)
-plotshape(cvdVolBear and not isRegularCvdVol ? ((volume[lookbackRight] * volumeYScale) + volumeZeroOffset + vol_label_offset) : na, offset=-lookbackRight, title="H.VBear Label", text="H.VBear", style=shape.labeldown, location=location.absolute, color=color.new(color.orange, 60), textcolor=color.white, size=size.tiny)
+volLabelX = bar_index - lookbackRight
+if cvdVolBull and isRegularCvdVol
+    if not f_array_has_int(volDivLabelXs, volLabelX)
+        f_createDivLabel(volLabelX, (volume[lookbackRight] * volumeYScale) + volumeZeroOffset - vol_label_offset, "VBull", false, color.blue, volDivLabels, volDivLabelXs, divLabelLimit)
+if cvdVolBear and isRegularCvdVol
+    if not f_array_has_int(volDivLabelXs, volLabelX)
+        f_createDivLabel(volLabelX, (volume[lookbackRight] * volumeYScale) + volumeZeroOffset + vol_label_offset, "VBear", true, color.orange, volDivLabels, volDivLabelXs, divLabelLimit)
+if cvdVolBull and not isRegularCvdVol
+    if not f_array_has_int(volDivLabelXs, volLabelX)
+        f_createDivLabel(volLabelX, (volume[lookbackRight] * volumeYScale) + volumeZeroOffset - vol_label_offset, "H.VBull", false, color.new(color.blue, 60), volDivLabels, volDivLabelXs, divLabelLimit)
+if cvdVolBear and not isRegularCvdVol
+    if not f_array_has_int(volDivLabelXs, volLabelX)
+        f_createDivLabel(volLabelX, (volume[lookbackRight] * volumeYScale) + volumeZeroOffset + vol_label_offset, "H.VBear", true, color.new(color.orange, 60), volDivLabels, volDivLabelXs, divLabelLimit)
 
 // === ADVANCED ALERT SYSTEM ===
 // Compute VSA signal flags for confluence detection
