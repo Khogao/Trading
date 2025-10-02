@@ -7,7 +7,6 @@
 // Author: Khogao, 2025 (modified for Z-score volume coloring + multi-TF dashboard)
 
 indicator("CVD+VSA ProZero", "CVPZ", overlay = true)
-import TradingView/ta/8
 
 // === NHOM 1: CVD ENGINE ===
 const string GRP_CVD = "⚙️ CVD Engine"
