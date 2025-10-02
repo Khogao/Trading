@@ -163,6 +163,14 @@ phVal = ta.pivothigh(pivotSource, lookbackLeft, lookbackRight)
 plFound = not na(plVal)
 phFound = not na(phVal)
 
+// --- Store Raw CVD Values for Line Drawing ---
+// When Z-Score is enabled, plVal/phVal are normalized values (-2 to +2)
+// We need raw CVD values for accurate line positioning on CVD chart
+pl_cvd_raw = plFound ? cvdSource[lookbackRight] : na
+ph_cvd_raw = phFound ? cvdSource[lookbackRight] : na
+prev_pl_cvd_raw = ta.valuewhen(plFound[1], pl_cvd_raw[1], 0)
+prev_ph_cvd_raw = ta.valuewhen(phFound[1], ph_cvd_raw[1], 0)
+
 // --- Previous Pivot Values ---
 // We check for a pivot found on the *previous* bar (`[1]`) to ensure the pivot is confirmed.
 pl_barssince_1 = ta.barssince(plFound[1])
@@ -340,57 +348,57 @@ pivotLabelX = bar_index - lookbackRight
 if bullCond
     if not f_array_has_int(divLabelXs, pivotLabelX)
         labelText = hasStar_Bull ? "⭐Bull" : hasWarning_Bull ? "⚠️Bull" : "Bull"
-        f_createDivLine(prev_plBar, prev_plVal, pivotLabelX, plVal, bullColor)
-        f_createDivLabel(pivotLabelX, plVal - (atr_for_labels * bullLabelOffset), labelText, false, bullColor)
+        f_createDivLine(prev_plBar, prev_pl_cvd_raw, pivotLabelX, pl_cvd_raw, bullColor)
+        f_createDivLabel(pivotLabelX, pl_cvd_raw - (atr_for_labels * bullLabelOffset), labelText, false, bullColor)
 
 // C+P Regular Bearish
 if bearCond
     if not f_array_has_int(divLabelXs, pivotLabelX)
         labelText = hasStar_Bear ? "⭐Bear" : hasWarning_Bear ? "⚠️Bear" : "Bear"
-        f_createDivLine(prev_phBar, prev_phVal, pivotLabelX, phVal, bearColor)
-        f_createDivLabel(pivotLabelX, phVal + (atr_for_labels * bearLabelOffset), labelText, true, bearColor)
+        f_createDivLine(prev_phBar, prev_ph_cvd_raw, pivotLabelX, ph_cvd_raw, bearColor)
+        f_createDivLabel(pivotLabelX, ph_cvd_raw + (atr_for_labels * bearLabelOffset), labelText, true, bearColor)
 
 // C+P Hidden Bullish
 if hiddenBullCond
     if not f_array_has_int(divLabelXs, pivotLabelX)
         labelText = hasStar_Bull ? "⭐H.Bull" : hasWarning_Bull ? "⚠️H.Bull" : "H.Bull"
-        f_createDivLine(prev_plBar, prev_plVal, pivotLabelX, plVal, hiddenBullColor)
-        f_createDivLabel(pivotLabelX, plVal - (atr_for_labels * bullLabelOffset), labelText, false, hiddenBullColor)
+        f_createDivLine(prev_plBar, prev_pl_cvd_raw, pivotLabelX, pl_cvd_raw, hiddenBullColor)
+        f_createDivLabel(pivotLabelX, pl_cvd_raw - (atr_for_labels * bullLabelOffset), labelText, false, hiddenBullColor)
 
 // C+P Hidden Bearish
 if hiddenBearCond
     if not f_array_has_int(divLabelXs, pivotLabelX)
         labelText = hasStar_Bear ? "⭐H.Bear" : hasWarning_Bear ? "⚠️H.Bear" : "H.Bear"
-        f_createDivLine(prev_phBar, prev_phVal, pivotLabelX, phVal, hiddenBearColor)
-        f_createDivLabel(pivotLabelX, phVal + (atr_for_labels * bearLabelOffset), labelText, true, hiddenBearColor)
+        f_createDivLine(prev_phBar, prev_ph_cvd_raw, pivotLabelX, ph_cvd_raw, hiddenBearColor)
+        f_createDivLabel(pivotLabelX, ph_cvd_raw + (atr_for_labels * bearLabelOffset), labelText, true, hiddenBearColor)
 
 // C+V Regular Bullish
 if cvdVolBullRegular
     if not f_array_has_int(divLabelXs, pivotLabelX)
         labelText = hasStar_Bull ? "⭐V.Bull" : hasWarning_Bull ? "⚠️V.Bull" : "V.Bull"
-        f_createDivLine(prev_plBar, prev_plVal, pivotLabelX, plVal, cvdVolBullColor)
-        f_createDivLabel(pivotLabelX, plVal - (atr_for_labels * bullLabelOffset), labelText, false, cvdVolBullColor)
+        f_createDivLine(prev_plBar, prev_pl_cvd_raw, pivotLabelX, pl_cvd_raw, cvdVolBullColor)
+        f_createDivLabel(pivotLabelX, pl_cvd_raw - (atr_for_labels * bullLabelOffset), labelText, false, cvdVolBullColor)
 
 // C+V Regular Bearish
 if cvdVolBearRegular
     if not f_array_has_int(divLabelXs, pivotLabelX)
         labelText = hasStar_Bear ? "⭐V.Bear" : hasWarning_Bear ? "⚠️V.Bear" : "V.Bear"
-        f_createDivLine(prev_phBar, prev_phVal, pivotLabelX, phVal, cvdVolBearColor)
-        f_createDivLabel(pivotLabelX, phVal + (atr_for_labels * bearLabelOffset), labelText, true, cvdVolBearColor)
+        f_createDivLine(prev_phBar, prev_ph_cvd_raw, pivotLabelX, ph_cvd_raw, cvdVolBearColor)
+        f_createDivLabel(pivotLabelX, ph_cvd_raw + (atr_for_labels * bearLabelOffset), labelText, true, cvdVolBearColor)
 
 // C+V Hidden Bullish
 if cvdVolBullHidden
     if not f_array_has_int(divLabelXs, pivotLabelX)
         labelText = hasStar_Bull ? "⭐V.H.Bull" : hasWarning_Bull ? "⚠️V.H.Bull" : "V.H.Bull"
-        f_createDivLine(prev_plBar, prev_plVal, pivotLabelX, plVal, cvdVolHiddenBullColor)
-        f_createDivLabel(pivotLabelX, plVal - (atr_for_labels * bullLabelOffset), labelText, false, cvdVolHiddenBullColor)
+        f_createDivLine(prev_plBar, prev_pl_cvd_raw, pivotLabelX, pl_cvd_raw, cvdVolHiddenBullColor)
+        f_createDivLabel(pivotLabelX, pl_cvd_raw - (atr_for_labels * bullLabelOffset), labelText, false, cvdVolHiddenBullColor)
 
 // C+V Hidden Bearish
 if cvdVolBearHidden
     if not f_array_has_int(divLabelXs, pivotLabelX)
         labelText = hasStar_Bear ? "⭐V.H.Bear" : hasWarning_Bear ? "⚠️V.H.Bear" : "V.H.Bear"
-        f_createDivLine(prev_phBar, prev_phVal, pivotLabelX, phVal, cvdVolHiddenBearColor)
-        f_createDivLabel(pivotLabelX, phVal + (atr_for_labels * bearLabelOffset), labelText, true, cvdVolHiddenBearColor)
+        f_createDivLine(prev_phBar, prev_ph_cvd_raw, pivotLabelX, ph_cvd_raw, cvdVolHiddenBearColor)
+        f_createDivLabel(pivotLabelX, ph_cvd_raw + (atr_for_labels * bearLabelOffset), labelText, true, cvdVolHiddenBearColor)
 
 // --- Background Alerts ---
 isBull = bullCond or hiddenBullCond or cvdVolBullRegular or cvdVolBullHidden

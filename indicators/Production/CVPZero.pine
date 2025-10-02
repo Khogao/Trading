@@ -174,6 +174,13 @@ plVal = ta.pivotlow(pivotSource, lookbackLeft, lookbackRight)
 phVal = ta.pivothigh(pivotSource, lookbackLeft, lookbackRight)
 plFound = not na(plVal)
 phFound = not na(phVal)
+
+// Store Raw CVD Values for Line Drawing (when Z-Score enabled, plVal/phVal are normalized)
+pl_cvd_raw = plFound ? cvdSource[lookbackRight] : na
+ph_cvd_raw = phFound ? cvdSource[lookbackRight] : na
+prev_pl_cvd_raw = ta.valuewhen(plFound[1], pl_cvd_raw[1], 0)
+prev_ph_cvd_raw = ta.valuewhen(phFound[1], ph_cvd_raw[1], 0)
+
 plSince = ta.barssince(plFound)
 phSince = ta.barssince(phFound)
 inRangePL_now = plSince[1] >= rangeLower and plSince[1] <= rangeUpper
@@ -344,16 +351,16 @@ if divChartDisplay == "All on Price Chart" and phFound and cvdVolBear and not na
 // === CVD DIVERGENCE LINES (CVD+Price on CVD chart) ===
 // Vẽ đường nối CVD+Price divergence trên CVD chart bằng line.new (scaled)
 if showCvdPriceDivLines and plFound and (bullCond or hiddenBullCond) and not na(prev_plBar)
-    y1_scaled = (prev_plVal * cvdYScale) + cvdZeroOffset
-    y2_scaled = (plVal * cvdYScale) + cvdZeroOffset
+    y1_scaled = (prev_pl_cvd_raw * cvdYScale) + cvdZeroOffset
+    y2_scaled = (pl_cvd_raw * cvdYScale) + cvdZeroOffset
     newLine = line.new(x1=int(prev_plBar), y1=y1_scaled, x2=bar_index - lookbackRight, y2=y2_scaled, color=bullDivColor, width=2)
     array.unshift(cvdDivLines, newLine)
     if array.size(cvdDivLines) > maxDivLines
         line.delete(array.pop(cvdDivLines))
 
 if showCvdPriceDivLines and phFound and (bearCond or hiddenBearCond) and not na(prev_phBar)
-    y1_scaled = (prev_phVal * cvdYScale) + cvdZeroOffset
-    y2_scaled = (phVal * cvdYScale) + cvdZeroOffset
+    y1_scaled = (prev_ph_cvd_raw * cvdYScale) + cvdZeroOffset
+    y2_scaled = (ph_cvd_raw * cvdYScale) + cvdZeroOffset
     newLine = line.new(x1=int(prev_phBar), y1=y1_scaled, x2=bar_index - lookbackRight, y2=y2_scaled, color=bearDivColor, width=2)
     array.unshift(cvdDivLines, newLine)
     if array.size(cvdDivLines) > maxDivLines
@@ -365,16 +372,16 @@ cvdVolBullLineColor = cvdVolBull ? (cvdVolBullRegular ? CVDVOL_BULL_REGULAR_COLO
 cvdVolBearLineColor = cvdVolBear ? (cvdVolBearRegular ? CVDVOL_BEAR_REGULAR_COLOR : CVDVOL_BEAR_HIDDEN_COLOR) : color.new(color.white, 100)
 
 if showCvdVolDivLines and divChartDisplay == "All on CVD Chart" and plFound and cvdVolBull and not na(prev_plBar)
-    y1_scaled = (prev_plVal * cvdYScale) + cvdZeroOffset
-    y2_scaled = (plVal * cvdYScale) + cvdZeroOffset
+    y1_scaled = (prev_pl_cvd_raw * cvdYScale) + cvdZeroOffset
+    y2_scaled = (pl_cvd_raw * cvdYScale) + cvdZeroOffset
     newLine = line.new(x1=int(prev_plBar), y1=y1_scaled, x2=bar_index - lookbackRight, y2=y2_scaled, color=cvdVolBullLineColor, width=1, style=line.style_dotted)
     array.unshift(cvdDivLines, newLine)
     if array.size(cvdDivLines) > maxDivLines
         line.delete(array.pop(cvdDivLines))
 
 if showCvdVolDivLines and divChartDisplay == "All on CVD Chart" and phFound and cvdVolBear and not na(prev_phBar)
-    y1_scaled = (prev_phVal * cvdYScale) + cvdZeroOffset
-    y2_scaled = (phVal * cvdYScale) + cvdZeroOffset
+    y1_scaled = (prev_ph_cvd_raw * cvdYScale) + cvdZeroOffset
+    y2_scaled = (ph_cvd_raw * cvdYScale) + cvdZeroOffset
     newLine = line.new(x1=int(prev_phBar), y1=y1_scaled, x2=bar_index - lookbackRight, y2=y2_scaled, color=cvdVolBearLineColor, width=1, style=line.style_dotted)
     array.unshift(cvdDivLines, newLine)
     if array.size(cvdDivLines) > maxDivLines
