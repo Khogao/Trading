@@ -50,7 +50,7 @@ volumeChartAlpha = input.int(20, "Alpha: Volume", minval=0, maxval=100, group = 
 bullLabelOffset = input.float(0.5, "Label Offset: Bull", minval=0.0, maxval=5.0, step=0.1, group=GRP_DISPLAY)
 bearLabelOffset = input.float(0.5, "Label Offset: Bear", minval=0.0, maxval=5.0, step=0.1, group=GRP_DISPLAY)
 showTable = input.bool(true, 'Multi-TF Table', group = GRP_DISPLAY)
-tablePosition = input.string("top_right", "Table Position", options=['top_left','top_right'], group = GRP_DISPLAY)
+tablePosition = input.string("top_right", "Table Position", options=['top_left','top_right','bottom_left','bottom_right'], group = GRP_DISPLAY)
 
 // === NHOM 4: ALERTS ===
 const string GRP_ALERTS = "🔔 Cảnh báo (Alerts)"
@@ -70,6 +70,8 @@ bullColor = input.color(color.green, "Màu tăng (Bullish)", group = GRP_COLORS)
 bearColor = input.color(color.red, "Màu giảm (Bearish)", group = GRP_COLORS)
 hiddenBullColor = input.color(color.green, "Màu phân kỳ ẩn tăng", group = GRP_COLORS)
 hiddenBearColor = input.color(color.red, "Màu phân kỳ ẩn giảm", group = GRP_COLORS)
+cvdBullCandleColor = input.color(color.teal, "Màu nến CVD tăng", group = GRP_COLORS)
+cvdBearCandleColor = input.color(color.red, "Màu nến CVD giảm", group = GRP_COLORS)
 
 // === Màu sắc cho styling (dựa trên inputs) ===
 BULL_COLOR = color.new(bullColor, 20)
@@ -174,8 +176,8 @@ cvdLineColor = cvdSource > cvdSource[1] ? color.blue : color.orange
 pCVD = plot((cvdSource * cvdYScale) + cvdZeroOffset, "CVD", color=color.new(cvdLineColor, cvdChartAlpha), linewidth=2, display=isLinePlot ? display.all : display.none)
 pMA  = plot((cvdMA * cvdYScale) + cvdZeroOffset, "CVD MA", color=color.new(color.gray, cvdChartAlpha), linewidth=1, display=isLinePlot ? display.all : display.none)
 fill(pCVD, pMA, color=isLinePlot ? (cvdSource > cvdMA ? color.new(color.blue, cvdChartAlpha) : color.new(color.orange, cvdChartAlpha)) : na)
-// CVD candle color (alpha-aware)
-cCol = lastVolume >= openVolume ? color.new(color.teal, cvdChartAlpha) : color.new(color.red, cvdChartAlpha)
+// CVD candle color (alpha-aware, uses user-selected colors)
+cCol = lastVolume >= openVolume ? color.new(cvdBullCandleColor, cvdChartAlpha) : color.new(cvdBearCandleColor, cvdChartAlpha)
 // shift CVD candle visuals to be anchored at cvdZeroOffset (baseline), apply Y scale
 plotcandle((openVolume * cvdYScale) + cvdZeroOffset, (maxVolume * cvdYScale) + cvdZeroOffset, (minVolume * cvdYScale) + cvdZeroOffset, (lastVolume * cvdYScale) + cvdZeroOffset, "CVD Candles", color=cCol, bordercolor=cCol, wickcolor=cCol, display=isCandlePlot ? display.all : display.none)
 cvdMA_bb = ta.sma(cvdSource, maLengthInput)
@@ -267,18 +269,18 @@ cell_col_1h  = cvd_1h  > ma_1h  ? color.new(color.green, 70) : color.new(color.r
 cell_col_4h  = cvd_4h  > ma_4h  ? color.new(color.green, 70) : color.new(color.red, 70)
 
 if showTable and barstate.islast
-    table_pos = tablePosition == "top_right" ? position.top_right : position.top_left
-    var table cvdTable = table.new(position=table_pos, columns=2, rows=5, bgcolor=color.new(color.gray, 80), border_width=1, frame_color=color.new(color.gray, 60))
-    table.cell(cvdTable, 0, 0, "TF", text_size=size.tiny, bgcolor=color.new(color.gray, 60), text_color=color.white)
-    table.cell(cvdTable, 1, 0, "CVD", text_size=size.tiny, bgcolor=color.new(color.gray, 60), text_color=color.white)
-    table.cell(cvdTable, 0, 1, "5m", text_size=size.tiny)
-    table.cell(cvdTable, 1, 1, str.tostring(cvd_5m, format.mintick), bgcolor=cell_col_5m, text_color=color.white, text_size=size.tiny)
-    table.cell(cvdTable, 0, 2, "15m", text_size=size.tiny)
-    table.cell(cvdTable, 1, 2, str.tostring(cvd_15m, format.mintick), bgcolor=cell_col_15m, text_color=color.white, text_size=size.tiny)
-    table.cell(cvdTable, 0, 3, "1H", text_size=size.tiny)
-    table.cell(cvdTable, 1, 3, str.tostring(cvd_1h, format.mintick), bgcolor=cell_col_1h, text_color=color.white, text_size=size.tiny)
-    table.cell(cvdTable, 0, 4, "4H", text_size=size.tiny)
-    table.cell(cvdTable, 1, 4, str.tostring(cvd_4h, format.mintick), bgcolor=cell_col_4h, text_color=color.white, text_size=size.tiny)
+    table_pos = tablePosition == "top_right" ? position.top_right : tablePosition == "top_left" ? position.top_left : tablePosition == "bottom_left" ? position.bottom_left : position.bottom_right
+    var table cvdTable = table.new(position=table_pos, columns=2, rows=5, bgcolor=color.new(color.gray, 80), border_width=2, frame_color=color.new(color.gray, 50))
+    table.cell(cvdTable, 0, 0, "TF", text_size=size.small, bgcolor=color.new(color.gray, 60), text_color=color.white)
+    table.cell(cvdTable, 1, 0, "CVD", text_size=size.small, bgcolor=color.new(color.gray, 60), text_color=color.white)
+    table.cell(cvdTable, 0, 1, "5m", text_size=size.small)
+    table.cell(cvdTable, 1, 1, str.tostring(cvd_5m, format.mintick), bgcolor=cell_col_5m, text_color=color.white, text_size=size.small)
+    table.cell(cvdTable, 0, 2, "15m", text_size=size.small)
+    table.cell(cvdTable, 1, 2, str.tostring(cvd_15m, format.mintick), bgcolor=cell_col_15m, text_color=color.white, text_size=size.small)
+    table.cell(cvdTable, 0, 3, "1H", text_size=size.small)
+    table.cell(cvdTable, 1, 3, str.tostring(cvd_1h, format.mintick), bgcolor=cell_col_1h, text_color=color.white, text_size=size.small)
+    table.cell(cvdTable, 0, 4, "4H", text_size=size.small)
+    table.cell(cvdTable, 1, 4, str.tostring(cvd_4h, format.mintick), bgcolor=cell_col_4h, text_color=color.white, text_size=size.small)
 
 // alerts are declared later after VSA logic to ensure volume guards are available
 
