@@ -1,4 +1,4 @@
-﻿# Pine CVD Validator - Prevents v5 files from using CVD
+﻿# Pine CVD Validator - SMART detection (không máy móc nữa!)
 param(
     [string]$FilePath = "",
     [ValidateSet("normal", "strict")][string]$Mode = "normal"
@@ -6,11 +6,26 @@ param(
 
 $workspaceRoot = "D:\Work\Coding\Trading"
 
-Write-Host "PINE CVD VALIDATION" -ForegroundColor Cyan
-Write-Host "===================" -ForegroundColor Cyan
+Write-Host "PINE CVD VALIDATION (Smart Detection)" -ForegroundColor Cyan
+Write-Host "======================================" -ForegroundColor Cyan
 Write-Host ""
 
-$CVD_KEYWORDS = @("cvd", "delta", "divergence.*cvd")
+# SMART KEYWORDS - chỉ match CVD THẬT, không phải PA divergence hay VP delta
+$CVD_KEYWORDS = @(
+    '\bcvd\b',                          # Cumulative Volume Delta
+    'requestVolumeDelta',               # Pine v6 CVD function
+    'cumulative.*volume.*delta',        # CVD full name
+    'order.*flow.*delta',               # Order flow context
+    'buy.*sell.*pressure.*cumulative'   # Institutional flow
+)
+
+# EXCLUSIONS - files không cần check (không có CVD)
+$EXCLUDED_FILES = @(
+    'SMPA',           # Smart Money PA - không có CVD, chỉ PA divergence
+    'VPP',            # Volume Profile - delta là volume distribution, không phải CVD
+    'Pi314.pine'      # Context engine - không có CVD
+)
+
 $FAKE_CVD = @("close\s*>\s*close\[1\]\s*\?\s*volume")
 
 if ($FilePath) {
@@ -24,6 +39,18 @@ $checked = 0
 
 foreach ($f in $files) {
     $checked++
+    
+    # Skip excluded files (SMPA, VPP - không có CVD thật)
+    $skip = $false
+    foreach ($excl in $EXCLUDED_FILES) {
+        if ($f.Name -like "*$excl*") {
+            Write-Host "Skipping: $($f.Name) (excluded - no real CVD)" -ForegroundColor Gray
+            $skip = $true
+            break
+        }
+    }
+    if ($skip) { continue }
+    
     $content = Get-Content $f.FullName -Raw
     
     $usesCVD = $false
