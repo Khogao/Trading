@@ -2,9 +2,20 @@
 // © lenguyenphi
 
 //@version=6
+// ============================================================================
 // TITLE: CVD+VSA Pro (Volume by Z-Score + Multi-TF CVD Dashboard)
-// DESC: Fork từ Better CVD + (plotdiv-fork) với tích hợp 16 tín hiệu VSA cơ bản, absorption, UI tối giản, marker ký tự viết tắt, đúng màu/vị trí.
-// Author: Khogao, 2025 (modified for Z-score volume coloring + multi-TF dashboard)
+// AUTHOR: Khogao + AI Assistant (100% our code, 2025)
+// INSPIRATION: Greg's philosophy - Order flow + Context awareness
+// ============================================================================
+// DESC: Combines CVD divergence detection with VSA signal integration.
+// Features Z-score volume classification, multi-TF dashboard, and professional
+// divergence detection with DGT Z-Score normalization + Luc_Trader volume filters.
+// 
+// AUTHORSHIP NOTE:
+// - Greg provided: Trading philosophy and 5-year journey lessons
+// - HiveScale OP: Institutional perspective on order flow (Reddit AMA)
+// - We built: 100% of this indicator code, research, and implementation
+// ============================================================================
 
 indicator("CVD+VSA ProZero", "CVPZ", overlay = true)
 import TradingView/ta/8 as tav5

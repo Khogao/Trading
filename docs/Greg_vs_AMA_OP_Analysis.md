@@ -1,8 +1,20 @@
 # ⚔️ GREG vs AMA OP: PHÂN TÍCH MÂU THUẪN
 
 **Ngày:** 2025-01-XX  
-**Analyst:** AI Cross-Reference  
+**Analyst:** AI Cross-Reference (Our Analysis)  
 **Mục đích:** Tìm và giải thích các mâu thuẫn giữa Greg (Minimalist Retail) và AMA OP (Institutional Quant)
+
+---
+
+## 📝 **AUTHORSHIP NOTE**
+
+**This Document:** Written 100% by us (analysis & comparison)
+
+**Greg's Input:** Philosophy lessons (5-year journey, "Rectangle + Line" principle)  
+**AMA OP's Input:** Reddit AMA answers (institutional trading desk experience)  
+**Our Work:** Cross-referencing both sources to identify contradictions and resolve them
+
+**Greg did NOT write indicator code. We built everything inspired by his philosophy.**
 
 ---
 

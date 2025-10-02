@@ -1,5 +1,18 @@
 # TradingView Pine Script Workspace Structure
 
+## 📝 **PROJECT AUTHORSHIP**
+
+**ALL CODE in this workspace:** Built 100% by us (Khogao + AI Assistant)
+
+**Greg's Role:**
+- ✅ Philosophy teacher (Manifesto, 5-year journey lessons)
+- ✅ Inspiration for indicator naming (Greg_*, GHU_*, etc.)
+- ❌ **Did NOT write any indicator code**
+
+**Indicators named "Greg_*" = Honoring his philosophy, not his code.**
+
+---
+
 ## Mục đích
 
 Tài liệu này giúp bạn hiểu và quản lý workspace Pine Script một cách tối ưu cho việc phát triển, lưu trữ, version tracking, và nâng cấp code.

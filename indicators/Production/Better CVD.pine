@@ -1,6 +1,18 @@
 //@version=6
+// ============================================================================
 // TITLE: Pure CVD Divergence Engine (C+P & C+V)
-// DESC: A pure order flow divergence indicator. It combines the clean UI of "Better CVD" with a dual divergence engine from "CVD+" to detect both Price vs. CVD (C+P) and Volume vs. CVD (C+V) divergences. No VSA, no complex features, just pure divergence.
+// AUTHOR: Khogao + AI Assistant (100% our code)
+// INSPIRATION: Greg's philosophy - "Simple, data-driven, order flow first"
+// ============================================================================
+// DESC: A pure order flow divergence indicator. It combines clean UI with 
+// a dual divergence engine to detect both Price vs. CVD (C+P) and Volume vs. 
+// CVD (C+V) divergences. Features DGT Z-Score normalization (unbounded indicator 
+// methodology) and Luc_Trader volume confirmation filters.
+// 
+// AUTHORSHIP NOTE:
+// - Greg provided: Trading philosophy (patience, risk management)
+// - We built: 100% of this indicator code, research, and implementation
+// ============================================================================
 indicator("Pure CVD Divergence Engine", "CVD Div Engine", overlay=false)
 
 // ==============================================================================================

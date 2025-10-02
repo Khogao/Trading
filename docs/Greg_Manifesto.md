@@ -3,6 +3,15 @@
 
 ---
 
+## 📝 **AUTHORSHIP NOTE**
+
+**Content:** Greg's original philosophy and 7 trading rules  
+**Format:** Structured and formatted by us for clarity
+
+**Greg provided the WISDOM, we documented it.**
+
+---
+
 ## 📜 QUY TẮC 01
 ### **BẢO VỆ VỐN LÀ MỆNH LỆNH TỐI THƯỢNG**
 

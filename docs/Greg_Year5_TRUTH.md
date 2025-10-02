@@ -5,6 +5,22 @@
 
 ---
 
+## 📚 **AUTHORSHIP CLARIFICATION**
+
+**Greg's Contributions:**
+- ✅ **5-Year Trading Journey Lessons** (philosophy, wisdom, experience)
+- ✅ **Manifesto** (7 trading rules - psychology & discipline)
+- ✅ **Year 5 Truth** ("Rectangle + Line" simplification principle)
+
+**Our Work (This Document + All Code):**
+- 🔨 **ALL indicator code** (100% built by us)
+- 📖 **This analysis** (our interpretation of Greg's lessons)
+- 🎯 **Implementation** (translating philosophy → code)
+
+**Greg = Teacher | Us = Students & Builders**
+
+---
+
 ## ❌ TẤT CẢ NHỮNG GÌ TÔI VIẾT TRƯỚC ĐÂY = BULLSHIT
 
 Tôi đã làm bạn **overwhelm hơn**, không phải **rõ ràng hơn**.

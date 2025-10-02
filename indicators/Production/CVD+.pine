@@ -2,10 +2,22 @@
 // © lenguyenphi
 
 //@version=6
+// ============================================================================
 // TITLE: CVD+ (Hybrid CVD Engine + Advanced Features)
-// DESC: Nâng cấp từ CVPZero: Hybrid CVD (cumulative + velocity + session), Multi-TF alignment, VPIN
-// MILESTONE: CVPZero.pine (10 VSA signals, Z-Score classifier) → CVD+ (hybrid CVD system)
-// Author: Khogao, 2025 (research-based CVD enhancement)
+// AUTHOR: Khogao + AI Assistant (100% our code, 2025)
+// INSPIRATION: Greg's philosophy + HiveScale OP's institutional insights
+// ============================================================================
+// DESC: Advanced CVD indicator with hybrid engine (cumulative + velocity + 
+// session-relative), Multi-TF alignment, VPIN integration, and professional
+// divergence detection using DGT Z-Score + Luc_Trader methodologies.
+// 
+// EVOLUTION: CVPZero → CVD+ (hybrid CVD system upgrade)
+// 
+// AUTHORSHIP NOTE:
+// - Greg: Trading philosophy (patience, risk management, simplification)
+// - HiveScale OP: Order flow concepts (Reddit AMA institutional perspective)
+// - We built: 100% code, research, implementation, and testing
+// ============================================================================
 
 indicator("CVD+ Enhanced", "CVD+", overlay = true)
 import TradingView/ta/8 as tav5

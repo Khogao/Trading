@@ -19,6 +19,20 @@
 - ✅ KHÔNG cố trở thành institutional (khác tools, khác goals)
 - ✅ Xây hệ thống phù hợp với strengths/weaknesses của retail
 
+### Anti-Rabbit Hole Principle (Nguyên tắc chống Sa lầy)
+
+> **"Hệ thống giao dịch là một dàn nhạc, không phải một cuộc thi của các nhạc công solo. Đừng đi tìm một chỉ báo 'hoàn hảo', hãy xây dựng một quy trình làm việc 'hoàn hảo' giữa các công cụ bạn đã có."**
+
+**Các vấn đề cần tránh (The Traps):**
+- **Bẫy Phức Tạp Hóa (The Complexity Trap):** Niềm tin rằng một chỉ báo với nhiều tín hiệu, nhiều đường kẻ hơn sẽ cho kết quả tốt hơn. Điều này dẫn đến "analysis paralysis".
+- **Bẫy Tối Giản Hóa Mù Quáng (The Oversimplification Trap):** Tìm kiếm một "chén thánh" duy nhất, một đường kẻ ma thuật có thể giải quyết mọi vấn đề, dẫn đến việc bỏ qua các bối cảnh quan trọng.
+
+**Cách ngăn ngừa (The Prevention):**
+1.  **Cam kết với HỆ THỐNG, không phải CÔNG CỤ:** Edge của bạn không nằm trong một chỉ báo, mà nằm trong **quy trình (workflow)** bạn thực thi giữa các chỉ báo.
+2.  **TINH CHỈNH, không THAY THẾ:** Trước khi tìm một công cụ mới, hãy tự hỏi: "Tôi đã thực sự làm chủ và tinh chỉnh công cụ hiện tại đến giới hạn của nó chưa?".
+3.  **XÁC ĐỊNH VAI TRÒ RÕ RÀNG:** Mỗi công cụ phải có một vai trò duy nhất, không chồng chéo: một cho Cấu trúc (WHERE), một cho Xác nhận (WHEN), một cho Tinh chỉnh (ENTRY).
+4.  **ĐO LƯỜNG, không CẢM TÍNH:** Mọi thay đổi trong hệ thống phải dựa trên dữ liệu từ nhật ký giao dịch và backtest, không phải cảm giác sau một vài lệnh thắng/thua.
+
 ---
 
 ## 📊 PHẦN 1: INSTITUTIONAL vs RETAIL - Hai thế giới khác nhau

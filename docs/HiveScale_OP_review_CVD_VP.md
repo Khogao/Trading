@@ -1,8 +1,20 @@
 # Phân tích CVD+VSA Pro Indicator theo quan điểm của HiveScale (OP)
 
+## 📝 **AUTHORSHIP NOTE**
+
+**This Review:** Written 100% by us (analyzing our own indicators)
+
+**HiveScale OP's Input:** Reddit AMA answers about institutional trading  
+**Our Indicators:** Built 100% by us (CVD+VSA Pro, Better CVD, CVPZero, etc.)  
+**This Analysis:** Our interpretation of how OP would review our work
+
+**OP did NOT review our code. We're self-reviewing through OP's lens.**
+
+---
+
 ## Tổng quan từ góc nhìn institutional trader
 
-Dựa trên những gì OP chia sẻ trong AMA, tôi sẽ phân tích indicator này một cách trực tính và chuyên nghiệp như Charlie - không sugarcoat.
+Dựa trên những gì OP chia sẻ trong AMA, tôi sẽ phân tích indicator này (that WE built) một cách trực tính và chuyên nghiệp như Charlie - không sugarcoat.
 
 ---
 
