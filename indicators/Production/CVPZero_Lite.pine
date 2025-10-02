@@ -289,7 +289,7 @@ if showTable and barstate.islast
     table.cell(cvdTable, 1, 2, str.tostring(cvd_15m, format.mintick), bgcolor=cell_col_15m, text_color=color.white, text_size=size.small)
     table.cell(cvdTable, 0, 3, "1H", text_size=size.small)
     table.cell(cvdTable, 1, 3, str.tostring(cvd_1h, format.mintick), bgcolor=cell_col_1h, text_color=color.white, text_size=size.small)
-    table.cell(cvdTable, 0, 4, "4H", text_size=size.size.small)
+    table.cell(cvdTable, 0, 4, "4H", text_size=size.small)
     table.cell(cvdTable, 1, 4, str.tostring(cvd_4h, format.mintick), bgcolor=cell_col_4h, text_color=color.white, text_size=size.small)
 
 // === NHOM 6: VSA SIGNALS (Top 10 cho Crypto) ===
@@ -350,7 +350,12 @@ isUltraHigh_zscore = vol_z >= (vsa_zscore_sensitivity + 2.0)
 isHigh_final = vsaClassifierMethod == "zscore" ? isHigh_zscore : isHigh_ratio
 isVeryHigh_final = vsaClassifierMethod == "zscore" ? isVeryHigh_zscore : isVeryHigh_ratio
 isUltraHigh_final = vsaClassifierMethod == "zscore" ? isUltraHigh_zscore : isUltraHigh_ratio
-lowVolume_vsa = volume < volumeMA_vsa2 * 0.7
+// LOW VOLUME classification - FIXED to be consistent with high volume method
+// Z-score: -1.0 SD below mean (bottom 16% of distribution, adaptive to timeframe)
+// Ratio: 0.7x volumeMA (simple fixed threshold, works well for LTF)
+// This affects No Supply (NS), No Demand (ND), and Spring (SP) signals
+isLow_zscore = vol_z <= -1.0
+lowVolume_vsa = vsaClassifierMethod == "zscore" ? isLow_zscore : (volume < volumeMA_vsa2 * 0.7)
 highVolume_vsa = isHigh_final
 veryHighVolume_vsa = isVeryHigh_final
 ultraHighVolume_vsa = isUltraHigh_final
@@ -444,18 +449,32 @@ if enableVsaDivPattern and meetsMinTF
     vsaDivBullishReversal = prevBarHadVSABear and (bullCond or hiddenBullCond or cvdVolBullRegular or cvdVolBullHidden)
     if showVsaDivMarker and barstate.isconfirmed
         if vsaDivBearishReversal and not f_array_has_int(vsaDivPatternXs, bar_index)
-            patternLabel = label.new(x=bar_index, y=high + (atr_for_labels * bearLabelOffset * 1.5), text="⬥ VSA→DIV", style=label.style_label_down, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.small, tooltip="HIGH-PROB BEARISH REVERSAL
-Prev: VSA Bull → Now: Divergence Bear
-Wyckoff Distribution Pattern")
+            patternLabel = label.new(
+                x=bar_index,
+                y=high + (atr_for_labels * bearLabelOffset * 1.5),
+                text="⬥ VSA→DIV",
+                style=label.style_label_down,
+                color=color.new(color.fuchsia, 0),
+                textcolor=color.white,
+                size=size.small,
+                tooltip="HIGH-PROB BEARISH REVERSAL\nPrev: VSA Bull → Now: Divergence Bear\nWyckoff Distribution Pattern"
+            )
             array.unshift(vsaDivPatternLabels, patternLabel)
             array.unshift(vsaDivPatternXs, bar_index)
             if array.size(vsaDivPatternLabels) > 50
                 label.delete(array.pop(vsaDivPatternLabels))
                 array.pop(vsaDivPatternXs)
         if vsaDivBullishReversal and not f_array_has_int(vsaDivPatternXs, bar_index)
-            patternLabel = label.new(x=bar_index, y=low - (atr_for_labels * bullLabelOffset * 1.5), text="⬥ VSA→DIV", style=label.style_label_up, color=color.new(color.aqua, 0), textcolor=color.white, size=size.small, tooltip="HIGH-PROB BULLISH REVERSAL
-Prev: VSA Bear → Now: Divergence Bull
-Wyckoff Accumulation Pattern")
+            patternLabel = label.new(
+                x=bar_index,
+                y=low - (atr_for_labels * bullLabelOffset * 1.5),
+                text="⬥ VSA→DIV",
+                style=label.style_label_up,
+                color=color.new(color.aqua, 0),
+                textcolor=color.white,
+                size=size.small,
+                tooltip="HIGH-PROB BULLISH REVERSAL\nPrev: VSA Bear → Now: Divergence Bull\nWyckoff Accumulation Pattern"
+            )
             array.unshift(vsaDivPatternLabels, patternLabel)
             array.unshift(vsaDivPatternXs, bar_index)
             if array.size(vsaDivPatternLabels) > 50
@@ -498,10 +517,10 @@ hiddenCvdVolBear = cvdVolBearHidden
 
 // All alertcondition calls are kept as they are independent of plotting
 // [CẤP 1A] CVD+Giá Phân Kỳ Thường
-alertcondition(enableBasicDivAlerts and bullCond, 'C+P: Thường Tăng', 'CVPZ: 🟢 Phân Kỳ CVD+Giá TĂNG
+alertcondition(enableBasicDivAlerts and bullCond, 'C+P: Thường Tăng', """CVPZ: 🟢 Phân Kỳ CVD+Giá TĂNG
 📊 Giá xuống thấp mới, CVD cao hơn
 ⚠️ Cần: Confirm bằng nến đảo chiều
-📈 Win rate ~55%')
+📈 Win rate ~55%""")
 alertcondition(enableBasicDivAlerts and bearCond, 'C+P: Thường Giảm', 'CVPZ: 🔴 Phân Kỳ CVD+Giá GIẢM
 📊 Giá lên cao mới, CVD thấp hơn
 ⚠️ Cần: Confirm bằng nến đảo chiều
@@ -583,4 +602,3 @@ vsaDivBullishRev = enableVsaDivPattern and meetsMinTF and prevBarHadVSABear[1] a
 alertcondition(vsaDivAlertEnabled and vsaDivBullishRev, '⬥ VSA→PK: TĂNG', 'CVPZ: ⬥⬥⬥ VSA→PHÂN KỲ ĐẢO CHIỀU TĂNG ⬥⬥⬥
 Pattern: VSA Bearish → Divergence Bullish
 Wyckoff Accumulation - High Probability!')
-
