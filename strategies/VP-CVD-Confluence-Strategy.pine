@@ -1,0 +1,527 @@
+//@version=6
+// TITLE: VP-CVD Confluence Strategy
+// DESC: Kết hợp Volume Profile (structure) và CVD+VSA (order flow) cho retail discretionary trading
+// Author: Khogao, October 2025
+// Philosophy: "VPP5+ tells WHERE (structure), CVPZero tells WHEN (timing)"
+
+strategy("VP-CVD Confluence", "VPC", overlay=true, 
+     initial_capital=10000, 
+     default_qty_type=strategy.percent_of_equity, 
+     default_qty_value=100,
+     commission_type=strategy.commission.percent, 
+     commission_value=0.1,
+     slippage=5)
+
+// ============================================================================
+// NHOM 1: STRATEGY SETTINGS
+// ============================================================================
+const string GRP_STRATEGY = "⚙️ Strategy Settings"
+riskPercent = input.float(1.0, "Risk per Trade (%)", minval=0.1, maxval=5.0, step=0.1, group=GRP_STRATEGY, tooltip="Phần trăm vốn rủi ro mỗi lệnh (1-2% recommended)")
+minConditions = input.int(6, "Min Conditions (6-8)", minval=5, maxval=8, group=GRP_STRATEGY, tooltip="Số điều kiện tối thiểu để vào lệnh (6=good, 7=beautiful, 8=sure)")
+useTimeBasedExit = input.bool(true, "Use Time-Based Exit", group=GRP_STRATEGY, tooltip="Đóng lệnh nếu không có movement sau X bars")
+maxBarsInTrade = input.int(16, "Max Bars in Trade", minval=4, maxval=100, group=GRP_STRATEGY, tooltip="Số bars tối đa giữ lệnh (16 bars = 4H trên 15m chart)")
+maxTradesPerDay = input.int(3, "Max Trades per Day", minval=1, maxval=10, group=GRP_STRATEGY, tooltip="Circuit breaker: giới hạn số lệnh mỗi ngày")
+
+// ============================================================================
+// NHOM 2: VOLUME PROFILE ENGINE (from VPP5+)
+// ============================================================================
+const string GRP_VP = "📊 Volume Profile"
+vpLookback = input.int(200, "VP Lookback Bars", minval=20, maxval=500, group=GRP_VP)
+vpLevels = input.int(120, "VP Price Levels", minval=20, maxval=200, group=GRP_VP)
+vpVaPercent = input.int(70, "Value Area %", minval=50, maxval=90, group=GRP_VP)
+htfTimeframe = input.timeframe("240", "HTF Timeframe", group=GRP_VP, tooltip="Higher timeframe cho POC reference (4H recommended)")
+showVpLines = input.bool(true, "Show VP Lines", group=GRP_VP)
+
+// ============================================================================
+// NHOM 3: CVD ENGINE (from CVPZero)
+// ============================================================================
+const string GRP_CVD = "📈 CVD Engine"
+cvdAnchor = input.timeframe("D", "CVD Reset Period", group=GRP_CVD, tooltip="Chu kỳ reset CVD ('D' recommended cho intraday)")
+cvdMaLength = input.int(20, "CVD MA Length", minval=5, maxval=100, group=GRP_CVD)
+cvdMaType = input.string("SMA", "CVD MA Type", options=["SMA", "EMA", "WMA"], group=GRP_CVD)
+
+// ============================================================================
+// NHOM 4: VSA SIGNALS (from CVPZero)
+// ============================================================================
+const string GRP_VSA = "💡 VSA Signals"
+vsaSensitivity = input.float(1.5, "VSA Sensitivity", minval=1.0, maxval=3.0, step=0.1, group=GRP_VSA)
+vsaVolumeLength = input.int(20, "VSA Volume MA Length", minval=10, maxval=50, group=GRP_VSA)
+enableSpring = input.bool(true, "Enable Spring (SP)", group=GRP_VSA)
+enableUpthrust = input.bool(true, "Enable Upthrust (UT)", group=GRP_VSA)
+enableStoppingVolume = input.bool(true, "Enable Stopping Vol (SV)", group=GRP_VSA)
+enableNoSupply = input.bool(true, "Enable No Supply (NS)", group=GRP_VSA)
+
+// ============================================================================
+// NHOM 5: MULTI-TIMEFRAME
+// ============================================================================
+const string GRP_MTF = "🕐 Multi-Timeframe"
+useMtfFilter = input.bool(true, "Use Multi-TF Filter", group=GRP_MTF, tooltip="Chỉ trade khi tất cả TF aligned")
+tf1 = input.timeframe("15", "TF1 (Lower)", group=GRP_MTF)
+tf2 = input.timeframe("60", "TF2 (Mid)", group=GRP_MTF)
+tf3 = input.timeframe("240", "TF3 (Higher)", group=GRP_MTF)
+
+// ============================================================================
+// NHOM 6: RISK MANAGEMENT
+// ============================================================================
+const string GRP_RISK = "🛡️ Risk Management"
+atrMultiplier = input.float(1.0, "ATR Multiplier for Stop", minval=0.5, maxval=3.0, step=0.1, group=GRP_RISK)
+atrLength = input.int(14, "ATR Length", minval=5, maxval=50, group=GRP_RISK)
+tp1Percent = input.float(50.0, "TP1 Close %", minval=10, maxval=100, step=10, group=GRP_RISK, tooltip="Phần trăm đóng ở POC")
+useTrailingStop = input.bool(true, "Use Trailing Stop", group=GRP_RISK, tooltip="Trail stop sau khi hit TP1")
+
+// ============================================================================
+// NHOM 7: FILTERS & CONDITIONS
+// ============================================================================
+const string GRP_FILTERS = "🔍 Filters"
+minVolumeZscore = input.float(1.0, "Min Volume Z-Score", minval=0.0, maxval=5.0, step=0.1, group=GRP_FILTERS, tooltip="Chỉ trade khi volume >= threshold này")
+requireDivergence = input.bool(false, "Require Divergence", group=GRP_FILTERS, tooltip="Bắt buộc phải có divergence (higher probability nhưng ít tín hiệu)")
+allowChoppyMarket = input.bool(false, "Allow Choppy Market", group=GRP_FILTERS, tooltip="Cho phép trade trong choppy market (KHÔNG khuyến nghị)")
+
+// ============================================================================
+// NHOM 8: DISPLAY
+// ============================================================================
+const string GRP_DISPLAY = "🎨 Display"
+showConditionLabels = input.bool(true, "Show Condition Labels", group=GRP_DISPLAY, tooltip="Hiển thị số conditions met tại mỗi entry")
+showStopLoss = input.bool(true, "Show Stop Loss Lines", group=GRP_DISPLAY)
+showTakeProfit = input.bool(true, "Show Take Profit Lines", group=GRP_DISPLAY)
+showVpLevels = input.bool(true, "Show VP Levels", group=GRP_DISPLAY)
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+// MA helper
+ma(source, length, maType) =>
+    switch maType
+        "SMA" => ta.sma(source, length)
+        "EMA" => ta.ema(source, length)
+        "WMA" => ta.wma(source, length)
+        => ta.sma(source, length)
+
+// Volume Z-Score
+volumeZscore(length) =>
+    volMa = ta.sma(volume, length)
+    volStd = ta.stdev(volume, length)
+    volStd > 0 ? (volume - volMa) / volStd : 0
+
+// ============================================================================
+// VOLUME PROFILE CALCULATION (Simplified from VPP5+)
+// ============================================================================
+
+// Calculate VP levels using volume-weighted approach
+var float[] priceArray = array.new_float(0)
+var float[] volumeArray = array.new_float(0)
+
+// Simplified VP: track volume at price levels
+// Run on every bar for consistent calculation
+if true  // Changed from barstate.islast to allow continuous calculation
+    // Clear arrays
+    array.clear(priceArray)
+    array.clear(volumeArray)
+    
+    // Get price range
+    var float highestPrice = high
+    var float lowestPrice = low
+    for i = 0 to math.min(vpLookback - 1, bar_index)
+        highestPrice := math.max(highestPrice, high[i])
+        lowestPrice := math.min(lowestPrice, low[i])
+    
+    float priceStep = (highestPrice - lowestPrice) / vpLevels
+    
+    // Build volume at price histogram
+    for level = 0 to vpLevels - 1
+        float levelPrice = lowestPrice + (level * priceStep)
+        float levelVolume = 0.0
+        
+        // Sum volume for bars where price touched this level
+        for i = 0 to math.min(vpLookback - 1, bar_index)
+            if low[i] <= levelPrice and high[i] >= levelPrice
+                levelVolume += volume[i]
+        
+        array.push(priceArray, levelPrice)
+        array.push(volumeArray, levelVolume)
+
+// Find POC, VAH, VAL
+var float pocPrice = na
+var float vahPrice = na
+var float valPrice = na
+
+if array.size(volumeArray) > 0  // Changed from barstate.islast to run every bar
+    // POC = price with max volume
+    int maxVolIndex = 0
+    float maxVol = array.get(volumeArray, 0)
+    for i = 1 to array.size(volumeArray) - 1
+        if array.get(volumeArray, i) > maxVol
+            maxVol := array.get(volumeArray, i)
+            maxVolIndex := i
+    
+    pocPrice := array.get(priceArray, maxVolIndex)
+    
+    // Value Area: accumulate volume around POC until reach vaPercent%
+    float totalVolume = array.sum(volumeArray)
+    float targetVolume = totalVolume * vpVaPercent / 100.0
+    float vaVolume = array.get(volumeArray, maxVolIndex)
+    
+    int vaLowIndex = maxVolIndex
+    int vaHighIndex = maxVolIndex
+    
+    // Expand VA up and down alternately
+    while vaVolume < targetVolume and (vaLowIndex > 0 or vaHighIndex < array.size(volumeArray) - 1)
+        float volBelow = vaLowIndex > 0 ? array.get(volumeArray, vaLowIndex - 1) : 0
+        float volAbove = vaHighIndex < array.size(volumeArray) - 1 ? array.get(volumeArray, vaHighIndex + 1) : 0
+        
+        if volAbove > volBelow and vaHighIndex < array.size(volumeArray) - 1
+            vaHighIndex += 1
+            vaVolume += volAbove
+        else if vaLowIndex > 0
+            vaLowIndex -= 1
+            vaVolume += volBelow
+        else
+            break
+    
+    valPrice := array.get(priceArray, vaLowIndex)
+    vahPrice := array.get(priceArray, vaHighIndex)
+
+// HTF POC (from higher timeframe)
+[htfPoc, htfVah, htfVal] = request.security(syminfo.tickerid, htfTimeframe, [pocPrice, vahPrice, valPrice], lookahead=barmerge.lookahead_on)
+
+// Plot VP levels
+plot(showVpLevels and showVpLines ? pocPrice : na, "POC", color=color.new(color.orange, 0), linewidth=2, style=plot.style_cross)
+plot(showVpLevels and showVpLines ? vahPrice : na, "VAH", color=color.new(color.teal, 40), linewidth=1)
+plot(showVpLevels and showVpLines ? valPrice : na, "VAL", color=color.new(color.teal, 40), linewidth=1)
+plot(showVpLevels and showVpLines ? htfPoc : na, "HTF POC", color=color.new(color.yellow, 20), linewidth=2, style=plot.style_circles)
+
+// ============================================================================
+// CVD CALCULATION (Simplified from CVPZero)
+// ============================================================================
+
+// Use built-in volume delta (approximation)
+// Note: Real CVD needs request.security with lower TF, simplified here for template
+cvdDelta = close > open ? volume : close < open ? -volume : 0
+var float cvdCumulative = 0.0
+
+// Reset CVD based on anchor
+newSession = ta.change(time(cvdAnchor))
+if nz(newSession) != 0
+    cvdCumulative := 0.0
+
+cvdCumulative += cvdDelta
+
+// CVD MA
+cvdMa = ma(cvdCumulative, cvdMaLength, cvdMaType)
+
+// CVD direction
+cvdRising = cvdCumulative > cvdMa
+cvdFalling = cvdCumulative < cvdMa
+
+// ============================================================================
+// VSA SIGNALS (Simplified from CVPZero)
+// ============================================================================
+
+volumeMa = ta.sma(volume, vsaVolumeLength)
+volRatio = volume / volumeMa
+
+// Price spread
+priceSpread = high - low
+avgSpread = ta.sma(priceSpread, vsaVolumeLength)
+spreadRatio = priceSpread / avgSpread
+
+// Calculate swing levels outside conditionals (for consistency)
+lowestLow = ta.lowest(low, 10)[1]
+highestHigh = ta.highest(high, 10)[1]
+
+// VSA patterns
+isSpring = enableSpring and close > open and volRatio > vsaSensitivity and low < lowestLow and close > low + (priceSpread * 0.5)
+isUpthrust = enableUpthrust and close < open and volRatio > vsaSensitivity and high > highestHigh and close < high - (priceSpread * 0.5)
+isStoppingVolume = enableStoppingVolume and close > open and volRatio > (vsaSensitivity * 1.5) and spreadRatio < 0.7
+isNoSupply = enableNoSupply and close < open and volRatio < (1.0 / vsaSensitivity) and spreadRatio < 0.7 and close < open + (priceSpread * 0.3)
+
+// Bullish VSA signals
+bullishVsa = isSpring or isStoppingVolume
+// Bearish VSA signals  
+bearishVsa = isUpthrust or isNoSupply
+
+// ============================================================================
+// MULTI-TIMEFRAME CVD ALIGNMENT
+// ============================================================================
+
+cvd1 = useMtfFilter ? request.security(syminfo.tickerid, tf1, cvdCumulative > cvdMa, lookahead=barmerge.lookahead_off) : true
+cvd2 = useMtfFilter ? request.security(syminfo.tickerid, tf2, cvdCumulative > cvdMa, lookahead=barmerge.lookahead_off) : true
+cvd3 = useMtfFilter ? request.security(syminfo.tickerid, tf3, cvdCumulative > cvdMa, lookahead=barmerge.lookahead_off) : true
+
+mtfBullish = cvd1 and cvd2 and cvd3
+mtfBearish = not cvd1 and not cvd2 and not cvd3
+
+// ============================================================================
+// DIVERGENCE DETECTION (Simplified)
+// ============================================================================
+
+// Price pivots
+priceHigh = ta.pivothigh(high, 5, 5)
+priceLow = ta.pivotlow(low, 5, 5)
+
+// CVD pivots
+cvdHigh = ta.pivothigh(cvdCumulative, 5, 5)
+cvdLow = ta.pivotlow(cvdCumulative, 5, 5)
+
+// Simple divergence: compare last 2 pivots
+var float lastPriceHigh = na
+var float lastCvdHigh = na
+var float lastPriceLow = na
+var float lastCvdLow = na
+
+if not na(priceHigh)
+    lastPriceHigh := priceHigh
+if not na(cvdHigh)
+    lastCvdHigh := cvdHigh
+if not na(priceLow)
+    lastPriceLow := priceLow
+if not na(cvdLow)
+    lastCvdLow := cvdLow
+
+// Bullish divergence: price lower low, CVD higher low
+bullishDiv = not na(priceLow) and not na(lastPriceLow) and not na(cvdLow) and not na(lastCvdLow) and 
+     priceLow < lastPriceLow and cvdLow > lastCvdLow
+
+// Bearish divergence: price higher high, CVD lower high
+bearishDiv = not na(priceHigh) and not na(lastPriceHigh) and not na(cvdHigh) and not na(lastCvdHigh) and 
+     priceHigh > lastPriceHigh and cvdHigh < lastCvdHigh
+
+// ============================================================================
+// REGIME DETECTION
+// ============================================================================
+
+ema200 = ta.ema(close, 200)
+trending = math.abs(close - ema200) > ta.atr(20)
+atrNormalized = ta.atr(20) / close
+
+// Calculate RSI outside conditional (for consistency)
+rsiValue = ta.rsi(close, 14)
+choppy = atrNormalized < 0.01 or (rsiValue > 40 and rsiValue < 60)
+
+tradeableMarket = allowChoppyMarket ? true : not choppy
+
+// ============================================================================
+// ENTRY CONDITIONS (8-Point Checklist)
+// ============================================================================
+
+// Volume quality
+volZscore = volumeZscore(20)
+volumeQuality = volZscore >= minVolumeZscore
+
+// ATR for stop calculation
+atr = ta.atr(atrLength)
+
+// === VSA-DIVERGENCE REVERSAL PATTERN (High Probability Setup for TF >= 15m) ===
+// Pattern: Previous bar had bullish VSA → Current bar has bearish divergence = Distribution (short)
+// Pattern: Previous bar had bearish VSA → Current bar has bullish divergence = Accumulation (long)
+
+// Check if current TF is >= 15m
+currentTFMinutes_strat = timeframe.in_seconds() / 60
+meetsMinTF_strat = currentTFMinutes_strat >= 15
+
+// Track previous bar's VSA+CVD state
+var bool prevVsaBull_strat = false
+var bool prevVsaBear_strat = false
+
+// Detect VSA-Divergence Reversal Pattern (Wyckoff logic)
+vsaDivBullishReversal_strat = meetsMinTF_strat and prevVsaBear_strat and bullishDiv
+vsaDivBearishReversal_strat = meetsMinTF_strat and prevVsaBull_strat and bearishDiv
+
+// Update state for next bar (after using current values)
+prevVsaBull_strat := bullishVsa or cvdRising
+prevVsaBear_strat := bearishVsa or cvdFalling
+
+// LONG CONDITIONS
+c1_long = not na(valPrice) and close <= valPrice + (atr * 0.5)  // Price at VAL (discount)
+c2_long = not na(htfPoc) and htfPoc > close  // HTF POC above (not buying premium)
+c3_long = cvdRising  // CVD rising (order flow bullish)
+c4_long = bullishVsa or vsaDivBullishReversal_strat  // VSA signal OR VSA→Div Reversal Pattern
+c5_long = useMtfFilter ? mtfBullish : true  // Multi-TF aligned
+c6_long = volumeQuality  // Volume quality good
+c7_long = requireDivergence ? (bullishDiv or vsaDivBullishReversal_strat) : true  // Divergence (optional) OR Pattern
+c8_long = tradeableMarket  // Not choppy market
+
+// Count conditions met
+conditionsMet_long = (c1_long ? 1 : 0) + (c2_long ? 1 : 0) + (c3_long ? 1 : 0) + (c4_long ? 1 : 0) + 
+     (c5_long ? 1 : 0) + (c6_long ? 1 : 0) + (c7_long ? 1 : 0) + (c8_long ? 1 : 0)
+
+// SHORT CONDITIONS
+c1_short = not na(vahPrice) and close >= vahPrice - (atr * 0.5)  // Price at VAH (premium)
+c2_short = not na(htfPoc) and htfPoc < close  // HTF POC below (not selling discount)
+c3_short = cvdFalling  // CVD falling (order flow bearish)
+c4_short = bearishVsa or vsaDivBearishReversal_strat  // VSA signal OR VSA→Div Reversal Pattern
+c5_short = useMtfFilter ? mtfBearish : true  // Multi-TF aligned
+c6_short = volumeQuality  // Volume quality good
+c7_short = requireDivergence ? (bearishDiv or vsaDivBearishReversal_strat) : true  // Divergence (optional) OR Pattern
+c8_short = tradeableMarket  // Not choppy market
+
+// Count conditions met
+conditionsMet_short = (c1_short ? 1 : 0) + (c2_short ? 1 : 0) + (c3_short ? 1 : 0) + (c4_short ? 1 : 0) + 
+     (c5_short ? 1 : 0) + (c6_short ? 1 : 0) + (c7_short ? 1 : 0) + (c8_short ? 1 : 0)
+
+// ============================================================================
+// TRADE LOGIC
+// ============================================================================
+
+// Circuit breaker: max trades per day
+var int tradesThisDay = 0
+var int lastTradeDay = 0
+
+if dayofweek != dayofweek[1]
+    tradesThisDay := 0
+    lastTradeDay := dayofweek
+
+canTrade = tradesThisDay < maxTradesPerDay
+
+// Entry signals
+longSignal = conditionsMet_long >= minConditions and canTrade and strategy.position_size == 0
+shortSignal = conditionsMet_short >= minConditions and canTrade and strategy.position_size == 0
+
+// Position sizing based on risk
+longStop = close - (atr * atrMultiplier)
+shortStop = close + (atr * atrMultiplier)
+
+longRisk = close - longStop
+shortRisk = shortStop - close
+
+// Calculate position size: risk 1% of equity per trade
+equity = strategy.equity
+riskAmount = equity * (riskPercent / 100)
+longQty = riskAmount / longRisk
+shortQty = riskAmount / shortRisk
+
+// Targets
+longTp1 = not na(pocPrice) ? pocPrice : close + (atr * 2)
+longTp2 = not na(vahPrice) ? vahPrice : close + (atr * 4)
+shortTp1 = not na(pocPrice) ? pocPrice : close - (atr * 2)
+shortTp2 = not na(valPrice) ? valPrice : close - (atr * 4)
+
+// Entries
+if longSignal
+    strategy.entry("Long", strategy.long, qty=longQty)
+    tradesThisDay += 1
+    // Store entry bar for time-based exit
+    strategy.opentrades.entry_bar_index(0)
+    // Labels
+    if showConditionLabels
+        labelText = "L:" + str.tostring(conditionsMet_long) + "/8"
+        labelText := vsaDivBullishReversal_strat ? labelText + " ⬥VSA→DIV" : labelText
+        label.new(bar_index, low, labelText, 
+             style=label.style_label_up, color=color.new(vsaDivBullishReversal_strat ? color.aqua : color.green, 30), 
+             textcolor=color.white, size=size.small)
+
+if shortSignal
+    strategy.entry("Short", strategy.short, qty=shortQty)
+    tradesThisDay += 1
+    if showConditionLabels
+        labelText = "S:" + str.tostring(conditionsMet_short) + "/8"
+        labelText := vsaDivBearishReversal_strat ? labelText + " ⬥VSA→DIV" : labelText
+        label.new(bar_index, high, labelText, 
+             style=label.style_label_down, color=color.new(vsaDivBearishReversal_strat ? color.fuchsia : color.red, 30), 
+             textcolor=color.white, size=size.small)
+
+// Exits
+if strategy.position_size > 0  // Long position
+    strategy.exit("TP1", "Long", limit=longTp1, stop=longStop, qty_percent=tp1Percent)
+    strategy.exit("TP2", "Long", limit=longTp2, stop=longStop)
+    
+    // Time-based exit
+    if useTimeBasedExit and bar_index - strategy.opentrades.entry_bar_index(0) > maxBarsInTrade
+        strategy.close("Long", comment="Time Exit")
+
+if strategy.position_size < 0  // Short position
+    strategy.exit("TP1", "Short", limit=shortTp1, stop=shortStop, qty_percent=tp1Percent)
+    strategy.exit("TP2", "Short", limit=shortTp2, stop=shortStop)
+    
+    // Time-based exit
+    if useTimeBasedExit and bar_index - strategy.opentrades.entry_bar_index(0) > maxBarsInTrade
+        strategy.close("Short", comment="Time Exit")
+
+// ============================================================================
+// VISUALIZATION
+// ============================================================================
+
+// Stop loss lines
+var line stopLine = na
+if strategy.position_size != 0 and showStopLoss
+    if not na(stopLine)
+        line.delete(stopLine)
+    stopLine := line.new(bar_index[1], strategy.position_size > 0 ? longStop : shortStop, 
+         bar_index, strategy.position_size > 0 ? longStop : shortStop, 
+         color=color.red, width=2, style=line.style_dashed)
+
+// Take profit lines
+var line tp1Line = na
+var line tp2Line = na
+if strategy.position_size != 0 and showTakeProfit
+    if not na(tp1Line)
+        line.delete(tp1Line)
+    if not na(tp2Line)
+        line.delete(tp2Line)
+    
+    tp1Line := line.new(bar_index[1], strategy.position_size > 0 ? longTp1 : shortTp1, 
+         bar_index, strategy.position_size > 0 ? longTp1 : shortTp1, 
+         color=color.green, width=1, style=line.style_dotted)
+    tp2Line := line.new(bar_index[1], strategy.position_size > 0 ? longTp2 : shortTp2, 
+         bar_index, strategy.position_size > 0 ? longTp2 : shortTp2, 
+         color=color.green, width=2, style=line.style_dotted)
+
+// Background color for regime
+bgcolor(choppy ? color.new(color.gray, 95) : na, title="Choppy Market")
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+alertcondition(longSignal, "Long Entry", "VP-CVD: LONG setup ({{ticker}}) - Conditions: " + str.tostring(conditionsMet_long) + "/8")
+alertcondition(shortSignal, "Short Entry", "VP-CVD: SHORT setup ({{ticker}}) - Conditions: " + str.tostring(conditionsMet_short) + "/8")
+alertcondition(strategy.position_size == 0 and strategy.position_size[1] != 0, "Position Closed", "VP-CVD: Position closed ({{ticker}})")
+
+// ============================================================================
+// STRATEGY METRICS (displayed in Strategy Tester)
+// ============================================================================
+
+// Note: Metrics automatically calculated by TradingView Strategy Tester:
+// - Net Profit
+// - Total Trades
+// - Win Rate %
+// - Profit Factor
+// - Max Drawdown
+// - Sharpe Ratio
+// - Sortino Ratio (in detailed stats)
+
+// ============================================================================
+// USAGE NOTES
+// ============================================================================
+
+// 1. BACKTEST FIRST: Run on 6-12 months historical data, check metrics
+// 2. TARGET METRICS: Win rate > 55%, Sortino > 1.0, Max DD < 15%
+// 3. PAPER TRADE: Test 50-100 setups before going live
+// 4. START SMALL: Begin with 0.5% risk, scale gradually
+// 5. KEEP JOURNAL: Screenshot every entry, note emotion/compliance
+// 6. REGIME AWARENESS: Strategy works best in trending/mean-reverting, avoid choppy
+// 7. COMBINE WITH INDICATORS: Use VPP5+ (overlay) + CVPZero (lower pane) for visual confirmation
+// 8. HUMAN OVERRIDE: This is discretionary tool - YOU are final decision maker
+
+// ============================================================================
+// CHECKLIST REMINDER (Manual verification before entry)
+// ============================================================================
+
+// [ ] Structure: Price at VAL (long) or VAH (short)?
+// [ ] HTF Context: HTF POC favorable?
+// [ ] Order Flow: CVD confirming direction?
+// [ ] VSA: Institutional signal present?
+// [ ] Multi-TF: All timeframes aligned?
+// [ ] Volume: Quality good (Z-score > 1)?
+// [ ] Divergence: Present? (optional but adds confidence)
+// [ ] Psychology: Am I calm? Not revenge trading?
+// [ ] Plan: Stop loss calculated? TP1/TP2 defined?
+
+// IF 6+ conditions → Good setup
+// IF 7+ conditions → "Beautiful and sure" setup
+// IF < 6 conditions → PASS
+
+// ============================================================================
+// END OF STRATEGY
+// ============================================================================

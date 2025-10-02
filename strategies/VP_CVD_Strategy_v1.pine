@@ -5,6 +5,8 @@
 // This is a foundational strategy based on Charlie's analysis for systematic trading.
 // Author: Gemini (based on Khogao's indicators)
 
+//@version=6
+import TradingView/ta/8 as tav6
 strategy("VP+CVD Strategy v1", "VPCVDS_v1", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=5, commission_type=strategy.commission.percent, commission_value=0.04)
 
 // =================================================================================
@@ -99,11 +101,21 @@ f_calculate_vp(lookback, num_bins) =>
     [poc, vah, val]
 
 // --- CVD Logic (from CVD+VSA Pro) ---
-f_cvdClose() =>
-    [_o, _h, _l, _c] = request.security(syminfo.tickerid, "1", anchorInput) // Hardcoded to 1min for delta, resets on anchor
-    _c 
+f_lowerTf() =>
+    if timeframe.isseconds
+        "1S"
+    else if timeframe.isintraday
+        "1"
+    else if timeframe.isdaily
+        "5"
+    else
+        "60"
 
-cvd_source = f_cvdClose()
+f_cvdClose() =>
+    [_o, _h, _l, _c] = tav6.requestVolumeDelta(f_lowerTf(), anchorInput)
+    _c
+
+[cvd_o, cvd_h, cvd_l, cvd_source] = tav6.requestVolumeDelta(f_lowerTf(), anchorInput)
 cvd_ma = maTypeInput == "SMA" ? ta.sma(cvd_source, maLengthInput) : maTypeInput == "WMA" ? ta.wma(cvd_source, maLengthInput) : ta.ema(cvd_source, maLengthInput)
 
 // --- VSA Logic (Simplified for confirmation) ---

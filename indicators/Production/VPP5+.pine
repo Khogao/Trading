@@ -1,7 +1,7 @@
-//@version=5
-// TITLE: VP Production v5 (VPP5) + HTF Lines
-// DESC: Giữ nguyên engine VP của VPP43, bổ sung 3 đường HTF POC/VAH/VAL qua request.security (no repaint).
-indicator(title='VP Production v5 Plus', shorttitle='VPP5+', overlay=true, max_bars_back=5000, max_boxes_count=500, max_lines_count=500, dynamic_requests=true)
+//@version=6
+// TITLE: VP Production v6 (VPP6) + HTF Lines + Alert System
+// DESC: Full VP engine + HTF POC/VAH/VAL + 4-type VP alerts + Volume Z-Score + VSA signals
+indicator(title='VP Production v6 Plus', shorttitle='VPP6+', overlay=true, max_bars_back=5000, max_boxes_count=500, max_lines_count=500, dynamic_requests=true)
 
 // === INPUTS ===
 var GRP_PROFILE = "🔥 1. Master Profile"
@@ -61,6 +61,22 @@ structure_lvn_color    = input.color(color.new(color.gray, 92), "LVN Fill", grou
 var GRP_TABLE = "7. Info Table"
 table_pos = input.string("Top Right", "Table Position", options=["Top Right","Top Left","Bottom Right","Bottom Left"], group=GRP_TABLE)
 
+// === NHOM 10: ALERT SYSTEM (VP-focused) ===
+var GRP_ALERTS_VP = "10. 🔔 VP Alert System"
+enable_vp_alerts = input.bool(true, "Enable VP Alerts", group=GRP_ALERTS_VP)
+// HVN/LVN Touch Alerts
+alert_hvn_touch = input.bool(true, "Alert: HVN Touch", group=GRP_ALERTS_VP, tooltip="Price enters High Volume Node zone (consolidation area)")
+alert_lvn_touch = input.bool(true, "Alert: LVN Touch", group=GRP_ALERTS_VP, tooltip="Price enters Low Volume Node zone (breakout/breakdown area)")
+// POC Retest Alerts
+alert_poc_retest = input.bool(true, "Alert: POC Retest", group=GRP_ALERTS_VP, tooltip="Price returns to POC after moving away (>2 ATR)")
+poc_retest_distance = input.float(2.0, "POC Retest Min Distance (ATR)", minval=0.5, maxval=10.0, step=0.5, group=GRP_ALERTS_VP)
+// VAH/VAL Break Alerts
+alert_vah_break = input.bool(true, "Alert: VAH Break", group=GRP_ALERTS_VP, tooltip="Price breaks above Value Area High (premium zone entry)")
+alert_val_break = input.bool(true, "Alert: VAL Break", group=GRP_ALERTS_VP, tooltip="Price breaks below Value Area Low (discount zone entry)")
+// HTF Alignment Alerts
+alert_htf_alignment = input.bool(true, "Alert: HTF Alignment", group=GRP_ALERTS_VP, tooltip="LTF POC aligns with HTF POC/VAH/VAL (high probability zone)")
+htf_alignment_threshold = input.float(1.0, "HTF Alignment Threshold (ATR)", minval=0.5, maxval=5.0, step=0.5, group=GRP_ALERTS_VP)
+
 // === NHOM 8: VOLUME Z-SCORE (from CVPZero) ===
 var GRP_VOL_ZSCORE = "8. 📊 Volume Z-Score"
 showVolume = input.bool(true, "Hiển thị Volume Chart", group=GRP_VOL_ZSCORE)
@@ -86,10 +102,10 @@ vsa_zscore_sensitivity_ltf = input.float(2.5, "VSA Z-score Sensitivity (LTF 1-15
 vsa_zscore_sensitivity_htf = input.float(1.6, "VSA Z-score Sensitivity (HTF 1H+)", minval=0.5, maxval=6.0, step=0.1, group=GRP_VSA_VOL, tooltip="Lower on HTF where signals are cleaner")
 
 // === PROFILE LOGIC (preset) ===
-var int   vp_lookback_depth   = na
-var int   intraday_lookback_days = na
-var bool  intraday_mode       = na
-var bool  session_focus       = na
+var int   vp_lookback_depth   = 0
+var int   intraday_lookback_days = 0
+var bool  intraday_mode       = false
+var bool  session_focus       = false
 if profile_selector == "HTF Strategist"
     vp_lookback_depth := 400
     intraday_mode := false
@@ -110,23 +126,25 @@ else
 var float[] volume_at_price = array.new_float(0)
 var box[]   volume_boxes    = array.new_box(0)
 var box[]   node_boxes      = array.new_box(0)
-var box     poc_box         = na
+var box     poc_box         = box(na)
 var int     last_calc_bar   = 0
-var float   price_high      = na
-var float   price_low       = na
-var float   price_step      = na
-var float   prev_poc_price  = na
-var line    vah_line        = na
-var line    val_line        = na
-var table   info_table      = na
-var label   status_label    = na
-var string  last_table_pos  = na
+var float   price_high      = 0.0
+var float   price_low       = 0.0
+var float   price_step      = 0.0
+var float   prev_poc_price  = 0.0
+var line    vah_line        = line(na)
+var line    val_line        = line(na)
+var table   info_table      = table(na)
+var label   status_label    = label(na)
+var string  last_table_pos  = ""
 
 // HTF line handles
-var line htf_poc_line = na
-var line htf_vah_line = na
-var line htf_val_line = na
-var float poc_htf = na, var float vah_htf = na, var float val_htf = na
+var line htf_poc_line = line(na)
+var line htf_vah_line = line(na)
+var line htf_val_line = line(na)
+var float poc_htf = 0.0
+var float vah_htf = 0.0
+var float val_htf = 0.0
 
 // === HELPERS ===
 // Volume Z-Score calculation (from CVPZero)
@@ -542,3 +560,109 @@ if barstate.islast and not na(price_high)
     table.cell(info_table, 1, 1, poc_display, bgcolor=poc_color_dyn, text_color=color.white, text_size=size.small)
     table.cell(info_table, 0, 2, "VAH / VAL", bgcolor=color.new(color.gray, 90), text_size=size.small)
     table.cell(info_table, 1, 2, "VAH: " + str.tostring(va_high_info, format.mintick) + "\nVAL: " + str.tostring(va_low_info, format.mintick), text_size=size.small)
+
+// ============================================================================
+// ALERT SYSTEM (VP-focused, 4 types)
+// ============================================================================
+
+// Extract ATR calculation outside conditional scope (Pine v6 best practice)
+atr_value = ta.atr(14)
+
+if enable_vp_alerts and barstate.isconfirmed
+    // Get current VP levels
+    max_vol_alert = array.max(volume_at_price)
+    poc_idx_alert = array.indexof(volume_at_price, max_vol_alert)
+    poc_price_alert = poc_idx_alert < 0 ? na : price_low + poc_idx_alert * price_step
+    va_pct_alert = intraday_mode ? intraday_va_percent : vp_va_percent
+    [va_low_alert, va_high_alert] = f_calculate_value_area(poc_idx_alert, array.sum(volume_at_price), price_low, price_step, va_pct_alert)
+    
+    // 1. HVN/LVN Touch Detection
+    hvn_vol_threshold_alert = max_vol_alert * structure_hvn_threshold / 100
+    lvn_vol_threshold_alert = max_vol_alert * structure_lvn_threshold / 100
+    
+    // Check if current price is in HVN/LVN zone
+    current_price_idx = f_price_to_index(close, price_low, price_step)
+    current_vol = current_price_idx >= 0 and current_price_idx < array.size(volume_at_price) ? array.get(volume_at_price, current_price_idx) : 0.0
+    
+    in_hvn = current_vol >= hvn_vol_threshold_alert
+    in_lvn = current_vol <= lvn_vol_threshold_alert and current_vol > 0
+    
+    // Track previous state to detect entry
+    var bool was_in_hvn = false
+    var bool was_in_lvn = false
+    
+    hvn_touch_bull = alert_hvn_touch and in_hvn and not was_in_hvn and close > open
+    hvn_touch_bear = alert_hvn_touch and in_hvn and not was_in_hvn and close < open
+    lvn_touch_bull = alert_lvn_touch and in_lvn and not was_in_lvn and close > open
+    lvn_touch_bear = alert_lvn_touch and in_lvn and not was_in_lvn and close < open
+    
+    was_in_hvn := in_hvn
+    was_in_lvn := in_lvn
+    
+    // 2. POC Retest Detection
+    var float last_poc_price = na
+    var int bars_away_from_poc = 0
+    
+    dist_from_poc = math.abs(close - poc_price_alert) / atr_value
+    
+    if dist_from_poc > poc_retest_distance
+        bars_away_from_poc += 1
+        last_poc_price := poc_price_alert
+    
+    poc_retest_bull = alert_poc_retest and bars_away_from_poc > 2 and dist_from_poc < 0.5 and close > open and not na(last_poc_price)
+    poc_retest_bear = alert_poc_retest and bars_away_from_poc > 2 and dist_from_poc < 0.5 and close < open and not na(last_poc_price)
+    
+    if poc_retest_bull or poc_retest_bear
+        bars_away_from_poc := 0
+    
+    // 3. VAH/VAL Break Detection
+    var bool was_below_vah = false
+    var bool was_above_val = false
+    
+    below_vah = close < va_high_alert
+    above_val = close > va_low_alert
+    
+    vah_break_bull = alert_vah_break and was_below_vah and close > va_high_alert and close > open
+    val_break_bear = alert_val_break and was_above_val and close < va_low_alert and close < open
+    
+    was_below_vah := below_vah
+    was_above_val := above_val
+    
+    // 4. HTF Alignment Detection
+    htf_poc_aligned = not na(poc_htf) and math.abs(poc_price_alert - poc_htf) / atr_value < htf_alignment_threshold
+    htf_vah_aligned = not na(vah_htf) and math.abs(poc_price_alert - vah_htf) / atr_value < htf_alignment_threshold
+    htf_val_aligned = not na(val_htf) and math.abs(poc_price_alert - val_htf) / atr_value < htf_alignment_threshold
+    
+    htf_alignment_bull = alert_htf_alignment and (htf_poc_aligned or htf_val_aligned) and close > poc_price_alert and close > open
+    htf_alignment_bear = alert_htf_alignment and (htf_poc_aligned or htf_vah_aligned) and close < poc_price_alert and close < open
+    
+    // Fire alerts using alert() function for dynamic messages
+    if hvn_touch_bull
+        alert("🟢 HVN TOUCH BULLISH\n📊 High Volume Node consolidation\n💰 Price: " + str.tostring(close, format.mintick) + "\n🎯 POC: " + str.tostring(poc_price_alert, format.mintick) + "\n💡 Setup: Accumulation zone, expect range-bound", alert.freq_once_per_bar_close)
+    
+    if hvn_touch_bear
+        alert("🔴 HVN TOUCH BEARISH\n📊 High Volume Node consolidation\n💰 Price: " + str.tostring(close, format.mintick) + "\n🎯 POC: " + str.tostring(poc_price_alert, format.mintick) + "\n💡 Setup: Distribution zone, expect range-bound", alert.freq_once_per_bar_close)
+    
+    if lvn_touch_bull
+        alert("🟢 LVN TOUCH BULLISH\n📊 Low Volume Node - BREAKOUT ZONE\n💰 Price: " + str.tostring(close, format.mintick) + "\n🎯 Target: " + str.tostring(va_high_alert, format.mintick) + " (VAH)\n💡 Setup: Fast move likely, low resistance", alert.freq_once_per_bar_close)
+    
+    if lvn_touch_bear
+        alert("🔴 LVN TOUCH BEARISH\n📊 Low Volume Node - BREAKDOWN ZONE\n💰 Price: " + str.tostring(close, format.mintick) + "\n🎯 Target: " + str.tostring(va_low_alert, format.mintick) + " (VAL)\n💡 Setup: Fast move likely, low support", alert.freq_once_per_bar_close)
+    
+    if poc_retest_bull
+        alert("🟢 POC RETEST BULLISH\n📊 Price returned to Point of Control\n💰 Price: " + str.tostring(close, format.mintick) + "\n🎯 POC: " + str.tostring(poc_price_alert, format.mintick) + "\n💡 Setup: High probability bounce, fair value retest", alert.freq_once_per_bar_close)
+    
+    if poc_retest_bear
+        alert("🔴 POC RETEST BEARISH\n📊 Price returned to Point of Control\n💰 Price: " + str.tostring(close, format.mintick) + "\n🎯 POC: " + str.tostring(poc_price_alert, format.mintick) + "\n💡 Setup: High probability rejection, fair value retest", alert.freq_once_per_bar_close)
+    
+    if vah_break_bull
+        alert("🟢 VAH BREAK BULLISH\n📊 Value Area High breakout - PREMIUM ZONE\n💰 Price: " + str.tostring(close, format.mintick) + "\n🎯 VAH: " + str.tostring(va_high_alert, format.mintick) + "\n💡 Setup: Strong buyers, expect continuation to next HVN", alert.freq_once_per_bar_close)
+    
+    if val_break_bear
+        alert("🔴 VAL BREAK BEARISH\n📊 Value Area Low breakdown - DISCOUNT ZONE\n💰 Price: " + str.tostring(close, format.mintick) + "\n🎯 VAL: " + str.tostring(va_low_alert, format.mintick) + "\n💡 Setup: Strong sellers, expect continuation to next LVN", alert.freq_once_per_bar_close)
+    
+    if htf_alignment_bull
+        alert("🟢 HTF ALIGNMENT BULLISH\n📊 LTF POC aligns with HTF structure\n💰 Price: " + str.tostring(close, format.mintick) + "\n🎯 LTF POC: " + str.tostring(poc_price_alert, format.mintick) + "\n🎯 HTF POC: " + str.tostring(poc_htf, format.mintick) + "\n💡 Setup: HIGH PROBABILITY! Multi-timeframe confluence", alert.freq_once_per_bar_close)
+    
+    if htf_alignment_bear
+        alert("🔴 HTF ALIGNMENT BEARISH\n📊 LTF POC aligns with HTF structure\n💰 Price: " + str.tostring(close, format.mintick) + "\n🎯 LTF POC: " + str.tostring(poc_price_alert, format.mintick) + "\n🎯 HTF POC: " + str.tostring(poc_htf, format.mintick) + "\n💡 Setup: HIGH PROBABILITY! Multi-timeframe confluence", alert.freq_once_per_bar_close)

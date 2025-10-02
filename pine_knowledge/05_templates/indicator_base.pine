@@ -1,0 +1,65 @@
+//@version=6
+indicator("Indicator Template", overlay=true)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+// Simple Inputs
+int length = input.int(14, "Length", minval=1, group="Indicator Settings")
+float multiplier = input.float(2.0, "Multiplier", minval=0.1, group="Indicator Settings")
+bool showLabels = input.bool(true, "Show Labels?", group="Visuals")
+
+// Source Input
+source = input.source(close, "Source", group="Indicator Settings")
+
+// Timeframe Input
+string htf = input.timeframe("", "Higher Timeframe (Optional)", group="Multi-Timeframe")
+
+// ============================================================================
+// CALCULATIONS
+// ============================================================================
+
+// Basic Calculation
+float ma = ta.sma(source, length)
+float upperBand = ma + ta.stdev(source, length) * multiplier
+float lowerBand = ma - ta.stdev(source, length) * multiplier
+
+// Multi-Timeframe Calculation (optional)
+bool useHTF = str.length(htf) > 0
+float htfMA = useHTF ? request.security(syminfo.tickerid, htf, ta.sma(source, length), lookahead=barmerge.lookahead_off) : na
+
+// Conditions
+bool crossUp = ta.crossover(source, ma)
+bool crossDown = ta.crossunder(source, ma)
+
+// ============================================================================
+// VISUALS
+// ============================================================================
+
+// Plot lines
+plot(ma, "Basis", color.blue)
+plot(upperBand, "Upper Band", color.red)
+plot(lowerBand, "Lower Band", color.green)
+
+// Plot HTF line if enabled
+plot(htfMA, "HTF MA", color.purple, 2, plot.style_stepline)
+
+// Plot shapes for signals
+plotshape(crossUp, "Cross Up", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(crossDown, "Cross Down", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// Background color
+bgcolor(source > ma ? color.new(color.green, 90) : color.new(color.red, 90))
+
+// Labels (if enabled)
+if (showLabels and barstate.islast)
+    label.new(bar_index, ma, "MA: " + str.tostring(ma, "#.##"), color=color.blue, textcolor=color.white, style=label.style_label_left)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+alertcondition(crossUp, "Price Crossed Above MA", "{{ticker}} crossed above the {{plot("Basis")}} MA.")
+alertcondition(crossDown, "Price Crossed Below MA", "{{ticker}} crossed below the {{plot("Basis")}} MA.")
+

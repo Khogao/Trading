@@ -1,0 +1,61 @@
+//@version=6
+indicator("MTF Pattern Template", overlay=false)
+
+// This template demonstrates a robust pattern for using Multi-Timeframe (MTF) data
+// without repainting issues.
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+string htf = input.timeframe("D", "Higher Timeframe", group="MTF Settings")
+int length = input.int(14, "Indicator Length", group="Indicator Settings")
+
+// ============================================================================
+// MTF CALCULATION (The Core Pattern)
+// ============================================================================
+
+// 1. Define the calculation you want in the higher timeframe as a function.
+//    This makes the code clean and reusable.
+calculateIndicator(src, len) =>
+    [ta.rsi(src, len), ta.sma(src, len)]
+
+// 2. Use request.security() to call the function in the higher timeframe.
+//    - Pass the function name as the `expression`.
+//    - CRITICAL: Use `lookahead=barmerge.lookahead_off` to prevent repainting.
+[htfRSI, htfSMA] = request.security(syminfo.tickerid, htf, calculateIndicator(close, length), lookahead=barmerge.lookahead_off)
+
+// ============================================================================
+// CURRENT TIMEFRAME CALCULATION
+// ============================================================================
+
+float currentRSI = ta.rsi(close, length)
+float currentSMA = ta.sma(close, length)
+
+// ============================================================================
+// VISUALS
+// ============================================================================
+
+// Plot current timeframe data
+plot(currentRSI, "Current TF RSI", color.new(color.blue, 0))
+
+// Plot higher timeframe data
+// Use stepline to clearly show the HTF values
+plot(htfRSI, "HTF RSI", color.new(color.purple, 0), 2, plot.style_stepline, "HTF RSI")
+plot(htfSMA, "HTF SMA", color.new(color.orange, 0), 2, plot.style_stepline, "HTF SMA")
+
+// Reference lines for RSI
+hline(70, "Overbought", color.red)
+hline(50, "Midline", color.gray, hline.style_dotted)
+hline(30, "Oversold", color.green)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+// Alert when the current RSI crosses the HTF RSI
+bool rsiCrossUp = ta.crossover(currentRSI, htfRSI)
+bool rsiCrossDown = ta.crossunder(currentRSI, htfRSI)
+
+alertcondition(rsiCrossUp, "RSI Crossover", "{{ticker}} Current RSI crossed above HTF RSI.")
+alertcondition(rsiCrossDown, "RSI Crossunder", "{{ticker}} Current RSI crossed below HTF RSI.")

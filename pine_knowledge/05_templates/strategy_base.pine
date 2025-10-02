@@ -1,0 +1,99 @@
+//@version=6
+strategy(
+    "Strategy Template", 
+    overlay=true, 
+    initial_capital=10000, 
+    default_qty_type=strategy.percent_of_equity, 
+    default_qty_value=10, 
+    commission_type=strategy.commission.percent, 
+    commission_value=0.075, 
+    slippage=2
+)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+// Indicator Settings
+int fastLength = input.int(12, "Fast MA Length", group="Indicators")
+int slowLength = input.int(26, "Slow MA Length", group="Indicators")
+int rsiLength = input.int(14, "RSI Length", group="Indicators")
+
+// Strategy Settings
+float rsiOverbought = input.float(70, "RSI Overbought", group="Strategy")
+float rsiOversold = input.float(30, "RSI Oversold", group="Strategy")
+
+// Risk Management
+bool useStopLoss = input.bool(true, "Use Stop Loss", group="Risk Management")
+float stopLossPercent = input.float(2.0, "Stop Loss %", minval=0.1, group="Risk Management")
+bool useTakeProfit = input.bool(true, "Use Take Profit", group="Risk Management")
+float takeProfitPercent = input.float(4.0, "Take Profit %", minval=0.1, group="Risk Management")
+
+// ============================================================================
+// CALCULATIONS
+// ============================================================================
+
+float fastMA = ta.ema(close, fastLength)
+float slowMA = ta.ema(close, slowLength)
+float rsi = ta.rsi(close, rsiLength)
+
+// ============================================================================
+// STRATEGY LOGIC (Anti-Repainting)
+// ============================================================================
+
+// Entry Conditions (use [1] to check confirmed bars)
+bool longEntryCondition = ta.crossover(fastMA[1], slowMA[1]) and rsi[1] < rsiOverbought
+bool shortEntryCondition = ta.crossunder(fastMA[1], slowMA[1]) and rsi[1] > rsiOversold
+
+// Exit Conditions
+bool longExitCondition = ta.crossunder(fastMA[1], slowMA[1])
+bool shortExitCondition = ta.crossover(fastMA[1], slowMA[1])
+
+// Execute only on confirmed bars
+if (barstate.isconfirmed)
+    // Long Entry
+    if (longEntryCondition)
+        strategy.entry("Long", strategy.long)
+
+    // Short Entry
+    if (shortEntryCondition)
+        strategy.entry("Short", strategy.short)
+
+    // Long Exit
+    if (longExitCondition)
+        strategy.close("Long", comment="Exit Long")
+
+    // Short Exit
+    if (shortExitCondition)
+        strategy.close("Short", comment="Exit Short")
+
+    // Stop Loss and Take Profit Orders
+    if (strategy.position_size > 0)
+        float sl = useStopLoss ? strategy.position_avg_price * (1 - stopLossPercent / 100) : na
+        float tp = useTakeProfit ? strategy.position_avg_price * (1 + takeProfitPercent / 100) : na
+        strategy.exit("SL/TP Long", "Long", stop=sl, limit=tp)
+
+    if (strategy.position_size < 0)
+        float sl = useStopLoss ? strategy.position_avg_price * (1 + stopLossPercent / 100) : na
+        float tp = useTakeProfit ? strategy.position_avg_price * (1 - takeProfitPercent / 100) : na
+        strategy.exit("SL/TP Short", "Short", stop=sl, limit=tp)
+
+// ============================================================================
+// VISUALS
+// ============================================================================
+
+// Plot MAs
+plot(fastMA, "Fast MA", color.blue)
+plot(slowMA, "Slow MA", color.orange)
+
+// Highlight trade direction
+bgcolor(strategy.position_size > 0 ? color.new(color.green, 90) : strategy.position_size < 0 ? color.new(color.red, 90) : na)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+alertcondition(longEntryCondition, "Long Entry Signal", "Strategy entered a long position on {{ticker}}.")
+alertcondition(shortEntryCondition, "Short Entry Signal", "Strategy entered a short position on {{ticker}}.")
+alertcondition(longExitCondition, "Long Exit Signal", "Strategy exited a long position on {{ticker}}.")
+alertcondition(shortExitCondition, "Short Exit Signal", "Strategy exited a short position on {{ticker}}.")
