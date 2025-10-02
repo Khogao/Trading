@@ -17,8 +17,19 @@
     
     // MANDATORY: ALWAYS respond in Vietnamese
     "user.language": "vi",
-    "user.prefersNonTechnicalExplanations": false,
-    "user.background": "trader",
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // 🎯 USER PROFILE: NON-TECHNICAL TRADER
+    // ═══════════════════════════════════════════════════════════════════════
+    // User KHÔNG có background về code, computer science, IT
+    // → PHẢI giải thích thuật ngữ kỹ thuật bằng ngôn ngữ đơn giản
+    // → PHẢI dùng ví dụ thực tế để minh họa khái niệm
+    // → TRÁNH thuật ngữ xa lạ trực tiếp, PHẢI giải thích ngay
+    // → Mục tiêu: Hiểu nhau RÕ RÀNG, không nhầm lẫn khái niệm
+    "user.prefersNonTechnicalExplanations": true,  // ✅ BẮT BUỘC giải thích đơn giản!
+    "user.background": "non-technical-trader",  // Trader KHÔNG có IT background
+    "user.technicalLevel": "beginner",  // Level: người mới bắt đầu về code
+    "user.requiresContextExplanations": true,  // YÊU CẦU giải thích context cho mọi thuật ngữ
     
     // ═══════════════════════════════════════════════════════════════════════
     // 📝 PINE SCRIPT VALIDATION (Pine v6 + CVD Rules)

@@ -4,7 +4,7 @@
 # Purpose: Enforce critical rules for Pine Script development
 # ═══════════════════════════════════════════════════════════════════════
 
-## 🔥 CRITICAL RULE #1: TIẾNG VIỆT BẮT BUỘC
+## 🔥 CRITICAL RULE #1: TIẾNG VIỆT + GIẢI THÍCH ĐỂ HIỂU
 
 **MANDATORY - NO EXCEPTIONS:**
 - ALWAYS respond in Vietnamese (Tiếng Việt)
@@ -15,13 +15,111 @@
 - This rule is ABSOLUTE and NON-NEGOTIABLE
 - Priority: HIGHEST (like preventing fake CVD bugs)
 
+**USER PROFILE - QUAN TRỌNG:**
+- User KHÔNG có background về code, computer science, IT
+- User phải dựa vào AI để code và hiểu khái niệm
+- **→ PHẢI giải thích mọi thuật ngữ kỹ thuật ngay khi dùng**
+- **→ PHẢI dùng ví dụ thực tế (trading context) để minh họa**
+- **→ TRÁNH giả định user hiểu thuật ngữ xa lạ**
+
 **Example:**
 - ❌ WRONG: "I will fix the bug in this file"
+- ❌ WRONG: "Tôi sẽ dùng regex để parse file" (thuật ngữ không giải thích)
 - ✅ CORRECT: "Tôi sẽ sửa bug trong file này"
+- ✅ CORRECT: "Tôi sẽ dùng regex (pattern matching - tìm kiếm mẫu văn bản) để đọc file"
+
+**Quy tắc giải thích thuật ngữ:**
+```
+Thuật ngữ (giải thích ngắn gọn bằng tiếng Việt) - ví dụ thực tế nếu cần
+
+VD:
+- Array (danh sách các giá trị) - giống như list volume của 20 nến
+- Function (hàm - đoạn code tái sử dụng) - giống như công thức tính CVD
+- Variable (biến - nơi lưu giá trị) - giống như ô nhớ chứa giá close
+- Loop (vòng lặp - chạy lại nhiều lần) - duyệt qua từng nến để tính volume
+```
 
 ---
 
-## 🔥 CRITICAL RULE #2: PINE SCRIPT CVD VALIDATION
+## � HOW TO EXPLAIN TECHNICAL CONCEPTS (BẮT BUỘC)
+
+### Template Giải Thích Thuật Ngữ:
+
+**Format:**
+```
+[Thuật ngữ] (Giải thích ngắn) - Ví dụ trading
+
+VD: Regex (pattern matching - tìm kiếm theo mẫu) - giống như tìm tất cả nến có volume > 1M
+```
+
+### Ví Dụ Thực Tế:
+
+**❌ WRONG (máy móc, không giải thích):**
+```
+"Tôi sẽ dùng grep để search pattern trong file, sau đó parse kết quả bằng regex."
+→ User: HUH?? grep là gì? parse là gì? regex là gì??
+```
+
+**✅ CORRECT (giải thích rõ ràng):**
+```
+"Tôi sẽ dùng grep (công cụ tìm kiếm văn bản) để tìm các dòng code chứa từ 'cvd' 
+trong file, sau đó parse (phân tích/đọc) kết quả bằng regex (pattern matching - 
+tìm theo mẫu, giống như filter nến có volume > threshold)."
+
+→ User: OK hiểu rồi! 👍
+```
+
+### Common Technical Terms (PHẢI giải thích):
+
+| Thuật ngữ | Giải thích | Ví dụ Trading |
+|-----------|------------|---------------|
+| Array | Danh sách các giá trị | List volume của 20 nến |
+| Function | Hàm - đoạn code tái sử dụng | Công thức tính CVD |
+| Variable | Biến - nơi lưu giá trị | Ô nhớ chứa giá close |
+| Loop | Vòng lặp - chạy lại nhiều lần | Duyệt từng nến tính tổng volume |
+| If/Else | Điều kiện - nếu...thì...không thì... | Nếu volume > MA thì high, không thì low |
+| Return | Trả về kết quả | Hàm CVD trả về giá trị delta tích lũy |
+| String | Chuỗi văn bản | Tên file "Better CVD.pine" |
+| Integer | Số nguyên | Số lượng nến: 20, 50, 200 |
+| Float | Số thập phân | Giá close: 42156.75 |
+| Boolean | Giá trị đúng/sai | showVSA = true/false |
+| Regex | Pattern matching - tìm theo mẫu | Tìm tất cả dòng chứa "cvd" |
+| Parse | Phân tích/đọc dữ liệu | Đọc file để lấy giá trị version |
+| Import | Nhập thư viện/module | Nhập TradingView/ta để dùng CVD |
+| Validation | Kiểm tra tính hợp lệ | Check file có dùng Pine v6 không |
+
+### Khi Giải Thích Code:
+
+**❌ WRONG:**
+```pine
+// Check if CVD
+if ($content -match $pattern) { ... }
+```
+→ User: match là gì? pattern là gì?
+
+**✅ CORRECT:**
+```pine
+// Check if CVD (kiểm tra xem file có dùng CVD không)
+// match = khớp/tìm thấy, pattern = mẫu tìm kiếm (như "cvd")
+if ($content -match $pattern) { ... }
+```
+
+### Khi Báo Cáo Kết Quả:
+
+**❌ WRONG:**
+```
+"Validator đã scan 13 files, detected 0 violations, all indicators passed validation."
+```
+
+**✅ CORRECT:**
+```
+"Công cụ kiểm tra (validator) đã quét 13 files, phát hiện 0 lỗi vi phạm, 
+tất cả indicators đều pass (đạt yêu cầu) kiểm tra."
+```
+
+---
+
+## �🔥 CRITICAL RULE #2: PINE SCRIPT CVD VALIDATION
 
 **Pine Version Requirements:**
 - ANY file using CVD/order flow MUST use `//@version=6` or higher
