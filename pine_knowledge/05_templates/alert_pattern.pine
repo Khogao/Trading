@@ -1,0 +1,66 @@
+//@version=6
+indicator("Alert Pattern Template", overlay=true)
+
+// This template demonstrates best practices for creating non-repainting alerts.
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+int fastLength = input.int(12, "Fast MA Length")
+int slowLength = input.int(26, "Slow MA Length")
+
+// ============================================================================
+// CALCULATIONS
+// ============================================================================
+
+float fastMA = ta.ema(close, fastLength)
+float slowMA = ta.ema(close, slowLength)
+
+// ============================================================================
+// ALERT CONDITIONS (The Core Pattern)
+// ============================================================================
+
+// 1. Define the boolean condition for your alert.
+//    CRITICAL: Use the historical operator `[1]` to check the state on the *previous*, confirmed bar.
+//    This ensures the alert only fires once per event, right as the bar closes.
+
+bool bullishCross = ta.crossover(fastMA[1], slowMA[1])
+bool bearishCross = ta.crossunder(fastMA[1], slowMA[1])
+
+// 2. For extra safety in strategies, you can also check `barstate.isconfirmed`.
+//    For `alertcondition`, using `[1]` is usually sufficient.
+bool bullishCross_confirmed = ta.crossover(fastMA[1], slowMA[1]) and barstate.isconfirmed
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+// 3. Call `alertcondition` with the confirmed condition.
+//    The message can include dynamic placeholders like {{ticker}}, {{close}}, etc.
+
+alertcondition(bullishCross, 
+     title="Bullish MA Cross", 
+     message="{{ticker}} on {{timeframe}} had a bullish crossover. Price: {{close}}."
+)
+
+alertcondition(bearishCross, 
+     title="Bearish MA Cross", 
+     message="{{ticker}} on {{timeframe}} had a bearish crossover. Price: {{close}}."
+)
+
+// Example of a more complex alert message
+string rsiAlertMessage = "RSI on {{ticker}} is {{plot("RSI")}} which is in the overbought zone."
+alertcondition(ta.rsi(close, 14) > 70, "RSI Overbought", rsiAlertMessage)
+
+
+// ============================================================================
+// VISUALS (To confirm alert logic)
+// ============================================================================
+
+plot(fastMA, "Fast MA", color.blue)
+plot(slowMA, "Slow MA", color.orange)
+
+// Plot a shape only when the alert condition is true. This helps verify the logic.
+plotshape(bullishCross, "Bullish Cross Alert", shape.triangleup, location.belowbar, color.green, size=size.normal)
+plotshape(bearishCross, "Bearish Cross Alert", shape.triangledown, location.abovebar, color.red, size=size.normal)

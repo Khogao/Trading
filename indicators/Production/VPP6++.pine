@@ -1,0 +1,778 @@
+//@version=6
+// TITLE: VP Production v6++ (VPP6++) - Delta-Weighted VP + Advanced Features
+// DESC: Nâng cấp từ VPP6+: Delta-weighted VP, Smart POC, Multi-TF analysis, HVN/LVN Structure
+// MILESTONE: VPP5+.pine (version 5 upgrade, var fixes) → VPP6++ (delta-weighted VP)
+indicator(title='VP Production v6++', shorttitle='VPP6++', overlay=true, max_bars_back=5000, max_boxes_count=500, max_lines_count=500, dynamic_requests=true)
+
+// === INPUTS ===
+var GRP_PROFILE = "🔥 1. Master Profile"
+profile_selector = input.string("LTF Sniper", "Setting Profile", options=["HTF Strategist", "LTF Sniper", "Custom"], group=GRP_PROFILE, tooltip="Chọn preset hoặc Custom.")
+
+var GRP_CORE = "2. Core Settings (Custom)"
+vp_lookback_depth_custom   = input.int(200, 'Lookback Bars', minval=20, maxval=1000, group=GRP_CORE)
+intraday_mode_custom       = input.bool(true, 'Intraday Mode', group=GRP_CORE)
+session_focus_custom       = input.bool(true, 'Focus on Current Session', group=GRP_CORE)
+intraday_lookback_days_custom = input.int(4, 'Intraday Lookback (days)', minval=1, maxval=30, group=GRP_CORE)
+vp_num_levels              = input.int(120, 'Price Levels', minval=20, maxval=200, group=GRP_CORE)
+
+var GRP_EXEC = "3. Execution & Display"
+execution_sensitivity = input.string("Medium", "Execution Sensitivity", options=["Ultra","High","Medium","Low"], group=GRP_EXEC)
+auto_adjust_tf        = input.bool(true, "Auto-adjust TF Mapping", group=GRP_EXEC)
+vp_bar_width          = input.int(40, "Bar Max Width (px)", minval=1, maxval=500, group=GRP_EXEC)
+vp_right_offset       = input.int(20, "Right Offset (bars)", minval=0, maxval=300, group=GRP_EXEC)
+show_status_label     = input.bool(false, "Show 'Calculating' Status", group=GRP_EXEC)
+
+// HTF (đặt trong Execution giống VPP43)
+enable_htf_vp  = input.bool(true, "Show HTF VP (request.security)", group=GRP_EXEC)
+htf_tf         = input.string("240", "HTF timeframe (e.g. D, 240, 60)", group=GRP_EXEC)
+htf_lookback   = input.int(30, "HTF lookback (bars on HTF)", minval=5, maxval=200, group=GRP_EXEC)
+htf_levels     = input.int(60, "HTF Price Levels", minval=20, maxval=200, group=GRP_EXEC)
+htf_va_percent = input.int(70, "HTF Value Area %", minval=10, maxval=99, group=GRP_EXEC)
+htf_color_poc  = input.color(color.new(color.orange, 0), "HTF POC Color", group=GRP_EXEC, inline="htfc")
+htf_color_va   = input.color(color.new(color.teal,   0), "HTF VA Color",  group=GRP_EXEC, inline="htfc")
+
+var GRP_VP = "4. Volume Profile Styling"
+vp_volume_type   = input.string("Both","Volume Type", options=["Both","Bullish","Bearish"], group=GRP_VP)
+vp_va_percent    = input.int(70, "Value Area % (Swing)", minval=10, maxval=99, group=GRP_VP)
+intraday_va_percent = input.int(70, "Value Area % (Intraday)", minval=10, maxval=99, group=GRP_VP)
+vp_vol_color     = input.color(color.new(color.gray, 70), "Volume Bar Color", group=GRP_VP, inline="1")
+vp_show_poc      = input.bool(true, "Show POC Box", group=GRP_VP)
+vp_poc_color     = input.color(color.new(color.orange, 0), "POC Color", group=GRP_VP, inline="1")
+vp_show_va       = input.bool(true, "Shade Value Area", group=GRP_VP)
+vp_va_color      = input.color(color.new(color.teal, 70), "VA Fill Color", group=GRP_VP, inline="2")
+vp_show_hva      = input.bool(false, "Highlight HVA Bars", group=GRP_VP)
+vp_hva_threshold = input.int(70, "HVA Threshold (%)", minval=1, maxval=100, group=GRP_VP)
+vp_hva_color     = input.color(color.new(color.blue, 60), "HVA Fill Color", group=GRP_VP, inline="2")
+vp_show_va_lines = input.bool(true, "Draw VA Lines", group=GRP_VP)
+vp_va_line_color = input.color(color.new(color.teal, 0), "VA Line Color", group=GRP_VP)
+vp_va_line_width = input.int(1, "VA Line Width", minval=1, maxval=4, group=GRP_VP)
+
+var GRP_ADV_SESSION = "5. Advanced: Session"
+session_weight_custom = input.float(1.2, "Session Weight Factor", minval=0.1, maxval=5.0, step=0.1, group=GRP_ADV_SESSION)
+intraday_start_hour   = input.int(9,  "Intraday Start Hour",  minval=0, maxval=23, group=GRP_ADV_SESSION)
+intraday_end_hour     = input.int(17, "Intraday End Hour",    minval=0, maxval=23, group=GRP_ADV_SESSION)
+
+var GRP_STRUCT = "6. Structure Nodes"
+structure_show_nodes   = input.bool(false, "Show HVN/LVN Zones", group=GRP_STRUCT)
+structure_hvn_threshold= input.int(80, "HVN Threshold (% of Max Vol)", minval=1, maxval=100, group=GRP_STRUCT)
+structure_lvn_threshold= input.int(20, "LVN Threshold (% of Max Vol)", minval=0, maxval=100, group=GRP_STRUCT)
+structure_hvn_color    = input.color(color.new(color.gray, 85), "HVN Fill", group=GRP_STRUCT)
+structure_lvn_color    = input.color(color.new(color.gray, 92), "LVN Fill", group=GRP_STRUCT)
+
+// === NHOM 6B: DELTA-WEIGHTED VP (RESEARCH ENHANCEMENT) ===
+var GRP_DELTA_VP = "6B. 🔬 Delta-Weighted VP"
+enable_delta_vp = input.bool(false, "Enable Delta-Weighted VP", group=GRP_DELTA_VP, tooltip="Dùng buy/sell delta thay vì raw volume cho VP calculation. Hiển thị Ở ĐÂU smart money đang tích lũy/phân phối.")
+show_cvd_footprint = input.bool(false, "Show CVD Footprint (Buy/Sell Split)", group=GRP_DELTA_VP, tooltip="Chia mỗi VP bar thành buy volume (xanh) và sell volume (đỏ) với net delta label.")
+footprint_buy_color = input.color(color.new(color.green, 50), "Footprint Buy Color", group=GRP_DELTA_VP, inline="fp")
+footprint_sell_color = input.color(color.new(color.red, 50), "Footprint Sell Color", group=GRP_DELTA_VP, inline="fp")
+show_smart_poc = input.bool(false, "Use Smart POC (CVD-Adjusted)", group=GRP_DELTA_VP, tooltip="POC được tính bằng net delta thay vì raw volume. POC với delta dương = support mạnh, delta âm = resistance mạnh.")
+smart_poc_color = input.color(color.new(color.yellow, 0), "Smart POC Color", group=GRP_DELTA_VP)
+
+var GRP_TABLE = "7. Info Table"
+table_pos = input.string("Top Right", "Table Position", options=["Top Right","Top Left","Bottom Right","Bottom Left"], group=GRP_TABLE)
+
+// === NHOM 10: ALERT SYSTEM (VP-focused) ===
+var GRP_ALERTS_VP = "10. 🔔 VP Alert System"
+enable_vp_alerts = input.bool(true, "Enable VP Alerts", group=GRP_ALERTS_VP)
+// HVN/LVN Touch Alerts
+alert_hvn_touch = input.bool(true, "Alert: HVN Touch", group=GRP_ALERTS_VP, tooltip="Price enters High Volume Node zone (consolidation area)")
+alert_lvn_touch = input.bool(true, "Alert: LVN Touch", group=GRP_ALERTS_VP, tooltip="Price enters Low Volume Node zone (breakout/breakdown area)")
+// POC Retest Alerts
+alert_poc_retest = input.bool(true, "Alert: POC Retest", group=GRP_ALERTS_VP, tooltip="Price returns to POC after moving away (>2 ATR)")
+poc_retest_distance = input.float(2.0, "POC Retest Min Distance (ATR)", minval=0.5, maxval=10.0, step=0.5, group=GRP_ALERTS_VP)
+// VAH/VAL Break Alerts
+alert_vah_break = input.bool(true, "Alert: VAH Break", group=GRP_ALERTS_VP, tooltip="Price breaks above Value Area High (premium zone entry)")
+alert_val_break = input.bool(true, "Alert: VAL Break", group=GRP_ALERTS_VP, tooltip="Price breaks below Value Area Low (discount zone entry)")
+// HTF Alignment Alerts
+alert_htf_alignment = input.bool(true, "Alert: HTF Alignment", group=GRP_ALERTS_VP, tooltip="LTF POC aligns with HTF POC/VAH/VAL (high probability zone)")
+htf_alignment_threshold = input.float(1.0, "HTF Alignment Threshold (ATR)", minval=0.5, maxval=5.0, step=0.5, group=GRP_ALERTS_VP)
+
+// === NHOM 8: VOLUME Z-SCORE (from CVPZero) ===
+var GRP_VOL_ZSCORE = "8. 📊 Volume Z-Score"
+showVolume = input.bool(true, "Hiển thị Volume Chart", group=GRP_VOL_ZSCORE)
+volumeYScale = input.float(1.0, "Volume Y Scale", minval=0.1, maxval=100.0, step=0.1, group=GRP_VOL_ZSCORE, tooltip="Nhân giá trị Volume để kéo dài trục Y. VD: 10 = cao gấp 10 lần.")
+volumeZeroOffset = input.float(0.0, "Volume Baseline Offset", step=1.0, group=GRP_VOL_ZSCORE, tooltip="Dịch baseline Volume lên/xuống.")
+showVolumeBaseline = input.bool(true, "Show Volume Baseline", group=GRP_VOL_ZSCORE)
+volumeChartAlpha = input.int(20, "Alpha: Volume", minval=0, maxval=100, group=GRP_VOL_ZSCORE)
+lengthVolumeMA_z = input.int(20, title="Độ dài MA Volume", minval=1, group=GRP_VOL_ZSCORE)
+// Ngưỡng Z-score
+ultraHighZ = input.float(2.5, "Z Ultra High", minval=1.0, maxval=5.0, step=0.1, group=GRP_VOL_ZSCORE)
+veryHighZ = input.float(1.8, "Z Very High", minval=0.5, maxval=4.0, step=0.1, group=GRP_VOL_ZSCORE)
+highZ = input.float(1.0, "Z High", minval=0.0, maxval=3.0, step=0.1, group=GRP_VOL_ZSCORE)
+normalLowZ = input.float(-0.5, "Z Normal Low", minval=-2.0, maxval=1.0, step=0.1, group=GRP_VOL_ZSCORE)
+lowZ = input.float(-1.5, "Z Low", minval=-3.0, maxval=0.0, step=0.1, group=GRP_VOL_ZSCORE)
+
+// === NHOM 9: VSA VOLUME SIGNALS ===
+var GRP_VSA_VOL = "9. 💡 VSA Volume Signals"
+showVSAVolume = input.bool(true, "Hiển thị VSA Volume", group=GRP_VSA_VOL)
+vsaVolumeLength = input.int(20, "Độ dài MA Volume cho VSA", minval=5, maxval=100, group=GRP_VSA_VOL)
+vsaSensitivity = input.float(1.5, "Độ nhạy VSA", minval=1.0, maxval=3.0, step=0.1, group=GRP_VSA_VOL)
+vsaClassifierMethod = input.string("zscore", "Volume classifier method", options=["ratio", "zscore"], group=GRP_VSA_VOL)
+vsa_zscore_sensitivity_ltf = input.float(2.5, "VSA Z-score Sensitivity (LTF 1-15m)", minval=0.5, maxval=6.0, step=0.1, group=GRP_VSA_VOL, tooltip="Start higher on LTF to reduce noise")
+vsa_zscore_sensitivity_htf = input.float(1.6, "VSA Z-score Sensitivity (HTF 1H+)", minval=0.5, maxval=6.0, step=0.1, group=GRP_VSA_VOL, tooltip="Lower on HTF where signals are cleaner")
+
+// === PROFILE LOGIC (preset) ===
+var int   vp_lookback_depth   = 0
+var int   intraday_lookback_days = 0
+var bool  intraday_mode       = false
+var bool  session_focus       = false
+if profile_selector == "HTF Strategist"
+    vp_lookback_depth := 400
+    intraday_mode := false
+    session_focus := false
+    intraday_lookback_days := 30
+else if profile_selector == "LTF Sniper"
+    vp_lookback_depth := 200
+    intraday_mode := true
+    session_focus := true
+    intraday_lookback_days := 4
+else
+    vp_lookback_depth := vp_lookback_depth_custom
+    intraday_mode := intraday_mode_custom
+    session_focus := session_focus_custom
+    intraday_lookback_days := intraday_lookback_days_custom
+
+// === VARIABLES ===
+var float[] volume_at_price = array.new_float(0)
+var box[]   volume_boxes    = array.new_box(0)
+var box[]   node_boxes      = array.new_box(0)
+var box     poc_box         = box(na)
+var int     last_calc_bar   = 0
+var float   price_high      = 0.0
+var float   price_low       = 0.0
+var float   price_step      = 0.0
+var float   prev_poc_price  = 0.0
+var line    vah_line        = line(na)
+var line    val_line        = line(na)
+var table   info_table      = table(na)
+var label   status_label    = label(na)
+var string  last_table_pos  = ""
+
+// Delta-weighted VP arrays (RESEARCH ENHANCEMENT)
+var float[] buy_volume_at_price = array.new_float(0)
+var float[] sell_volume_at_price = array.new_float(0)
+var float[] net_delta_at_price = array.new_float(0)
+var box[]   footprint_boxes = array.new_box(0)
+var label[] delta_labels = array.new_label(0)
+
+// HTF line handles
+var line htf_poc_line = line(na)
+var line htf_vah_line = line(na)
+var line htf_val_line = line(na)
+var float poc_htf = 0.0
+var float vah_htf = 0.0
+var float val_htf = 0.0
+
+// === HELPERS ===
+// Volume Z-Score calculation (from CVPZero)
+f_zscore_vol(src, len) =>
+    ma = ta.sma(src, len)
+    sd = ta.stdev(src, len)
+    sd != 0 ? (src - ma) / sd : 0
+
+// VSA helpers (from CVPZero)
+f_safe_ratio(num, den, defVal) => den == 0 ? defVal : num / den
+f_zscore_vsa(series, length) =>
+    _ma = ta.sma(series, length)
+    _sd = ta.stdev(series, length)
+    _sd == 0 ? 0.0 : (series - _ma) / _sd
+
+f_get_timeframe_mode() =>
+    string tf_str = 'Other'
+    if not auto_adjust_tf
+        tf_str := 'Manual'
+    else if timeframe.isdaily
+        tf_str := '1D'
+    else if timeframe.isintraday
+        if timeframe.multiplier >= 240
+            tf_str := '4H'
+        else if timeframe.multiplier >= 60
+            tf_str := '1H'
+        else if timeframe.multiplier >= 15
+            tf_str := '15m'
+        else if timeframe.multiplier >= 5
+            tf_str := '5m'
+        else
+            tf_str := '1m'
+    tf_str
+
+f_price_to_index(price, local_price_low, local_price_step) =>
+    local_price_step > 0 ? int(math.max(0, math.min(vp_num_levels - 1, math.floor((price - local_price_low) / local_price_step)))) : 0
+
+f_calculate_value_area(poc_idx, total_vol, local_price_low, local_price_step, va_percentage) =>
+    if poc_idx < 0 or total_vol <= 0
+        [na, na]
+    else
+        target_volume = total_vol * va_percentage / 100
+        va_volume = array.get(volume_at_price, poc_idx)
+        va_upper = poc_idx
+        va_lower = poc_idx
+        while va_volume < target_volume and (va_upper < vp_num_levels - 1 or va_lower > 0)
+            vol_above = va_upper < vp_num_levels - 1 ? array.get(volume_at_price, va_upper + 1) : 0.0
+            vol_below = va_lower > 0 ? array.get(volume_at_price, va_lower - 1) : 0.0
+            if vol_above >= vol_below and va_upper < vp_num_levels - 1
+                va_upper += 1
+                va_volume += vol_above
+            else if va_lower > 0
+                va_lower -= 1
+                va_volume += vol_below
+            else
+                break
+        [local_price_low + va_lower * local_price_step, local_price_low + va_upper * local_price_step]
+
+f_find_and_draw_nodes(max_vol, local_price_low, local_price_step, effective_lookback) =>
+    hvn_vol_threshold = max_vol * structure_hvn_threshold / 100
+    lvn_vol_threshold = max_vol * structure_lvn_threshold / 100
+    in_hvn_zone = false
+    hvn_start_idx = -1
+    for i = 0 to vp_num_levels - 1
+        is_hvn = array.get(volume_at_price, i) >= hvn_vol_threshold
+        if is_hvn and not in_hvn_zone
+            in_hvn_zone := true
+            hvn_start_idx := i
+        if not is_hvn and in_hvn_zone
+            in_hvn_zone := false
+            array.push(node_boxes, box.new(bar_index - effective_lookback, local_price_low + hvn_start_idx * local_price_step, bar_index + vp_right_offset, local_price_low + i * local_price_step, border_color=na, bgcolor=structure_hvn_color))
+    if in_hvn_zone
+        array.push(node_boxes, box.new(bar_index - effective_lookback, local_price_low + hvn_start_idx * local_price_step, bar_index + vp_right_offset, local_price_low + (vp_num_levels) * local_price_step, border_color=na, bgcolor=structure_hvn_color))
+    in_lvn_zone = false
+    lvn_start_idx = -1
+    for i = 0 to vp_num_levels - 1
+        is_lvn = array.get(volume_at_price, i) <= lvn_vol_threshold
+        if is_lvn and not in_lvn_zone
+            in_lvn_zone := true
+            lvn_start_idx := i
+        if not is_lvn and in_lvn_zone
+            in_lvn_zone := false
+            array.push(node_boxes, box.new(bar_index - effective_lookback, local_price_low + lvn_start_idx * local_price_step, bar_index + vp_right_offset, local_price_low + i * local_price_step, border_color=na, bgcolor=structure_lvn_color))
+    if in_lvn_zone
+        array.push(node_boxes, box.new(bar_index - effective_lookback, local_price_low + lvn_start_idx * local_price_step, bar_index + vp_right_offset, local_price_low + (vp_num_levels) * local_price_step, border_color=na, bgcolor=structure_lvn_color))
+
+// VP summary local (an toàn trong request.security)
+f_vp_summary_local(vp_levels_local, lookback_local, va_pct_local) =>
+    vol_local = array.new_float(0)
+    for _ = 0 to vp_levels_local - 1
+        array.push(vol_local, 0.0)
+    ph = ta.highest(high, lookback_local)
+    pl = ta.lowest(low, lookback_local)
+    step = (ph - pl) / vp_levels_local
+    if step <= 0
+        [na, na, na]
+    else
+        for b = 0 to int(math.min(lookback_local - 1, bar_index))
+            if volume[b] <= 0
+                continue
+            tp = (high[b] + low[b] + close[b]) / 3.0
+            idx = step > 0 ? int(math.max(0, math.min(vp_levels_local - 1, math.floor((tp - pl) / step)))) : 0
+            array.set(vol_local, idx, array.get(vol_local, idx) + volume[b])
+        maxv = array.max(vol_local)
+        if maxv <= 0
+            [na, na, na]
+        else
+            poc_i = array.indexof(vol_local, maxv)
+            total_vol = 0.0
+            for i2 = 0 to vp_levels_local - 1
+                total_vol += array.get(vol_local, i2)
+            target = total_vol * va_pct_local / 100.0
+            va_vol = array.get(vol_local, poc_i)
+            va_up = poc_i
+            va_dn = poc_i
+            while va_vol < target and (va_up < vp_levels_local - 1 or va_dn > 0)
+                vol_up = va_up < vp_levels_local - 1 ? array.get(vol_local, va_up + 1) : 0.0
+                vol_dn = va_dn > 0 ? array.get(vol_local, va_dn - 1) : 0.0
+                if vol_up >= vol_dn and va_up < vp_levels_local - 1
+                    va_up += 1
+                    va_vol += vol_up
+                else if va_dn > 0
+                    va_dn -= 1
+                    va_vol += vol_dn
+                else
+                    break
+            poc_price_local = pl + poc_i * step
+            vah_local = pl + va_up * step
+            val_local = pl + va_dn * step
+            [poc_price_local, vah_local, val_local]
+
+// === MAIN LOGIC ===
+tf_mode = f_get_timeframe_mode()
+tf_minutes = timeframe.in_seconds(timeframe.period) / 60.0
+
+base_update_freq = switch tf_mode
+    '1D'  => math.max(10, vp_lookback_depth / 20)
+    '4H'  => math.max(5, vp_lookback_depth / 30)
+    '1H'  => math.max(3, vp_lookback_depth / 40)
+    '15m' => math.max(2, vp_lookback_depth / 50)
+    => 1
+
+final_update_freq = switch execution_sensitivity
+    'Ultra'  => 1
+    'High'   => 2
+    'Medium' => int(math.max(3, base_update_freq))
+    => int(math.max(5, base_update_freq * 2))
+
+avg_len = int(math.min(50, bar_index + 1))
+avg_vol_norm = ta.sma(volume, avg_len) / tf_minutes
+cur_vol_norm = volume / tf_minutes
+
+vol_thresh = switch execution_sensitivity
+    'Ultra'  => 1.3
+    'High'   => 1.7
+    'Medium' => 2.5
+    'Low'    => 4.0
+
+move_thresh = switch execution_sensitivity
+    'Ultra'  => 0.002
+    'High'   => 0.003
+    'Medium' => 0.005
+    'Low'    => 0.01
+
+vol_spike   = cur_vol_norm > avg_vol_norm * vol_thresh and avg_vol_norm > 0
+price_move  = math.abs(close - nz(close[1])) / nz(close[1], 1) > move_thresh
+needs_update = barstate.islast or (bar_index - last_calc_bar >= final_update_freq) or vol_spike or price_move
+
+new_day_flag_series     = ta.change(time("D")) != 0
+bars_since_new_day_series = ta.barssince(new_day_flag_series)
+bars_per_day = 1440 / tf_minutes
+
+int effective_lookback = na
+if intraday_mode
+    effective_lookback := int(math.min(vp_lookback_depth, intraday_lookback_days * bars_per_day))
+else
+    tmp_look = switch tf_mode
+        '1D'  => math.min(vp_lookback_depth, 40)
+        '4H'  => math.min(vp_lookback_depth, 120)
+        '1H'  => math.min(vp_lookback_depth, 240)
+        '15m' => math.min(vp_lookback_depth, 500)
+        => math.min(vp_lookback_depth, 300)
+    effective_lookback := int(tmp_look)
+
+price_high_all = ta.highest(high, effective_lookback)
+price_low_all  = ta.lowest(low,  effective_lookback)
+price_step_all = (price_high_all - price_low_all) / vp_num_levels
+
+if show_status_label and not na(status_label)
+    label.delete(status_label)
+if needs_update and not barstate.islast and show_status_label
+    status_label := label.new(bar_index, high, "Calculating...", yloc=yloc.abovebar, color=color.new(color.gray, 50), textcolor=color.white, style=label.style_label_down)
+
+if array.size(volume_at_price) != vp_num_levels
+    array.clear(volume_at_price)
+    for i = 0 to vp_num_levels - 1
+        array.push(volume_at_price, 0.0)
+
+// --- HTF lines (độc lập với engine) ---
+if enable_htf_vp
+    [poc_htf_tmp, vah_htf_tmp, val_htf_tmp] = request.security(syminfo.tickerid, htf_tf, f_vp_summary_local(htf_levels, htf_lookback, htf_va_percent), lookahead=barmerge.lookahead_off)
+    if not na(poc_htf_tmp)
+        poc_htf := poc_htf_tmp
+        vah_htf := vah_htf_tmp
+        val_htf := val_htf_tmp
+
+        // Dài ngang bằng VA/POC hiện hành
+        poc_start_x = bar_index - nz(effective_lookback, 100)
+        poc_end_x   = bar_index + vp_right_offset + vp_bar_width
+
+        // POC (solid) — kéo dài theo span trên
+        if na(htf_poc_line)
+            htf_poc_line := line.new(poc_start_x, poc_htf, poc_end_x, poc_htf, color=htf_color_poc, width=2)
+        else
+            line.set_xy1(htf_poc_line, poc_start_x, poc_htf)
+            line.set_xy2(htf_poc_line, poc_end_x,   poc_htf)
+
+        // VAH/VAL (dashed) — kéo dài theo span giống POC
+        if na(htf_vah_line)
+            htf_vah_line := line.new(poc_start_x, vah_htf, poc_end_x, vah_htf, color=htf_color_va, width=1, style=line.style_dashed)
+        else
+            line.set_xy1(htf_vah_line, poc_start_x, vah_htf)
+            line.set_xy2(htf_vah_line, poc_end_x,   vah_htf)
+        if na(htf_val_line)
+            htf_val_line := line.new(poc_start_x, val_htf, poc_end_x, val_htf, color=htf_color_va, width=1, style=line.style_dashed)
+        else
+            line.set_xy1(htf_val_line, poc_start_x, val_htf)
+            line.set_xy2(htf_val_line, poc_end_x,   val_htf)
+
+// --- MAIN VP CALCULATION & DRAWING ---
+if needs_update
+    // cleanup
+    if not na(vah_line)
+        line.delete(vah_line)
+        vah_line := na
+    if not na(val_line)
+        line.delete(val_line)
+        val_line := na
+    if not na(poc_box)
+        box.delete(poc_box)
+        poc_box := na
+    for bx in volume_boxes
+        box.delete(bx)
+    array.clear(volume_boxes)
+    for nb in node_boxes
+        box.delete(nb)
+    array.clear(node_boxes)
+
+    // recalc
+    array.fill(volume_at_price, 0.0)
+    
+    // Initialize delta arrays (RESEARCH ENHANCEMENT)
+    if enable_delta_vp or show_cvd_footprint
+        if array.size(buy_volume_at_price) != vp_num_levels
+            array.clear(buy_volume_at_price)
+            array.clear(sell_volume_at_price)
+            array.clear(net_delta_at_price)
+            for _ = 0 to vp_num_levels - 1
+                array.push(buy_volume_at_price, 0.0)
+                array.push(sell_volume_at_price, 0.0)
+                array.push(net_delta_at_price, 0.0)
+        array.fill(buy_volume_at_price, 0.0)
+        array.fill(sell_volume_at_price, 0.0)
+        array.fill(net_delta_at_price, 0.0)
+        
+        // Cleanup footprint boxes
+        for fb in footprint_boxes
+            box.delete(fb)
+        array.clear(footprint_boxes)
+        for dl in delta_labels
+            label.delete(dl)
+        array.clear(delta_labels)
+    
+    price_high := price_high_all
+    price_low  := price_low_all
+    price_step := price_step_all
+
+    if price_step > 0
+        for b = 0 to int(math.min(effective_lookback - 1, bar_index))
+            if volume[b] <= 0
+                continue
+            is_bullish = close[b] >= open[b]
+            include_volume = vp_volume_type == 'Both' or (vp_volume_type == 'Bullish' and is_bullish) or (vp_volume_type == 'Bearish' and not is_bullish)
+            if not include_volume
+                continue
+
+            normalized_vol = volume[b] / tf_minutes
+            age_decay_tf = switch tf_mode
+                '1D'  => 0.002
+                '4H'  => 0.006
+                '1H'  => 0.012
+                '15m' => 0.03
+                => 0.06
+            age_decay  = intraday_mode ? 0.03 : age_decay_tf
+            age_weight = 1.0 / (1.0 + age_decay * b)
+            session_weight_factor = 1.0
+            if session_focus
+                if intraday_mode
+                    h = hour(time[b], syminfo.timezone)
+                    in_window = intraday_start_hour <= intraday_end_hour ? (h >= intraday_start_hour and h < intraday_end_hour) : (h >= intraday_start_hour or h < intraday_end_hour)
+                    if in_window
+                        session_weight_factor := session_weight_custom
+                else
+                    if bars_since_new_day_series[b] <= bars_per_day
+                        session_weight_factor := session_weight_custom
+
+            weighted_volume = normalized_vol * age_weight * session_weight_factor
+            body_ratio = math.abs(close[b] - open[b]) / math.max(high[b] - low[b], price_step)
+            typical_price = nz(body_ratio * (open[b] + close[b]) / 2 + (1 - body_ratio) * (high[b] + low[b]) / 2, close[b])
+            price_range = high[b] - low[b]
+            
+            // === DELTA-WEIGHTED VP CALCULATION (RESEARCH ENHANCEMENT) ===
+            // Classify as buy or sell volume based on close vs open
+            is_buy_bar = close[b] >= open[b]
+            buy_vol = is_buy_bar ? weighted_volume : 0.0
+            sell_vol = not is_buy_bar ? weighted_volume : 0.0
+
+            if price_range <= 0
+                idx = f_price_to_index(typical_price, price_low, price_step)
+                array.set(volume_at_price, idx, array.get(volume_at_price, idx) + weighted_volume * tf_minutes)
+                // Delta tracking
+                if enable_delta_vp or show_cvd_footprint
+                    array.set(buy_volume_at_price, idx, array.get(buy_volume_at_price, idx) + buy_vol * tf_minutes)
+                    array.set(sell_volume_at_price, idx, array.get(sell_volume_at_price, idx) + sell_vol * tf_minutes)
+            else
+                start_idx = f_price_to_index(low[b],  price_low, price_step)
+                end_idx   = f_price_to_index(high[b], price_low, price_step)
+                denom     = math.max(1, end_idx - start_idx + 1)
+                dist_denom= math.max(price_range / 2, price_step)
+                for j = start_idx to end_idx
+                    level_price = price_low + j * price_step
+                    distance_factor = math.max(0.0, 1.0 - math.abs(level_price - typical_price) / dist_denom)
+                    weight = math.max(0.05, distance_factor)
+                    distributed_vol = weighted_volume * weight / denom
+                    distributed_buy = buy_vol * weight / denom
+                    distributed_sell = sell_vol * weight / denom
+                    array.set(volume_at_price, j, array.get(volume_at_price, j) + distributed_vol * tf_minutes)
+                    // Delta tracking
+                    if enable_delta_vp or show_cvd_footprint
+                        array.set(buy_volume_at_price, j, array.get(buy_volume_at_price, j) + distributed_buy * tf_minutes)
+                        array.set(sell_volume_at_price, j, array.get(sell_volume_at_price, j) + distributed_sell * tf_minutes)
+
+        // === DELTA-WEIGHTED POC CALCULATION (RESEARCH ENHANCEMENT) ===
+        // Calculate net delta for each level
+        if enable_delta_vp or show_cvd_footprint
+            for k = 0 to vp_num_levels - 1
+                net_delta = array.get(buy_volume_at_price, k) - array.get(sell_volume_at_price, k)
+                array.set(net_delta_at_price, k, net_delta)
+        
+        max_vol = array.max(volume_at_price)
+        
+        // Smart POC: Use net delta instead of volume
+        var int smart_poc_idx = 0
+        var float smart_poc_price = 0.0
+        if show_smart_poc and max_vol > 0
+            max_abs_delta = 0.0
+            for k = 0 to vp_num_levels - 1
+                abs_delta = math.abs(array.get(net_delta_at_price, k))
+                if abs_delta > max_abs_delta
+                    max_abs_delta := abs_delta
+                    smart_poc_idx := k
+            smart_poc_price := price_low + smart_poc_idx * price_step
+        
+        if max_vol > 0
+            if structure_show_nodes
+                f_find_and_draw_nodes(max_vol, price_low, price_step, effective_lookback)
+
+            // Use Smart POC if enabled, otherwise traditional POC
+            poc_idx = show_smart_poc ? smart_poc_idx : array.indexof(volume_at_price, max_vol)
+            poc_price = show_smart_poc ? smart_poc_price : price_low + poc_idx * price_step
+            va_percentage = intraday_mode ? intraday_va_percent : vp_va_percent
+            [va_low_val, va_high_val] = f_calculate_value_area(poc_idx, array.sum(volume_at_price), price_low, price_step, va_percentage)
+
+            x_base = bar_index + vp_right_offset
+            
+            // === CVD FOOTPRINT DISPLAY (RESEARCH ENHANCEMENT) ===
+            if show_cvd_footprint
+                // Draw split bars: buy (left/green) + sell (right/red) for each level
+                for i = 0 to vp_num_levels - 1
+                    level_volume = array.get(volume_at_price, i)
+                    if level_volume > 0
+                        level_price = price_low + i * price_step
+                        buy_vol_level = array.get(buy_volume_at_price, i)
+                        sell_vol_level = array.get(sell_volume_at_price, i)
+                        net_delta_level = array.get(net_delta_at_price, i)
+                        
+                        buy_bar_length = int(math.round(buy_vol_level / max_vol * vp_bar_width))
+                        sell_bar_length = int(math.round(sell_vol_level / max_vol * vp_bar_width))
+                        
+                        // Draw buy volume (left side, green)
+                        if buy_bar_length > 0
+                            array.push(footprint_boxes, box.new(x_base, level_price - price_step / 2, x_base + buy_bar_length, level_price + price_step / 2, bgcolor=footprint_buy_color, border_color=na))
+                        
+                        // Draw sell volume (right side, red)
+                        if sell_bar_length > 0
+                            sell_x_start = x_base + buy_bar_length + 1
+                            array.push(footprint_boxes, box.new(sell_x_start, level_price - price_step / 2, sell_x_start + sell_bar_length, level_price + price_step / 2, bgcolor=footprint_sell_color, border_color=na))
+                        
+                        // Label net delta (only for significant levels)
+                        if math.abs(net_delta_level) > max_vol * 0.1 and (buy_bar_length + sell_bar_length) > vp_bar_width * 0.3
+                            delta_label_color = net_delta_level > 0 ? color.new(color.green, 0) : color.new(color.red, 0)
+                            delta_text = str.format("{0}", math.round(net_delta_level))
+                            array.push(delta_labels, label.new(x_base + buy_bar_length + sell_bar_length + 2, level_price, delta_text, style=label.style_label_left, color=color.new(color.white, 100), textcolor=delta_label_color, size=size.tiny))
+            else
+                // Traditional VP bars (when footprint disabled)
+                for i = 0 to vp_num_levels - 1
+                    level_volume = array.get(volume_at_price, i)
+                    if level_volume > 0
+                        bar_length = int(math.round(level_volume / max_vol * vp_bar_width))
+                        if bar_length > 0
+                            level_price = price_low + i * price_step
+                            is_in_va = vp_show_va and not na(va_low_val) and level_price >= va_low_val and level_price <= va_high_val
+                            is_hva   = vp_show_hva and level_volume >= max_vol * vp_hva_threshold / 100
+                            is_poc   = i == poc_idx and vp_show_poc
+                            box_color = is_poc ? vp_poc_color : is_hva ? vp_hva_color : is_in_va ? vp_va_color : vp_vol_color
+                            array.push(volume_boxes, box.new(x_base, level_price - price_step / 2, x_base + bar_length, level_price + price_step / 2, bgcolor=box_color, border_color=na))
+
+            // Smart POC box (yellow if enabled, orange if traditional)
+            if vp_show_poc and not na(poc_price)
+                poc_display_color = show_smart_poc ? smart_poc_color : vp_poc_color
+                poc_box := box.new(bar_index - effective_lookback, poc_price - price_step / 4, bar_index + vp_right_offset - 5, poc_price + price_step / 4, bgcolor=poc_display_color, border_color=poc_display_color)
+            if vp_show_va_lines and not na(va_high_val)
+                vah_line := line.new(bar_index - effective_lookback, va_high_val, bar_index + vp_right_offset + vp_bar_width, va_high_val, color=vp_va_line_color, width=vp_va_line_width, style=line.style_dashed)
+                val_line := line.new(bar_index - effective_lookback, va_low_val,  bar_index + vp_right_offset + vp_bar_width, va_low_val,  color=vp_va_line_color, width=vp_va_line_width, style=line.style_dashed)
+
+            prev_poc_price := poc_price
+
+    last_calc_bar := bar_index
+
+// === VOLUME Z-SCORE & VSA COLORCODING (from CVPZero) ===
+// Draw Volume Baseline
+plot(showVolumeBaseline ? volumeZeroOffset : na, title="Volume Baseline", color=color.new(color.gray, 60), style=plot.style_line, linewidth=1)
+
+// Calculate Volume Z-score
+volZ = f_zscore_vol(volume, lengthVolumeMA_z)
+
+// Classify volume by Z-score
+isUltraHigh_z = volZ >= ultraHighZ
+isVeryHigh_z = volZ >= veryHighZ and volZ < ultraHighZ
+isHigh_z = volZ >= highZ and volZ < veryHighZ
+isNormal_z = volZ >= normalLowZ and volZ < highZ
+isLow_z = volZ >= lowZ and volZ < normalLowZ
+isVeryLow_z = volZ < lowZ
+
+// VSA Logic (from CVPZero)
+if showVSAVolume
+    // compute effective sensitivity depending on chart timeframe
+    mult_num = timeframe.multiplier
+    isLTF_vsa = timeframe.isintraday and mult_num <= 15
+    isHTF_vsa = timeframe.isdaily or timeframe.isweekly or (timeframe.isintraday and mult_num >= 60)
+    vsa_zscore_sensitivity = isLTF_vsa ? vsa_zscore_sensitivity_ltf : (isHTF_vsa ? vsa_zscore_sensitivity_htf : vsa_zscore_sensitivity_htf)
+    
+    // compute both ratio and z-score candidates
+    volumeMA_vsa = ta.sma(volume, vsaVolumeLength)
+    vol_z_vsa = f_zscore_vsa(volume, vsaVolumeLength)
+    volRatio = f_safe_ratio(volume, volumeMA_vsa, 1.0)
+    
+    isHigh_ratio = volRatio >= vsaSensitivity
+    isVeryHigh_ratio = volRatio >= (vsaSensitivity * 1.5)
+    isUltraHigh_ratio = volRatio >= (vsaSensitivity * 2.0)
+    
+    isHigh_zscore = vol_z_vsa >= vsa_zscore_sensitivity
+    isVeryHigh_zscore = vol_z_vsa >= (vsa_zscore_sensitivity + 1.0)
+    isUltraHigh_zscore = vol_z_vsa >= (vsa_zscore_sensitivity + 2.0)
+    
+    // final flags chosen by method
+    isHigh_final = vsaClassifierMethod == "zscore" ? isHigh_zscore : isHigh_ratio
+    isVeryHigh_final = vsaClassifierMethod == "zscore" ? isVeryHigh_zscore : isVeryHigh_ratio
+    isUltraHigh_final = vsaClassifierMethod == "zscore" ? isUltraHigh_zscore : isUltraHigh_ratio
+
+// Color coding by Z-score (with VSA enhancement)
+volColorZ = isUltraHigh_z ? color.new(color.purple, volumeChartAlpha) : isVeryHigh_z  ? color.new(color.red, volumeChartAlpha) : isHigh_z      ? color.new(color.orange, volumeChartAlpha) : isNormal_z    ? color.new(color.green, volumeChartAlpha) : isLow_z       ? color.new(color.blue, volumeChartAlpha) : color.new(color.gray, volumeChartAlpha)
+
+// Draw Volume bars with Y scale and offset (from CVPZero)
+plotcandle(volumeZeroOffset, (volume * volumeYScale) + volumeZeroOffset, volumeZeroOffset, (volume * volumeYScale) + volumeZeroOffset, title="Volume (Z-Score)", color=volColorZ, bordercolor=volColorZ, wickcolor=volColorZ, display=showVolume ? display.all : display.none)
+
+// --- INFO TABLE ---
+if barstate.islast and not na(price_high)
+    max_vol2 = array.max(volume_at_price)
+    poc_idx2 = array.indexof(volume_at_price, max_vol2)
+    poc_price2 = poc_idx2 < 0 ? na : price_low + poc_idx2 * price_step
+    va_pct2 = intraday_mode ? intraday_va_percent : vp_va_percent
+    [va_low_info, va_high_info] = f_calculate_value_area(poc_idx2, array.sum(volume_at_price), price_low, price_step, va_pct2)
+
+    pos = switch table_pos
+        "Top Right"    => position.top_right
+        "Top Left"     => position.top_left
+        "Bottom Right" => position.bottom_right
+        => position.bottom_left
+
+    if na(info_table) or last_table_pos != table_pos
+        if not na(info_table)
+            table.delete(info_table)
+        info_table := table.new(pos, 2, 3, border_width=0, border_color=color.black)
+        last_table_pos := table_pos
+
+    // Hiển thị đúng tên profile, riêng Custom sẽ là "CUSTOM"
+    mode_str = str.upper(profile_selector)
+
+    poc_color_dyn = poc_price2 > prev_poc_price ? color.green : poc_price2 < prev_poc_price ? color.red : color.gray
+    poc_display = str.tostring(poc_price2, format.mintick)
+
+    table.cell(info_table, 0, 0, "Mode", bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(info_table, 1, 0, mode_str, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(info_table, 0, 1, "POC", bgcolor=color.new(color.gray, 90), text_size=size.small)
+    table.cell(info_table, 1, 1, poc_display, bgcolor=poc_color_dyn, text_color=color.white, text_size=size.small)
+    table.cell(info_table, 0, 2, "VAH / VAL", bgcolor=color.new(color.gray, 90), text_size=size.small)
+    table.cell(info_table, 1, 2, "VAH: " + str.tostring(va_high_info, format.mintick) + "\nVAL: " + str.tostring(va_low_info, format.mintick), text_size=size.small)
+
+// ============================================================================
+// ALERT SYSTEM (VP-focused, 4 types)
+// ============================================================================
+
+// Extract ATR calculation outside conditional scope (Pine v6 best practice)
+atr_value = ta.atr(14)
+
+if enable_vp_alerts and barstate.isconfirmed
+    // Get current VP levels
+    max_vol_alert = array.max(volume_at_price)
+    poc_idx_alert = array.indexof(volume_at_price, max_vol_alert)
+    poc_price_alert = poc_idx_alert < 0 ? na : price_low + poc_idx_alert * price_step
+    va_pct_alert = intraday_mode ? intraday_va_percent : vp_va_percent
+    [va_low_alert, va_high_alert] = f_calculate_value_area(poc_idx_alert, array.sum(volume_at_price), price_low, price_step, va_pct_alert)
+    
+    // 1. HVN/LVN Touch Detection
+    hvn_vol_threshold_alert = max_vol_alert * structure_hvn_threshold / 100
+    lvn_vol_threshold_alert = max_vol_alert * structure_lvn_threshold / 100
+    
+    // Check if current price is in HVN/LVN zone
+    current_price_idx = f_price_to_index(close, price_low, price_step)
+    current_vol = current_price_idx >= 0 and current_price_idx < array.size(volume_at_price) ? array.get(volume_at_price, current_price_idx) : 0.0
+    
+    in_hvn = current_vol >= hvn_vol_threshold_alert
+    in_lvn = current_vol <= lvn_vol_threshold_alert and current_vol > 0
+    
+    // Track previous state to detect entry
+    var bool was_in_hvn = false
+    var bool was_in_lvn = false
+    
+    hvn_touch_bull = alert_hvn_touch and in_hvn and not was_in_hvn and close > open
+    hvn_touch_bear = alert_hvn_touch and in_hvn and not was_in_hvn and close < open
+    lvn_touch_bull = alert_lvn_touch and in_lvn and not was_in_lvn and close > open
+    lvn_touch_bear = alert_lvn_touch and in_lvn and not was_in_lvn and close < open
+    
+    was_in_hvn := in_hvn
+    was_in_lvn := in_lvn
+    
+    // 2. POC Retest Detection
+    var float last_poc_price = na
+    var int bars_away_from_poc = 0
+    
+    dist_from_poc = math.abs(close - poc_price_alert) / atr_value
+    
+    if dist_from_poc > poc_retest_distance
+        bars_away_from_poc += 1
+        last_poc_price := poc_price_alert
+    
+    poc_retest_bull = alert_poc_retest and bars_away_from_poc > 2 and dist_from_poc < 0.5 and close > open and not na(last_poc_price)
+    poc_retest_bear = alert_poc_retest and bars_away_from_poc > 2 and dist_from_poc < 0.5 and close < open and not na(last_poc_price)
+    
+    if poc_retest_bull or poc_retest_bear
+        bars_away_from_poc := 0
+    
+    // 3. VAH/VAL Break Detection
+    var bool was_below_vah = false
+    var bool was_above_val = false
+    
+    below_vah = close < va_high_alert
+    above_val = close > va_low_alert
+    
+    vah_break_bull = alert_vah_break and was_below_vah and close > va_high_alert and close > open
+    val_break_bear = alert_val_break and was_above_val and close < va_low_alert and close < open
+    
+    was_below_vah := below_vah
+    was_above_val := above_val
+    
+    // 4. HTF Alignment Detection
+    htf_poc_aligned = not na(poc_htf) and math.abs(poc_price_alert - poc_htf) / atr_value < htf_alignment_threshold
+    htf_vah_aligned = not na(vah_htf) and math.abs(poc_price_alert - vah_htf) / atr_value < htf_alignment_threshold
+    htf_val_aligned = not na(val_htf) and math.abs(poc_price_alert - val_htf) / atr_value < htf_alignment_threshold
+    
+    htf_alignment_bull = alert_htf_alignment and (htf_poc_aligned or htf_val_aligned) and close > poc_price_alert and close > open
+    htf_alignment_bear = alert_htf_alignment and (htf_poc_aligned or htf_vah_aligned) and close < poc_price_alert and close < open
+    
+    // Fire alerts using alert() function for dynamic messages
+    if hvn_touch_bull
+        alert("🟢 HVN TOUCH BULLISH\n📊 High Volume Node consolidation\n💰 Price: " + str.tostring(close, format.mintick) + "\n🎯 POC: " + str.tostring(poc_price_alert, format.mintick) + "\n💡 Setup: Accumulation zone, expect range-bound", alert.freq_once_per_bar_close)
+    
+    if hvn_touch_bear
+        alert("🔴 HVN TOUCH BEARISH\n📊 High Volume Node consolidation\n💰 Price: " + str.tostring(close, format.mintick) + "\n🎯 POC: " + str.tostring(poc_price_alert, format.mintick) + "\n💡 Setup: Distribution zone, expect range-bound", alert.freq_once_per_bar_close)
+    
+    if lvn_touch_bull
+        alert("🟢 LVN TOUCH BULLISH\n📊 Low Volume Node - BREAKOUT ZONE\n💰 Price: " + str.tostring(close, format.mintick) + "\n🎯 Target: " + str.tostring(va_high_alert, format.mintick) + " (VAH)\n💡 Setup: Fast move likely, low resistance", alert.freq_once_per_bar_close)
+    
+    if lvn_touch_bear
+        alert("🔴 LVN TOUCH BEARISH\n📊 Low Volume Node - BREAKDOWN ZONE\n💰 Price: " + str.tostring(close, format.mintick) + "\n🎯 Target: " + str.tostring(va_low_alert, format.mintick) + " (VAL)\n💡 Setup: Fast move likely, low support", alert.freq_once_per_bar_close)
+    
+    if poc_retest_bull
+        alert("🟢 POC RETEST BULLISH\n📊 Price returned to Point of Control\n💰 Price: " + str.tostring(close, format.mintick) + "\n🎯 POC: " + str.tostring(poc_price_alert, format.mintick) + "\n💡 Setup: High probability bounce, fair value retest", alert.freq_once_per_bar_close)
+    
+    if poc_retest_bear
+        alert("🔴 POC RETEST BEARISH\n📊 Price returned to Point of Control\n💰 Price: " + str.tostring(close, format.mintick) + "\n🎯 POC: " + str.tostring(poc_price_alert, format.mintick) + "\n💡 Setup: High probability rejection, fair value retest", alert.freq_once_per_bar_close)
+    
+    if vah_break_bull
+        alert("🟢 VAH BREAK BULLISH\n📊 Value Area High breakout - PREMIUM ZONE\n💰 Price: " + str.tostring(close, format.mintick) + "\n🎯 VAH: " + str.tostring(va_high_alert, format.mintick) + "\n💡 Setup: Strong buyers, expect continuation to next HVN", alert.freq_once_per_bar_close)
+    
+    if val_break_bear
+        alert("🔴 VAL BREAK BEARISH\n📊 Value Area Low breakdown - DISCOUNT ZONE\n💰 Price: " + str.tostring(close, format.mintick) + "\n🎯 VAL: " + str.tostring(va_low_alert, format.mintick) + "\n💡 Setup: Strong sellers, expect continuation to next LVN", alert.freq_once_per_bar_close)
+    
+    if htf_alignment_bull
+        alert("🟢 HTF ALIGNMENT BULLISH\n📊 LTF POC aligns with HTF structure\n💰 Price: " + str.tostring(close, format.mintick) + "\n🎯 LTF POC: " + str.tostring(poc_price_alert, format.mintick) + "\n🎯 HTF POC: " + str.tostring(poc_htf, format.mintick) + "\n💡 Setup: HIGH PROBABILITY! Multi-timeframe confluence", alert.freq_once_per_bar_close)
+    
+    if htf_alignment_bear
+        alert("🔴 HTF ALIGNMENT BEARISH\n📊 LTF POC aligns with HTF structure\n💰 Price: " + str.tostring(close, format.mintick) + "\n🎯 LTF POC: " + str.tostring(poc_price_alert, format.mintick) + "\n🎯 HTF POC: " + str.tostring(poc_htf, format.mintick) + "\n💡 Setup: HIGH PROBABILITY! Multi-timeframe confluence", alert.freq_once_per_bar_close)

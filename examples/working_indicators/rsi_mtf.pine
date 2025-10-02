@@ -1,0 +1,49 @@
+//@version=6
+indicator("Example: MTF RSI", "MTF RSI", false)
+
+// This indicator displays the RSI for the current timeframe and a higher timeframe (HTF).
+// It follows best practices to prevent repainting.
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+int rsiLength = input.int(14, "RSI Length", minval=1, group="RSI Settings")
+string htf = input.timeframe("D", "Higher Timeframe", group="MTF Settings")
+
+// ============================================================================
+// CALCULATIONS
+// ============================================================================
+
+// Calculate RSI for the current timeframe
+float currentRSI = ta.rsi(close, rsiLength)
+
+// Calculate RSI for the higher timeframe using a non-repainting pattern
+float htfRSI = request.security(syminfo.tickerid, htf, ta.rsi(close, rsiLength), lookahead=barmerge.lookahead_off)
+
+// ============================================================================
+// VISUALS
+// ============================================================================
+
+// Plot the current RSI
+plot(currentRSI, "Current TF RSI", color.blue, 2)
+
+// Plot the HTF RSI using a stepline to make it clear it's from a higher timeframe
+plot(htfRSI, "HTF RSI", color.purple, 2, plot.style_stepline)
+
+// Overbought and Oversold lines
+hline(70, "Overbought", color.red, hline.style_dashed)
+hline(30, "Oversold", color.green, hline.style_dashed)
+
+// Color the background based on the HTF RSI
+bgcolor(htfRSI > 50 ? color.new(color.green, 90) : color.new(color.red, 90), title="HTF Trend Background")
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+bool crossOverOB = ta.crossover(currentRSI[1], 70)
+bool crossUnderOS = ta.crossunder(currentRSI[1], 30)
+
+alertcondition(crossOverOB, "RSI Overbought", "{{ticker}} RSI crossed above 70.")
+alertcondition(crossUnderOS, "RSI Oversold", "{{ticker}} RSI crossed below 30.")

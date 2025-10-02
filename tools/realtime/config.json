@@ -1,0 +1,87 @@
+{
+  "api_keys": {
+    "claude_api_key": "your_claude_api_key_here",
+    "gemini_api_key": "your_gemini_api_key_here",
+    "tradingview_username": "your_tv_username",
+    "tradingview_password": "your_tv_password"
+  },
+  "trading_settings": {
+    "default_symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT", "DOTUSDT"],
+    "default_timeframes": ["1", "5", "15", "60", "240", "D"],
+    "primary_symbol": "BTCUSDT",
+    "primary_timeframe": "15",
+    "update_interval_seconds": 30
+  },
+  "production_indicators": {
+    "better_cvd_final": {
+      "file": "Better-CVD-Final.pine",
+      "enabled": true,
+      "weight": 0.25,
+      "description": "CVD divergence analysis with multi-TF support"
+    },
+    "cvd_pro": {
+      "file": "CVD-Pro.pine",
+      "enabled": true,
+      "weight": 0.25,
+      "description": "CVD + VSA integration with 16 signals"
+    },
+    "pi_34_professional": {
+      "file": "Pi-3.4-Professional.pine",
+      "enabled": true,
+      "weight": 0.2,
+      "description": "Volume Profile + VSA with HTF analysis"
+    },
+    "smpa_org": {
+      "file": "SMPA ORG.pine",
+      "enabled": true,
+      "weight": 0.2,
+      "description": "Smart Money Concepts - BOS/CHoCH/Order Blocks"
+    },
+    "vpp5": {
+      "file": "VPP5.pine",
+      "enabled": true,
+      "weight": 0.1,
+      "description": "Advanced Volume Profile Production v5"
+    }
+  },
+  "ai_analysis": {
+    "claude_settings": {
+      "model": "claude-sonnet",
+      "max_tokens": 4000,
+      "focus": "logic_reasoning_risk_management"
+    },
+    "gemini_settings": {
+      "model": "gemini-1.5-pro",
+      "max_tokens": 8000,
+      "focus": "pattern_recognition_historical_context"
+    },
+    "confidence_thresholds": {
+      "high": 75,
+      "medium": 50,
+      "low": 25
+    }
+  },
+  "dashboard_settings": {
+    "window_size": "1400x900",
+    "theme": "dark",
+    "update_frequency_ms": 1000,
+    "max_opportunities": 10,
+    "max_risks": 10,
+    "alert_sound": false
+  },
+  "risk_management": {
+    "max_concurrent_signals": 5,
+    "min_confluence_score": 60,
+    "position_size_limits": {
+      "high_confidence": 0.02,
+      "medium_confidence": 0.01,
+      "low_confidence": 0.005
+    }
+  },
+  "logging": {
+    "level": "INFO",
+    "file_path": "./logs/ai_monitor.log",
+    "max_file_size_mb": 10,
+    "backup_count": 5
+  }
+}

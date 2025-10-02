@@ -1,0 +1,67 @@
+//@version=6
+strategy("Example: Bollinger Bands Strategy", "BB Strat", overlay=true, default_qty_value=10, default_qty_type=strategy.percent_of_equity)
+
+// This strategy enters trades based on Bollinger Bands breakouts, with an EMA trend filter.
+// It follows non-repainting best practices.
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+int bbLength = input.int(20, "BB Length", group="Bollinger Bands")
+float bbMult = input.float(2.0, "BB Multiplier", group="Bollinger Bands")
+int trendMaLength = input.int(200, "Trend MA Length", group="Trend Filter")
+
+// ============================================================================
+// CALCULATIONS
+// ============================================================================
+
+// Bollinger Bands
+[basis, upper, lower] = ta.bb(close, bbLength, bbMult)
+
+// Trend Filter MA
+float trendMA = ta.sma(close, trendMaLength)
+
+// ============================================================================
+// STRATEGY LOGIC
+// ============================================================================
+
+// Trend state
+bool isUptrend = close > trendMA
+
+// Entry Conditions (non-repainting)
+bool longCondition = ta.crossover(close[1], upper[1]) and isUptrend[1]
+bool shortCondition = ta.crossunder(close[1], lower[1]) and not isUptrend[1]
+
+// Exit Condition
+bool exitLong = ta.crossunder(close[1], basis[1])
+bool exitShort = ta.crossover(close[1], basis[1])
+
+// Execute on confirmed bars
+if (barstate.isconfirmed)
+    if (longCondition)
+        strategy.entry("Long", strategy.long)
+    
+    if (shortCondition)
+        strategy.entry("Short", strategy.short)
+
+    if (exitLong)
+        strategy.close("Long")
+
+    if (exitShort)
+        strategy.close("Short")
+
+// ============================================================================
+// VISUALS
+// ============================================================================
+
+// Plot Bollinger Bands
+plot(basis, "Basis", color.blue)
+plot(upper, "Upper", color.red)
+plot(lower, "Lower", color.green)
+
+// Plot Trend MA
+plot(trendMA, "Trend MA", color.purple, 2)
+
+// Highlight trend direction
+bgcolor(isUptrend ? color.new(color.green, 90) : color.new(color.red, 90))

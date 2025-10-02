@@ -1,0 +1,18 @@
+{
+    "index": {
+        "additionalDirectories": [
+            "indicators",
+            "scripts",
+            "templates"
+        ],
+        "ignore": [
+            "z_archive",
+            "node_modules",
+            "**/.git/**"
+        ]
+    },
+    "permissions": {
+        "allowBash": true,
+        "allowFileEdits": true
+    }
+}

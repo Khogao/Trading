@@ -34,9 +34,9 @@ showExtremeBreakouts = input.bool(true, title="Highlight Extreme CVD Breakouts",
 
 // --- CVD Table (Better RSI Style) ---
 const string GRP_TABLE = "CVD TABLE"
-cvdShowTable = input(true, title='CVD Multi-TF Table', group=GRP_TABLE)
-cvdTablePosition = input.string(title='Location', defval='top_right', options=['top_left','top_right'], group=GRP_TABLE, inline='1')
-cvdTextSize = input.string(title=' Size', defval='small', options=['auto','tiny','small','normal','large','huge'], group=GRP_TABLE, inline='1')
+cvdShowTable = input(true, title="CVD Multi-TF Table", group=GRP_TABLE)
+cvdTablePosition = input.string(title="Location", defval="top_right", options=["top_left","top_right"], group=GRP_TABLE, inline="1")
+cvdTextSize = input.string(title=" Size", defval="small", options=["auto","tiny","small","normal","large","huge"], group=GRP_TABLE, inline="1")
 textColor = input.color(color.white, title="Text Color", group=GRP_TABLE)
 
 // --- Display Settings (Better RSI Style) ---
@@ -132,14 +132,18 @@ _inRange(cond) =>
     bars = ta.barssince(cond == true)
     rangeLower <= bars and bars <= rangeUpper
 
+// Cache inRange evaluations so the function executes every bar (avoids inconsistent history-dependent calls)
+inRange_pl1 = _inRange(plFound[1])
+inRange_ph1 = _inRange(phFound[1])
+
 // Regular Bullish Divergence
-cvdHL = cvdSource[lookbackRight] > ta.valuewhen(plFound, cvdSource[lookbackRight], 1) and _inRange(plFound[1])
+cvdHL = cvdSource[lookbackRight] > ta.valuewhen(plFound, cvdSource[lookbackRight], 1) and inRange_pl1
 priceLL = low[lookbackRight] < ta.valuewhen(plFound, low[lookbackRight], 1)
 bullCondAlert = priceLL and cvdHL and plFound
 bullCond = showDivergence and bullCondAlert
 
 // Regular Bearish Divergence  
-cvdLH = cvdSource[lookbackRight] < ta.valuewhen(phFound, cvdSource[lookbackRight], 1) and _inRange(phFound[1])
+cvdLH = cvdSource[lookbackRight] < ta.valuewhen(phFound, cvdSource[lookbackRight], 1) and inRange_ph1
 priceHH = high[lookbackRight] > ta.valuewhen(phFound, high[lookbackRight], 1)
 bearCondAlert = priceHH and cvdLH and phFound
 bearCond = showDivergence and bearCondAlert
@@ -147,13 +151,13 @@ bearCond = showDivergence and bearCondAlert
 // Hidden Bullish Divergence
 // Price: Higher Low vs previous Low (compare lows on low pivots)
 priceHL = low[lookbackRight] > ta.valuewhen(plFound, low[lookbackRight], 1)
-cvdLL = cvdSource[lookbackRight] < ta.valuewhen(plFound, cvdSource[lookbackRight], 1) and _inRange(plFound[1])
+cvdLL = cvdSource[lookbackRight] < ta.valuewhen(plFound, cvdSource[lookbackRight], 1) and inRange_pl1
 hiddenBullCondAlert = priceHL and cvdLL and plFound
 hiddenBullCond = ShowHDivergence and hiddenBullCondAlert
 
 // Hidden Bearish Divergence
 // Price: Lower High vs previous High (compare highs on high pivots)
-cvdHH = cvdSource[lookbackRight] > ta.valuewhen(phFound, cvdSource[lookbackRight], 1) and _inRange(phFound[1])
+cvdHH = cvdSource[lookbackRight] > ta.valuewhen(phFound, cvdSource[lookbackRight], 1) and inRange_ph1
 priceLH = high[lookbackRight] < ta.valuewhen(phFound, high[lookbackRight], 1)
 hiddenBearCondAlert = priceLH and cvdHH and phFound
 hiddenBearCond = ShowHDivergence and hiddenBearCondAlert
@@ -289,7 +293,7 @@ width_c0 = 0
 width_c1 = 4
 
 // Map string -> position enum (required by table.new)
-cvd_pos = cvdTablePosition == 'top_right' ? position.top_right : position.top_left
+cvd_pos = cvdTablePosition == "top_right" ? position.top_right : position.top_left
 var table cvd_Table = table.new(position=cvd_pos, columns=2, rows=5, bgcolor=color.rgb(18,22,33,50), frame_color=color.black, frame_width=1, border_color=color.black, border_width=1)
 
 if cvdShowTable
@@ -315,9 +319,9 @@ barcolor(showCandleColors and cvdSource > cvdMA ? color.new(color.blue, 75) : na
 barcolor(showCandleColors and cvdSource < cvdMA ? color.new(color.purple, 75) : na, title="CVD Below MA")
 
 // ======== ALERTS ========== //
-alertcondition(bullCondAlert, title='CVD Regular Bullish Divergence', message="CVD Regular Bullish Divergence detected")
-alertcondition(bearCondAlert, title='CVD Regular Bearish Divergence', message="CVD Regular Bearish Divergence detected")
-alertcondition(hiddenBullCondAlert, title='CVD Hidden Bullish Divergence', message="CVD Hidden Bullish Divergence detected")
-alertcondition(hiddenBearCondAlert, title='CVD Hidden Bearish Divergence', message="CVD Hidden Bearish Divergence detected")
-alertcondition(extremeUpperBreakout, title='CVD Extreme Bullish Breakout', message="CVD Extreme Bullish Breakout")
-alertcondition(extremeLowerBreakout, title='CVD Extreme Bearish Breakout', message="CVD Extreme Bearish Breakout")
+alertcondition(bullCondAlert, title="CVD Regular Bullish Divergence", message="CVD Regular Bullish Divergence detected")
+alertcondition(bearCondAlert, title="CVD Regular Bearish Divergence", message="CVD Regular Bearish Divergence detected")
+alertcondition(hiddenBullCondAlert, title="CVD Hidden Bullish Divergence", message="CVD Hidden Bullish Divergence detected")
+alertcondition(hiddenBearCondAlert, title="CVD Hidden Bearish Divergence", message="CVD Hidden Bearish Divergence detected")
+alertcondition(extremeUpperBreakout, title="CVD Extreme Bullish Breakout", message="CVD Extreme Bullish Breakout")
+alertcondition(extremeLowerBreakout, title="CVD Extreme Bearish Breakout", message="CVD Extreme Bearish Breakout")

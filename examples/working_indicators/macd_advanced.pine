@@ -1,0 +1,46 @@
+//@version=6
+indicator("Example: Advanced MACD", "Adv MACD", false)
+
+// This indicator shows a MACD with a histogram colored by momentum.
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+int fastLength = input.int(12, "Fast Length", group="MACD Settings")
+int slowLength = input.int(26, "Slow Length", group="MACD Settings")
+int signalLength = input.int(9, "Signal Length", group="MACD Settings")
+
+// ============================================================================
+// CALCULATIONS
+// ============================================================================
+
+// Calculate MACD values
+[macdLine, signalLine, histLine] = ta.macd(close, fastLength, slowLength, signalLength)
+
+// Determine momentum for histogram coloring
+color histColor = histLine > 0 ? (histLine[1] < histLine ? color.new(color.aqua, 0) : color.new(color.blue, 0)) : (histLine[1] > histLine ? color.new(color.red, 0) : color.new(color.maroon, 0))
+
+// ============================================================================
+// VISUALS
+// ============================================================================
+
+// Plot MACD and Signal lines
+plot(macdLine, "MACD", color.blue, 2)
+plot(signalLine, "Signal", color.orange, 2)
+
+// Plot the histogram with dynamic colors
+plot(histLine, "Histogram", histColor, 2, plot.style_histogram)
+
+// Zero line
+hline(0, "Zero Line", color.gray, hline.style_dotted)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+bool bullishCross = ta.crossover(macdLine[1], signalLine[1])
+bool bearishCross = ta.crossunder(macdLine[1], signalLine[1])
+
+alertcondition(bullishCross, "MACD Bullish Cross", "{{ticker}} MACD crossed above Signal.")
+alertcondition(bearishCross, "MACD Bearish Cross", "{{ticker}} MACD crossed below Signal.")
