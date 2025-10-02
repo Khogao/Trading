@@ -1,17 +1,19 @@
 //@version=6
-// TITLE: Better CVD - Final (Pure CVD + Divergence Engine)
-// DESC: A complete order flow dashboard combining the feature-rich UI of "Better RSI" 
-// with the high-precision TV CVD calculation and a robust pivot-based divergence engine. No VSA.
-indicator("Better CVD - Final", "Better CVD 1", overlay=false)
+// TITLE: Pure CVD Divergence Engine (C+P & C+V)
+// DESC: A pure order flow divergence indicator. It combines the clean UI of "Better CVD" with a dual divergence engine from "CVD+" to detect both Price vs. CVD (C+P) and Volume vs. CVD (C+V) divergences. No VSA, no complex features, just pure divergence.
+indicator("Pure CVD Divergence Engine", "CVD Div Engine", overlay=false)
 
+// ==============================================================================================
+// IMPORTS
+// ==============================================================================================
 import TradingView/ta/8
 
 // ==============================================================================================
-// INPUTS (Lấy cảm hứng từ Better RSI)
+// INPUTS
 // ==============================================================================================
 // --- 1. CVD Calculation ---
 const string GRP_CVD = "1. CVD Calculation"
-anchorInput = input.timeframe("D", "CVD Anchor Period", group = GRP_CVD, tooltip = "Khung thời gian để reset lại CVD. 'D' được khuyến nghị.")
+anchorInput = input.timeframe("D", "CVD Anchor Period", group = GRP_CVD, tooltip = "The timeframe to reset the CVD calculation. 'D' is recommended for intraday analysis.")
 useCustomTimeframeInput = input.bool(false, "Use Custom Lower Timeframe", group = GRP_CVD)
 lowerTimeframeInput = input.timeframe("1", "Lower Timeframe", group = GRP_CVD)
 
@@ -24,30 +26,41 @@ showBollingerBands = input.bool(true, "Show Bollinger Bands", group = GRP_MA_BB)
 
 // --- 3. Divergence Engine ---
 const string GRP_DIVERGENCE = "3. Divergence Engine"
-showRegular = input.bool(true, "Show Regular Divergence", group = GRP_DIVERGENCE, inline="div_type")
-showHidden = input.bool(true, "Show Hidden Divergence", group = GRP_DIVERGENCE, inline="div_type")
+// C+P
+showRegular = input.bool(true, "C+P: Show Regular Divergence", group = GRP_DIVERGENCE, inline="cp_div")
+showHidden = input.bool(true, "C+P: Show Hidden Divergence", group = GRP_DIVERGENCE, inline="cp_div")
+// C+V
+showCvdVolRegular = input.bool(true, "C+V: Show Regular Divergence", group = GRP_DIVERGENCE, inline="cv_div")
+showCvdVolHidden = input.bool(false, "C+V: Show Hidden Divergence", group = GRP_DIVERGENCE, inline="cv_div", tooltip="Hidden Volume divergences are experimental and often noisy. Use with caution.")
+// Pivot Settings
 lookbackLeft = input.int(5, "Pivot Lookback Left", group = GRP_DIVERGENCE)
 lookbackRight = input.int(5, "Pivot Lookback Right", group = GRP_DIVERGENCE)
 rangeLower = input.int(5, "Min Bars Between Pivots", group = GRP_DIVERGENCE)
 rangeUpper = input.int(60, "Max Bars Between Pivots", group = GRP_DIVERGENCE)
-maxDivergences = input.int(10, "Max Divergences to Show", group = GRP_DIVERGENCE, tooltip="Giới hạn số lượng tín hiệu phân kỳ hiển thị để tránh làm rối chart.")
+maxDivergences = input.int(15, "Max Divergence Lines", group = GRP_DIVERGENCE, tooltip="Limits the number of divergence lines/labels to keep the chart clean.")
 
-// --- 4. Display & Table ---
-const string GRP_DISPLAY = "4. Display & Table"
+// --- 4. Display & Styling ---
+const string GRP_DISPLAY = "4. Display & Styling"
 plotStyle = input.string("Line with MA", "Plot Style", options=["Line with MA", "Candles"], group = GRP_DISPLAY)
-showCandleColors = input.bool(true, title="Color Price Candles on BB Breakout", group = GRP_DISPLAY)
-showTable = input.bool(true, "Show Multi-TF Table", group = GRP_DISPLAY)
-tablePosition = input.string("top_right", "Table Location", options=["top_left","top_right"], group = GRP_DISPLAY)
+// C+P Colors
+bullColor = input.color(color.new(#2962FF, 0), "C+P Bull", group = GRP_DISPLAY, inline="cp_col")
+bearColor = input.color(color.new(#FF1744, 0), "C+P Bear", group = GRP_DISPLAY, inline="cp_col")
+hiddenBullColor = input.color(color.new(#2962FF, 50), "C+P Hidden Bull", group = GRP_DISPLAY, inline="cph_col")
+hiddenBearColor = input.color(color.new(#FF1744, 50), "C+P Hidden Bear", group = GRP_DISPLAY, inline="cph_col")
+// C+V Colors
+cvdVolBullColor = input.color(color.new(color.teal, 0), "C+V Bull", group = GRP_DISPLAY, inline="cv_col")
+cvdVolBearColor = input.color(color.new(color.maroon, 0), "C+V Bear", group = GRP_DISPLAY, inline="cv_col")
+cvdVolHiddenBullColor = input.color(color.new(color.teal, 60), "C+V Hidden Bull", group = GRP_DISPLAY, inline="cvh_col")
+cvdVolHiddenBearColor = input.color(color.new(color.maroon, 60), "C+V Hidden Bear", group = GRP_DISPLAY, inline="cvh_col")
+// BG Colors
+bullAlertBG = input.color(color.new(color.green, 90), "Bull Alert BG", group = GRP_DISPLAY)
+bearAlertBG = input.color(color.new(color.red, 90), "Bear Alert BG", group = GRP_DISPLAY)
 
-// --- Styling Constants ---
-const color BULL_COLOR = color.new(#2962FF, 0)
-const color BEAR_COLOR = color.new(#FF1744, 0)
-const color BULL_BG_COLOR = color.new(color.green, 90)
-const color BEAR_BG_COLOR = color.new(color.red, 90)
 
 // ==============================================================================================
 // FUNCTIONS
 // ==============================================================================================
+// MA Calculation
 ma(source, length, type) =>
     switch type
         "SMA" => ta.sma(source, length)
@@ -55,6 +68,7 @@ ma(source, length, type) =>
         "WMA" => ta.wma(source, length)
         => ta.vwma(source, length)
 
+// Lower Timeframe Resolution
 f_lowerTf() =>
     string result = "60"
     if useCustomTimeframeInput
@@ -67,6 +81,7 @@ f_lowerTf() =>
         result := "5"
     result
 
+// CVD "Close" Value
 f_cvdClose(string tf, string anchor) =>
     [_o, _h, _l, _c] = ta.requestVolumeDelta(tf, anchor)
     _c
@@ -79,9 +94,107 @@ string lowerTimeframe = f_lowerTf()
 cvdSource = lastVolume
 cvdMA = ma(cvdSource, maLengthInput, maTypeInput)
 
+// Bollinger Bands
+bbMA = ta.sma(cvdSource, maLengthInput)
+bbStdDev = ta.stdev(cvdSource, maLengthInput) * bbMultInput
+bbUpper = bbMA + bbStdDev
+bbLower = bbMA - bbStdDev
+
 // ==============================================================================================
-// DIVERGENCE ENGINE V2 (Self-Cleaning, from Better RSI)
+// DIVERGENCE ENGINE (C+P and C+V)
 // ==============================================================================================
+
+// --- Pivot Detection ---
+plVal = ta.pivotlow(cvdSource, lookbackLeft, lookbackRight)
+phVal = ta.pivothigh(cvdSource, lookbackLeft, lookbackRight)
+plFound = not na(plVal)
+phFound = not na(phVal)
+
+// --- Previous Pivot Values ---
+// We check for a pivot found on the *previous* bar (`[1]`) to ensure the pivot is confirmed.
+pl_barssince_1 = ta.barssince(plFound[1])
+ph_barssince_1 = ta.barssince(phFound[1])
+
+// Value of the last confirmed pivot
+prev_plVal = ta.valuewhen(plFound[1], plVal[1], 0)
+prev_phVal = ta.valuewhen(phFound[1], phVal[1], 0)
+
+// Bar index of the last confirmed pivot
+prev_plBar = ta.valuewhen(plFound[1], bar_index[1], 0)
+prev_phBar = ta.valuewhen(phFound[1], bar_index[1], 0)
+
+// Price values at the last confirmed pivot
+prev_low_at_pl = ta.valuewhen(plFound[1], low[lookbackRight+1], 0)
+prev_high_at_ph = ta.valuewhen(phFound[1], high[lookbackRight+1], 0)
+
+// Volume values at the last confirmed CVD pivot
+prev_vol_at_pl = ta.valuewhen(plFound[1], volume[lookbackRight+1], 0)
+prev_vol_at_ph = ta.valuewhen(phFound[1], volume[lookbackRight+1], 0)
+
+
+// --- Condition Checks ---
+// Check if the current pivot is within the allowed bar range from the previous one.
+inRangePL = pl_barssince_1 >= rangeLower and pl_barssince_1 <= rangeUpper
+inRangePH = ph_barssince_1 >= rangeLower and ph_barssince_1 <= rangeUpper
+
+// --- C+P: CVD vs Price Divergence ---
+// Regular Bullish: Price makes a Lower Low, CVD makes a Higher Low.
+priceLL = low[lookbackRight] < prev_low_at_pl
+cvdHL = plVal > prev_plVal
+bullCond = showRegular and plFound and inRangePL and priceLL and cvdHL
+
+// Regular Bearish: Price makes a Higher High, CVD makes a Lower High.
+priceHH = high[lookbackRight] > prev_high_at_ph
+cvdLH = phVal < prev_phVal
+bearCond = showRegular and phFound and inRangePH and priceHH and cvdLH
+
+// Hidden Bullish: Price makes a Higher Low, CVD makes a Lower Low.
+priceHL = low[lookbackRight] > prev_low_at_pl
+cvdLL = plVal < prev_plVal
+hiddenBullCond = showHidden and plFound and inRangePL and priceHL and cvdLL
+
+// Hidden Bearish: Price makes a Lower High, CVD makes a Higher High.
+priceLH = high[lookbackRight] < prev_high_at_ph
+cvdHH = phVal > prev_phVal
+hiddenBearCond = showHidden and phFound and inRangePH and priceLH and cvdHH
+
+// --- C+V: CVD vs Volume Divergence ---
+// Regular Bullish: CVD makes a Higher Low, but Volume at the pivot is lower. (Exhaustion)
+volLL_at_pl = volume[lookbackRight] < prev_vol_at_pl
+cvdVolBullRegular = showCvdVolRegular and plFound and inRangePL and cvdHL and volLL_at_pl
+
+// Regular Bearish: CVD makes a Lower High, but Volume at the pivot is lower. (Exhaustion)
+volLL_at_ph = volume[lookbackRight] < prev_vol_at_ph
+cvdVolBearRegular = showCvdVolRegular and phFound and inRangePH and cvdLH and volLL_at_ph
+
+// Hidden Bullish: CVD makes a Lower Low, and Volume is also lower. (Continuation)
+cvdVolBullHidden = showCvdVolHidden and plFound and inRangePL and cvdLL and volLL_at_pl
+
+// Hidden Bearish: CVD makes a Higher High, and Volume is also lower. (Continuation)
+cvdVolBearHidden = showCvdVolHidden and phFound and inRangePH and cvdHH and volLL_at_ph
+
+
+// ==============================================================================================
+// PLOTTING & UI
+// ==============================================================================================
+// --- Base Plots ---
+hline(0, "Zero Line", color.new(color.gray, 50), linestyle=hline.style_dashed)
+
+// Plot CVD Line/Candles
+isLinePlot = plotStyle == "Line with MA"
+cvdLineColor = cvdSource > cvdMA ? #2962FF : #FF6D00
+pCVD = plot(cvdSource, "CVD", color=cvdLineColor, linewidth=2, display=isLinePlot ? display.all : display.none)
+pMA  = plot(cvdMA, "CVD MA", color=color.new(color.gray, 20), linewidth=1, display=isLinePlot ? display.all : display.none)
+fill(pCVD, pMA, color=isLinePlot ? (cvdSource > cvdMA ? color.new(color.blue, 85) : color.new(color.orange, 85)) : na)
+cCol = lastVolume >= openVolume ? color.new(color.teal, 30) : color.new(color.red, 30)
+plotcandle(openVolume, maxVolume, minVolume, lastVolume, "CVD Candles", color=cCol, bordercolor=cCol, wickcolor=cCol, display=not isLinePlot ? display.all : display.none)
+
+// Plot Bollinger Bands
+pUpper = plot(showBollingerBands ? bbUpper : na, "BB Upper", color.gray, style=plot.style_line)
+pLower = plot(showBollingerBands ? bbLower : na, "BB Lower", color.gray, style=plot.style_line)
+fill(pUpper, pLower, color=showBollingerBands ? color.new(color.gray, 95) : na)
+
+// --- Divergence Drawing ---
 var array<line> divLines = array.new<line>()
 var array<label> divLabels = array.new<label>()
 
@@ -91,124 +204,52 @@ f_cleanupDrawings() =>
     if divLabels.size() > maxDivergences
         label.delete(divLabels.shift())
 
-// --- Declare pivots and related variables globally for use everywhere ---
-plVal = ta.pivotlow(cvdSource, lookbackLeft, lookbackRight)
-phVal = ta.pivothigh(cvdSource, lookbackLeft, lookbackRight)
-plFound = not na(plVal)
-phFound = not na(phVal)
+f_drawDiv(x1, y1, x2, y2, divColor, divText, isBear) =>
+    divLines.push(line.new(x1, y1, x2, y2, color=divColor, width=2))
+    labelStyle = isBear ? label.style_label_down : label.style_label_up
+    divLabels.push(label.new(x2, y2, divText, style=labelStyle, color=color.new(divColor, 100), textcolor=divColor, size=size.small))
+    f_cleanupDrawings()
 
-// --- Extract valuewhen/barssince for consistency ---
-plFound_1 = plFound[1]
-phFound_1 = phFound[1]
-plVal_1 = plVal[1]
-phVal_1 = phVal[1]
+// C+P Regular Bullish
+if bullCond
+    f_drawDiv(prev_plBar, prev_plVal, bar_index - lookbackRight, plVal, bullColor, "Bull", false)
+// C+P Regular Bearish
+if bearCond
+    f_drawDiv(prev_phBar, prev_phVal, bar_index - lookbackRight, phVal, bearColor, "Bear", true)
+// C+P Hidden Bullish
+if hiddenBullCond
+    f_drawDiv(prev_plBar, prev_plVal, bar_index - lookbackRight, plVal, hiddenBullColor, "H.Bull", false)
+// C+P Hidden Bearish
+if hiddenBearCond
+    f_drawDiv(prev_phBar, prev_phVal, bar_index - lookbackRight, phVal, hiddenBearColor, "H.Bear", true)
 
-pl_barssince_1 = ta.barssince(plFound_1)
-ph_barssince_1 = ta.barssince(phFound_1)
+// C+V Regular Bullish
+if cvdVolBullRegular
+    f_drawDiv(prev_plBar, prev_plVal, bar_index - lookbackRight, plVal, cvdVolBullColor, "V.Bull", false)
+// C+V Regular Bearish
+if cvdVolBearRegular
+    f_drawDiv(prev_phBar, prev_phVal, bar_index - lookbackRight, phVal, cvdVolBearColor, "V.Bear", true)
+// C+V Hidden Bullish
+if cvdVolBullHidden
+    f_drawDiv(prev_plBar, prev_plVal, bar_index - lookbackRight, plVal, cvdVolHiddenBullColor, "V.H.Bull", false)
+// C+V Hidden Bearish
+if cvdVolBearHidden
+    f_drawDiv(prev_phBar, prev_phVal, bar_index - lookbackRight, phVal, cvdVolHiddenBearColor, "V.H.Bear", true)
 
-pl_low_lookbackRight_1 = ta.valuewhen(plFound, low[lookbackRight], 1)
-ph_high_lookbackRight_1 = ta.valuewhen(phFound, high[lookbackRight], 1)
-pl_plVal_1 = ta.valuewhen(plFound, plVal, 1)
-ph_phVal_1 = ta.valuewhen(phFound, phVal, 1)
-pl_baridx_lookbackRight_1 = ta.valuewhen(plFound, bar_index - lookbackRight, 1)
-ph_baridx_lookbackRight_1 = ta.valuewhen(phFound, bar_index - lookbackRight, 1)
+// --- Background Alerts ---
+isBull = bullCond or hiddenBullCond or cvdVolBullRegular or cvdVolBullHidden
+isBear = bearCond or hiddenBearCond or cvdVolBearRegular or cvdVolBearHidden
 
-if showRegular or showHidden
-    // Regular Bullish
-    if showRegular and plFound
-        inRangePL = pl_barssince_1 >= rangeLower and pl_barssince_1 <= rangeUpper
-        priceLL = low[lookbackRight] < pl_low_lookbackRight_1
-        cvdHL = plVal > pl_plVal_1
-        bullCond = priceLL and cvdHL and inRangePL
-        if bullCond
-            x1 = pl_baridx_lookbackRight_1
-            y1_cvd = pl_plVal_1
-            x2 = bar_index - lookbackRight
-            divLines.push(line.new(x1, y1_cvd, x2, plVal, color=BULL_COLOR, width=2, style=line.style_solid))
-            divLabels.push(label.new(x2, plVal, "Bull", style=label.style_label_up, color=color.new(BULL_COLOR, 100), textcolor=BULL_COLOR, size=size.small))
-            f_cleanupDrawings()
+bgcolor(isBull and ta.barssince(isBull) == 0 ? bullAlertBG : na, title="Bullish Divergence BG Alert")
+bgcolor(isBear and ta.barssince(isBear) == 0 ? bearAlertBG : na, title="Bearish Divergence BG Alert")
 
-    // Regular Bearish
-    if showRegular and phFound
-        inRangePH = ph_barssince_1 >= rangeLower and ph_barssince_1 <= rangeUpper
-        priceHH = high[lookbackRight] > ph_high_lookbackRight_1
-        cvdLH = phVal < ph_phVal_1
-        bearCond = priceHH and cvdLH and inRangePH
-        if bearCond
-            x1 = ph_baridx_lookbackRight_1
-            y1_cvd = ph_phVal_1
-            x2 = bar_index - lookbackRight
-            divLines.push(line.new(x1, y1_cvd, x2, phVal, color=BEAR_COLOR, width=2, style=line.style_solid))
-            divLabels.push(label.new(x2, phVal, "Bear", style=label.style_label_down, color=color.new(BEAR_COLOR, 100), textcolor=BEAR_COLOR, size=size.small))
-            f_cleanupDrawings()
+// --- Alerts ---
+alertcondition(bullCond, "Regular Bullish Divergence (C+P)", "Regular Bullish Divergence found between Price and CVD.")
+alertcondition(bearCond, "Regular Bearish Divergence (C+P)", "Regular Bearish Divergence found between Price and CVD.")
+alertcondition(hiddenBullCond, "Hidden Bullish Divergence (C+P)", "Hidden Bullish Divergence found between Price and CVD.")
+alertcondition(hiddenBearCond, "Hidden Bearish Divergence (C+P)", "Hidden Bearish Divergence found between Price and CVD.")
 
-    // (Hidden Divergence logic can be added here following the same pattern)
-
-// ==============================================================================================
-// PLOTTING & UI
-// ==============================================================================================
-hline(0, "Zero Line", color.new(color.gray, 50), linestyle=hline.style_dashed)
-
-// Plot CVD Line/Candles
-isLinePlot = plotStyle == "Line with MA"
-cvdLineColor = cvdSource > cvdMA ? #2962FF : #FF6D00 // Stronger Blue/Orange
-pCVD = plot(cvdSource, "CVD", color=cvdLineColor, linewidth=2, display=isLinePlot ? display.all : display.none)
-pMA  = plot(cvdMA, "CVD MA", color=color.new(color.gray, 20), linewidth=1, display=isLinePlot ? display.all : display.none)
-fill(pCVD, pMA, color=isLinePlot ? (cvdSource > cvdMA ? color.new(color.blue, 85) : color.new(color.orange, 85)) : na)
-cCol = lastVolume >= openVolume ? color.new(color.teal, 30) : color.new(color.red, 30)
-plotcandle(openVolume, maxVolume, minVolume, lastVolume, "CVD", color=cCol, bordercolor=cCol, wickcolor=cCol, display=not isLinePlot ? display.all : display.none)
-
-// Plot Bollinger Bands with Gradient Fill (must be outside local scope)
-bbMA = ta.sma(cvdSource, maLengthInput)
-bbStdDev = ta.stdev(cvdSource, maLengthInput) * bbMultInput
-bbUpper = bbMA + bbStdDev
-bbLower = bbMA - bbStdDev
-pUpper = plot(showBollingerBands ? bbUpper : na, "BB Upper", color.gray, style=plot.style_line)
-pLower = plot(showBollingerBands ? bbLower : na, "BB Lower", color.gray, style=plot.style_line)
-fill(pUpper, pLower, color=showBollingerBands ? color.new(color.gray, 95) : na)
-
-// UI Alerts (extract all calculations to global scope)
-f_bullAlert() =>
-    showRegular and plFound and (low[lookbackRight] < pl_low_lookbackRight_1) and (plVal > pl_plVal_1) and (pl_barssince_1 >= rangeLower) and (pl_barssince_1 <= rangeUpper)
-
-f_bearAlert() =>
-    showRegular and phFound and (high[lookbackRight] > ph_high_lookbackRight_1) and (phVal < ph_phVal_1) and (ph_barssince_1 >= rangeLower) and (ph_barssince_1 <= rangeUpper)
-
-bullCondAlertCond = f_bullAlert()
-bullCondAlert = ta.barssince(bullCondAlertCond) == 0
-
-bearCondAlertCond = f_bearAlert()
-bearCondAlert = ta.barssince(bearCondAlertCond) == 0
-
-bgcolor(bullCondAlert ? BULL_BG_COLOR : na, title="Bullish Divergence BG Alert")
-bgcolor(bearCondAlert ? BEAR_BG_COLOR : na, title="Bearish Divergence BG Alert")
-
-// Multi-TF Table
-// Move f_fillCell to top-level scope (not inside if)
-f_fillCell(t, c, r, tf_text, cvd, ma_val) =>
-    isUp = cvd > ma_val
-    arrow = isUp ? " ▲" : " ▼"
-    bgColor = isUp ? color.new(color.green, 70) : color.new(color.red, 70)
-    t.cell(c, r, tf_text, text_halign=text.align_right, text_color=color.gray)
-    t.cell(c + 1, r, str.tostring(cvd, format.volume) + arrow, bgcolor=bgColor, text_color=color.white)
-
-if showTable and barstate.islast
-    string ltf = f_lowerTf()
-    cvd_5   = request.security(syminfo.tickerid, "5",   f_cvdClose(ltf, anchorInput))
-    ma_5    = request.security(syminfo.tickerid, "5",   ma(f_cvdClose(ltf, anchorInput), maLengthInput, maTypeInput))
-    cvd_15  = request.security(syminfo.tickerid, "15",  f_cvdClose(ltf, anchorInput))
-    ma_15   = request.security(syminfo.tickerid, "15",  ma(f_cvdClose(ltf, anchorInput), maLengthInput, maTypeInput))
-    cvd_60  = request.security(syminfo.tickerid, "60",  f_cvdClose(ltf, anchorInput))
-    ma_60   = request.security(syminfo.tickerid, "60",  ma(f_cvdClose(ltf, anchorInput), maLengthInput, maTypeInput))
-    cvd_240 = request.security(syminfo.tickerid, "240", f_cvdClose(ltf, anchorInput))
-    ma_240  = request.security(syminfo.tickerid, "240", ma(f_cvdClose(ltf, anchorInput), maLengthInput, maTypeInput))
-
-    // Map string -> position enum (required by table.new, follow VSA engine pattern)
-    table_pos = tablePosition == "top_right" ? position.top_right : position.top_left
-    var table cvdTable = table.new(position=table_pos, columns=2, rows=5, bgcolor=color.new(#1e222d, 20), border_width=1, border_color=color.new(color.gray, 50))
-    table.cell(cvdTable, 0, 0, "Timeframe", text_color=color.white, text_halign=text.align_center)
-    table.cell(cvdTable, 1, 0, "CVD Status", text_color=color.white, text_halign=text.align_center)
-    f_fillCell(cvdTable, 0, 1, "5m", cvd_5, ma_5)
-    f_fillCell(cvdTable, 0, 2, "15m", cvd_15, ma_15)
-    f_fillCell(cvdTable, 0, 3, "1H", cvd_60, ma_60)
-    f_fillCell(cvdTable, 0, 4, "4H", cvd_240, ma_240)
+alertcondition(cvdVolBullRegular, "Regular Bullish Divergence (C+V)", "Regular Bullish Divergence found between Volume and CVD.")
+alertcondition(cvdVolBearRegular, "Regular Bearish Divergence (C+V)", "Regular Bearish Divergence found between Volume and CVD.")
+alertcondition(cvdVolBullHidden, "Hidden Bullish Divergence (C+V)", "Hidden Bullish Divergence found between Volume and CVD.")
+alertcondition(cvdVolBearHidden, "Hidden Bearish Divergence (C+V)", "Hidden Bearish Divergence found between Volume and CVD.")

@@ -834,32 +834,9 @@ alertcondition(vsaDivBullishReversal and vsaDivAlertEnabled and enableVsaDivRevA
   "  • 30% @ 3R\n" +
   "  • 20% trail tới 5R+\n\n" +
   "🔥 Pattern mạnh nhất cho 1H-4H!\n" +
-  "🎯 Timeframe hiện tại: " + timeframe.period + "\n" +
+  "🎯 Timeframe hiện tại: [TF]\n" +
   "✨ Đây là setup 'bắn voi' của sniper!")
 
 alertcondition(vsaDivBearishReversal and vsaDivAlertEnabled and enableVsaDivRevAlerts, 
   "CẤP 7: VSA→DIV REVERSAL BEAR (Sniper Setup)", 
-  "🎯💎 VSA→DIVERGENCE DISTRIBUTION PATTERN\n" +
-  "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-  "📊 WYCKOFF DISTRIBUTION:\n" +
-  "  Nến 1: VSA Bullish (smart money mua đẩy)\n" +
-  "  Nến 2: Divergence Bearish (CVD giảm)\n" +
-  "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
-  "🎯 Win rate: 75-80% (SNIPER SETUP!)\n" +
-  "💰 Risk: 2% vốn\n" +
-  "🏦 Smart money đang phân phối!\n\n" +
-  "📍 ENTRY:\n" +
-  "  • Option 1: VÀO NGAY (aggressive)\n" +
-  "  • Option 2: Chờ close < MA (conservative)\n" +
-  "🛑 STOP: Trên high của nến Divergence\n" +
-  "✅ TARGET:\n" +
-  "  • 50% @ 2R\n" +
-  "  • 30% @ 3R\n" +
-  "  • 20% trail tới 5R+\n\n" +
-  "🔥 Pattern mạnh nhất cho 1H-4H!\n" +
-  "🎯 Timeframe hiện tại: " + timeframe.period + "\n" +
-  "✨ Đây là setup 'bắn voi' của sniper!")
-
-// ============================================================================
-// END OF SNIPER EDITION ENHANCEMENTS
-// ============================================================================
+  "🎯💎 VSA→DIVERGENCE DISTRIBUTION PATTERN\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📊 WYCKOFF DISTRIBUTION:\n  Nến 1: VSA Bullish (smart money mua đẩy)\n  Nến 2: Divergence Bearish (CVD giảm)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🎯 Win rate: 75-80% (SNIPER SETUP!)\n💰 Risk: 2% vốn\n🏦 Smart money đang phân phối!\n\n📍 ENTRY:\n  • Option 1: VÀO NGAY (aggressive)\n  • Option 2: Chờ close < MA (conservative)\n🛑 STOP: Trên high của nến Divergence\n✅ TARGET:\n  • 50% @ 2R\n  • 30% @ 3R\n  • 20% trail tới 5R+\n\n🔥 Pattern mạnh nhất cho 1H-4H!\n🎯 Timeframe hiện tại: [TF]\n✨ Đây là setup 'bắn voi' của sniper!")

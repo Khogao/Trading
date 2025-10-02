@@ -109,8 +109,7 @@ ema_long = input.int(200, "Long EMA", group=GRP_TREND, minval=100, maxval=300)
 show_cloud = input.bool(true, "EMA Cloud", group=GRP_TREND)
 
 // === DISPLAY ===
-// === VSA SIGNALS (CVPZero Engine, 10 signals, Z-Score, guards) ===
-const string GRP_VSA = "� VSA Signals"
+// === VSA DISPLAY SETTINGS (continues GRP_VSA section) ===
 showVSASignals = input.bool(true, "Hiển thị tín hiệu VSA", group=GRP_VSA, tooltip="10 tín hiệu VSA quan trọng nhất cho BTC/Crypto trading")
 showSC = input.bool(true, "Selling Climax (SC) - Đỉnh bán tháo", group=GRP_VSA)
 showBC = input.bool(true, "Buying Climax (BC) - Đỉnh mua vào", group=GRP_VSA)
@@ -149,6 +148,14 @@ f_zscore(series, length) =>
     _sd == 0 ? 0.0 : (series - _ma) / _sd
 vol_z = f_zscore(volume, vsaVolumeLength)
 volRatio = f_safe_ratio(volume, volumeMA_vsa2, 1.0)
+
+// CVD calculation (needs to be defined early)
+f_cvd_close_early() =>
+    [_o, _h, _l, _c] = tav6.requestVolumeDelta("1", cvd_anchor)
+    _c
+
+cvd_value = enable_cvd ? f_cvd_close_early() : na
+
 isHigh_ratio = volRatio >= vsaSensitivity
 isVeryHigh_ratio = volRatio >= (vsaSensitivity * 1.5)
 isUltraHigh_ratio = volRatio >= (vsaSensitivity * 2.0)
@@ -188,6 +195,7 @@ var string[] vsaNames = array.new_string()
 var string vsaText = ""
 var label[] vsaLabels = array.new<label>()
 var int[] vsaLabelXs = array.new_int()
+var string tf_str = ""
 if showVSASignals and hasReliableVolume
     vsaText := ""
     array.clear(vsaNames)
@@ -249,6 +257,30 @@ if showVSASignals and hasReliableVolume
 // ============================================================================
 // ADVANCED VP ENGINE - VPP5 Production
 // ============================================================================
+
+// Helper function for timeframe mode detection
+f_get_timeframe_mode() =>
+    mult_num_tf = timeframe.multiplier
+    if timeframe.isdaily or timeframe.isweekly or timeframe.ismonthly
+        '1D'
+    else if mult_num_tf >= 240
+        '4H'
+    else if mult_num_tf >= 60
+        '1H'
+    else if mult_num_tf >= 15
+        '15m'
+    else
+        '5m'
+
+// Profile-based settings
+final_lookback = switch profile_selector
+    "Scalper" => vp_lookback
+    "Day Trader" => vp_lookback
+    "Swing Trader" => int(vp_lookback * 1.5)
+    => int(vp_lookback * 2)
+
+final_intraday_mode = intraday_mode_custom
+final_session_focus = session_focus_custom
 
 // Enhanced VP Variables
 var array<float> volume_at_price = array.new<float>()
@@ -465,6 +497,17 @@ type BarAnalysis
     bool narrow_range
     float close_position
 
+// VSA thresholds based on sensitivity
+vol_threshold = switch vsa_sensitivity
+    "Low" => 2.5
+    "Medium" => 2.0
+    => 1.5
+
+range_threshold = switch vsa_sensitivity
+    "Low" => 1.8
+    "Medium" => 1.5
+    => 1.2
+
 // VSA Functions
 f_analyze_bar() =>
     vol_ma = ta.sma(volume, 20)
@@ -532,6 +575,19 @@ vsa_score += is_selling_climax ? 2.0 : 0
 vsa_score -= is_upthrust ? 3.0 : 0
 vsa_score -= is_buying_climax ? 2.0 : 0
 vsa_score -= is_effort_no_result ? 1.0 : 0
+
+// Color settings for VP and HTF
+color_poc = color.new(color.yellow, 30)
+color_va = color.new(color.blue, 70)
+vp_vol_color = color.new(color.gray, 50)
+color_htf_poc = color.new(color.orange, 20)
+color_htf_va = color.new(color.orange, 60)
+
+// Display settings
+var GRP_DISPLAY = "🎨 8. Display Settings"
+show_background = input.bool(false, "Background Color", group=GRP_DISPLAY)
+show_info = input.bool(true, "Info Panel", group=GRP_DISPLAY)
+info_position = input.string("top_right", "Panel Position", options=["top_left","top_right","bottom_left","bottom_right"], group=GRP_DISPLAY)
 
 // ============================================================================
 // CVD LITE ENGINE (Overlay Markers Only - From CVPZero)

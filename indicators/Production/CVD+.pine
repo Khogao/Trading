@@ -385,11 +385,12 @@ if showCvdPriceDivLines and phFound and (bearCond or hiddenBearCond) and not na(
         line.delete(array.pop(cvdDivLines))
 
 // === CVD DIVERGENCE LINES (CVD+Volume on CVD chart) ===
-// Vẽ đường nối CVD+Volume divergence trên CVD chart khi có C+V divergence bằng line.new (chỉ khi divChartDisplay = "All on CVD Chart")
+// Vẽ đường nối CVD+Volume divergence trên CVD chart khi có C+V divergence bằng line.new
+// Hiển thị khi: "All on CVD Chart" HOẶC "All on Price Chart" (vẫn vẽ trên CVD chart nếu user enable showCvdVolDivLines)
 cvdVolBullLineColor = cvdVolBull ? (cvdVolBullRegular ? CVDVOL_BULL_REGULAR_COLOR : CVDVOL_BULL_HIDDEN_COLOR) : color.new(color.white, 100)
 cvdVolBearLineColor = cvdVolBear ? (cvdVolBearRegular ? CVDVOL_BEAR_REGULAR_COLOR : CVDVOL_BEAR_HIDDEN_COLOR) : color.new(color.white, 100)
 
-if showCvdVolDivLines and divChartDisplay == "All on CVD Chart" and plFound and cvdVolBull and not na(prev_plBar)
+if showCvdVolDivLines and (divChartDisplay == "All on CVD Chart" or divChartDisplay == "All on Price Chart") and plFound and cvdVolBull and not na(prev_plBar)
     y1_scaled = (prev_plVal * cvdYScale) + cvdZeroOffset
     y2_scaled = (plVal * cvdYScale) + cvdZeroOffset
     newLine = line.new(x1=int(prev_plBar), y1=y1_scaled, x2=bar_index - lookbackRight, y2=y2_scaled, color=cvdVolBullLineColor, width=1, style=line.style_dotted)
@@ -397,7 +398,7 @@ if showCvdVolDivLines and divChartDisplay == "All on CVD Chart" and plFound and 
     if array.size(cvdDivLines) > maxDivLines
         line.delete(array.pop(cvdDivLines))
 
-if showCvdVolDivLines and divChartDisplay == "All on CVD Chart" and phFound and cvdVolBear and not na(prev_phBar)
+if showCvdVolDivLines and (divChartDisplay == "All on CVD Chart" or divChartDisplay == "All on Price Chart") and phFound and cvdVolBear and not na(prev_phBar)
     y1_scaled = (prev_phVal * cvdYScale) + cvdZeroOffset
     y2_scaled = (phVal * cvdYScale) + cvdZeroOffset
     newLine = line.new(x1=int(prev_phBar), y1=y1_scaled, x2=bar_index - lookbackRight, y2=y2_scaled, color=cvdVolBearLineColor, width=1, style=line.style_dotted)
@@ -405,21 +406,45 @@ if showCvdVolDivLines and divChartDisplay == "All on CVD Chart" and phFound and 
     if array.size(cvdDivLines) > maxDivLines
         line.delete(array.pop(cvdDivLines))
 
+// === PRE-CALCULATE CONFLUENCE LEVELS FOR MARKERS ===
+// Level 2-4: ⚠️ Warning (65-70% win rate, needs caution)
+// Level 5+: ⭐ Star (75%+ win rate, high conviction)
+// Note: VSA-based confluence will be calculated later after VSA signals are defined
+
+// Level 2: Double Confluence (C+P + C+V)
+isDoubleConfluenceBull = (bullCond and cvdVolBullRegular)
+isDoubleConfluenceBear = (bearCond and cvdVolBearRegular)
+
+// Level 6: BB + Divergence Extremes - Inline calculation using bbLower/bbUpper directly
+isBBDivBull = (cvdSource < bbLower) and (bullCond or cvdVolBullRegular)
+isBBDivBear = (cvdSource > bbUpper) and (bearCond or cvdVolBearRegular)
+
+// Aggregate markers for labels
+hasLevel2to4_Bull_ForLabel = isDoubleConfluenceBull  // Level 4 (VSA+Div) will be added later after VSA defined
+hasLevel2to4_Bear_ForLabel = isDoubleConfluenceBear
+hasLevel5Plus_Bull_ForLabel = isBBDivBull  // Level 5 (Triple) and 7 (VSA→Div) added later via plotshape
+hasLevel5Plus_Bear_ForLabel = isBBDivBear
+
 // Use label.new for CVD+Price divergence labels to reduce plotcount (labels aren't counted as plots)
 // Create labels at the pivot bar position (bar_index - lookbackRight) with lifecycle managed by f_createDivLabel
+// Add ⭐ for Level 5+ (75%+ win rate) or ⚠️ for Level 2-4 (65-70% win rate)
 priceLabelX = bar_index - lookbackRight
 if bullCond
     if not f_array_has_int(divLabelXs, priceLabelX)
-        f_createDivLabel(priceLabelX, low[lookbackRight] - (atr_for_labels * bullLabelOffset), "Bull", false, BULL_COLOR, divLabels, divLabelXs, divLabelLimit)
+        labelText = hasLevel5Plus_Bull_ForLabel ? "⭐Bull" : hasLevel2to4_Bull_ForLabel ? "⚠️Bull" : "Bull"
+        f_createDivLabel(priceLabelX, low[lookbackRight] - (atr_for_labels * bullLabelOffset), labelText, false, BULL_COLOR, divLabels, divLabelXs, divLabelLimit)
 if bearCond
     if not f_array_has_int(divLabelXs, priceLabelX)
-        f_createDivLabel(priceLabelX, high[lookbackRight] + (atr_for_labels * bearLabelOffset), "Bear", true, BEAR_COLOR, divLabels, divLabelXs, divLabelLimit)
+        labelText = hasLevel5Plus_Bear_ForLabel ? "⭐Bear" : hasLevel2to4_Bear_ForLabel ? "⚠️Bear" : "Bear"
+        f_createDivLabel(priceLabelX, high[lookbackRight] + (atr_for_labels * bearLabelOffset), labelText, true, BEAR_COLOR, divLabels, divLabelXs, divLabelLimit)
 if hiddenBullCond
     if not f_array_has_int(divLabelXs, priceLabelX)
-        f_createDivLabel(priceLabelX, low[lookbackRight] - (atr_for_labels * bullLabelOffset), "H.Bull", false, HIDDEN_BULL_COLOR, divLabels, divLabelXs, divLabelLimit)
+        labelText = hasLevel5Plus_Bull_ForLabel ? "⭐H.Bull" : hasLevel2to4_Bull_ForLabel ? "⚠️H.Bull" : "H.Bull"
+        f_createDivLabel(priceLabelX, low[lookbackRight] - (atr_for_labels * bullLabelOffset), labelText, false, HIDDEN_BULL_COLOR, divLabels, divLabelXs, divLabelLimit)
 if hiddenBearCond
     if not f_array_has_int(divLabelXs, priceLabelX)
-        f_createDivLabel(priceLabelX, high[lookbackRight] + (atr_for_labels * bearLabelOffset), "H.Bear", true, HIDDEN_BEAR_COLOR, divLabels, divLabelXs, divLabelLimit)
+        labelText = hasLevel5Plus_Bear_ForLabel ? "⭐H.Bear" : hasLevel2to4_Bear_ForLabel ? "⚠️H.Bear" : "H.Bear"
+        f_createDivLabel(priceLabelX, high[lookbackRight] + (atr_for_labels * bearLabelOffset), labelText, true, HIDDEN_BEAR_COLOR, divLabels, divLabelXs, divLabelLimit)
 bgcolor(bullCond or hiddenBullCond ? BULL_BG_COLOR : na, title="Bullish Divergence BG Alert")
 bgcolor(bearCond or hiddenBearCond ? BEAR_BG_COLOR : na, title="Bearish Divergence BG Alert")
 cvd_is_overbought = cvdSource > bbUpper
@@ -807,47 +832,59 @@ volLabelX = bar_index - lookbackRight
 if divChartDisplay == "All on Price Chart"
     if cvdVolBullRegular
         if not f_array_has_int(divLabelXs, volLabelX)
-            f_createDivLabel(volLabelX, low[lookbackRight] - (atr_for_labels * bullLabelOffset), "VBull", false, CVDVOL_BULL_REGULAR_COLOR, divLabels, divLabelXs, divLabelLimit)
+            labelText = hasLevel5Plus_Bull_ForLabel ? "⭐VBull" : hasLevel2to4_Bull_ForLabel ? "⚠️VBull" : "VBull"
+            f_createDivLabel(volLabelX, low[lookbackRight] - (atr_for_labels * bullLabelOffset), labelText, false, CVDVOL_BULL_REGULAR_COLOR, divLabels, divLabelXs, divLabelLimit)
     if cvdVolBearRegular
         if not f_array_has_int(divLabelXs, volLabelX)
-            f_createDivLabel(volLabelX, high[lookbackRight] + (atr_for_labels * bearLabelOffset), "VBear", true, CVDVOL_BEAR_REGULAR_COLOR, divLabels, divLabelXs, divLabelLimit)
+            labelText = hasLevel5Plus_Bear_ForLabel ? "⭐VBear" : hasLevel2to4_Bear_ForLabel ? "⚠️VBear" : "VBear"
+            f_createDivLabel(volLabelX, high[lookbackRight] + (atr_for_labels * bearLabelOffset), labelText, true, CVDVOL_BEAR_REGULAR_COLOR, divLabels, divLabelXs, divLabelLimit)
     if cvdVolBullHidden
         if not f_array_has_int(divLabelXs, volLabelX)
-            f_createDivLabel(volLabelX, low[lookbackRight] - (atr_for_labels * bullLabelOffset), "H.VBull", false, CVDVOL_BULL_HIDDEN_COLOR, divLabels, divLabelXs, divLabelLimit)
+            labelText = hasLevel5Plus_Bull_ForLabel ? "⭐H.VBull" : hasLevel2to4_Bull_ForLabel ? "⚠️H.VBull" : "H.VBull"
+            f_createDivLabel(volLabelX, low[lookbackRight] - (atr_for_labels * bullLabelOffset), labelText, false, CVDVOL_BULL_HIDDEN_COLOR, divLabels, divLabelXs, divLabelLimit)
     if cvdVolBearHidden
         if not f_array_has_int(divLabelXs, volLabelX)
-            f_createDivLabel(volLabelX, high[lookbackRight] + (atr_for_labels * bearLabelOffset), "H.VBear", true, CVDVOL_BEAR_HIDDEN_COLOR, divLabels, divLabelXs, divLabelLimit)
+            labelText = hasLevel5Plus_Bear_ForLabel ? "⭐H.VBear" : hasLevel2to4_Bear_ForLabel ? "⚠️H.VBear" : "H.VBear"
+            f_createDivLabel(volLabelX, high[lookbackRight] + (atr_for_labels * bearLabelOffset), labelText, true, CVDVOL_BEAR_HIDDEN_COLOR, divLabels, divLabelXs, divLabelLimit)
 
 // Option 2: C+V labels on Volume chart (default, use volDivLabels array)
 if divChartDisplay == "Split: C+P on Price / C+V on Volume"
     if cvdVolBullRegular
         if not f_array_has_int(volDivLabelXs, volLabelX)
-            f_createDivLabel(volLabelX, (volume[lookbackRight] * volumeYScale) + volumeZeroOffset - vol_label_offset, "VBull", false, CVDVOL_BULL_REGULAR_COLOR, volDivLabels, volDivLabelXs, divLabelLimit)
+            labelText = hasLevel5Plus_Bull_ForLabel ? "⭐VBull" : hasLevel2to4_Bull_ForLabel ? "⚠️VBull" : "VBull"
+            f_createDivLabel(volLabelX, (volume[lookbackRight] * volumeYScale) + volumeZeroOffset - vol_label_offset, labelText, false, CVDVOL_BULL_REGULAR_COLOR, volDivLabels, volDivLabelXs, divLabelLimit)
     if cvdVolBearRegular
         if not f_array_has_int(volDivLabelXs, volLabelX)
-            f_createDivLabel(volLabelX, (volume[lookbackRight] * volumeYScale) + volumeZeroOffset + vol_label_offset, "VBear", true, CVDVOL_BEAR_REGULAR_COLOR, volDivLabels, volDivLabelXs, divLabelLimit)
+            labelText = hasLevel5Plus_Bear_ForLabel ? "⭐VBear" : hasLevel2to4_Bear_ForLabel ? "⚠️VBear" : "VBear"
+            f_createDivLabel(volLabelX, (volume[lookbackRight] * volumeYScale) + volumeZeroOffset + vol_label_offset, labelText, true, CVDVOL_BEAR_REGULAR_COLOR, volDivLabels, volDivLabelXs, divLabelLimit)
     if cvdVolBullHidden
         if not f_array_has_int(volDivLabelXs, volLabelX)
-            f_createDivLabel(volLabelX, (volume[lookbackRight] * volumeYScale) + volumeZeroOffset - vol_label_offset, "H.VBull", false, CVDVOL_BULL_HIDDEN_COLOR, volDivLabels, volDivLabelXs, divLabelLimit)
+            labelText = hasLevel5Plus_Bull_ForLabel ? "⭐H.VBull" : hasLevel2to4_Bull_ForLabel ? "⚠️H.VBull" : "H.VBull"
+            f_createDivLabel(volLabelX, (volume[lookbackRight] * volumeYScale) + volumeZeroOffset - vol_label_offset, labelText, false, CVDVOL_BULL_HIDDEN_COLOR, volDivLabels, volDivLabelXs, divLabelLimit)
     if cvdVolBearHidden
         if not f_array_has_int(volDivLabelXs, volLabelX)
-            f_createDivLabel(volLabelX, (volume[lookbackRight] * volumeYScale) + volumeZeroOffset + vol_label_offset, "H.VBear", true, CVDVOL_BEAR_HIDDEN_COLOR, volDivLabels, volDivLabelXs, divLabelLimit)
+            labelText = hasLevel5Plus_Bear_ForLabel ? "⭐H.VBear" : hasLevel2to4_Bear_ForLabel ? "⚠️H.VBear" : "H.VBear"
+            f_createDivLabel(volLabelX, (volume[lookbackRight] * volumeYScale) + volumeZeroOffset + vol_label_offset, labelText, true, CVDVOL_BEAR_HIDDEN_COLOR, volDivLabels, volDivLabelXs, divLabelLimit)
 
 // Option 3: C+V labels on CVD chart (use divLabels array, CVD scaled Y-coordinates)
 if divChartDisplay == "All on CVD Chart"
     cvd_label_offset = (ta.highest(cvdSource, 20) - ta.lowest(cvdSource, 20)) * cvdYScale * 0.05
     if cvdVolBull and cvdVolBullRegular
         if not f_array_has_int(divLabelXs, volLabelX)
-            f_createDivLabel(volLabelX, (plVal * cvdYScale) + cvdZeroOffset - cvd_label_offset, "VBull", false, CVDVOL_BULL_REGULAR_COLOR, divLabels, divLabelXs, divLabelLimit)
+            labelText = hasLevel5Plus_Bull_ForLabel ? "⭐VBull" : hasLevel2to4_Bull_ForLabel ? "⚠️VBull" : "VBull"
+            f_createDivLabel(volLabelX, (plVal * cvdYScale) + cvdZeroOffset - cvd_label_offset, labelText, false, CVDVOL_BULL_REGULAR_COLOR, divLabels, divLabelXs, divLabelLimit)
     if cvdVolBear and cvdVolBearRegular
         if not f_array_has_int(divLabelXs, volLabelX)
-            f_createDivLabel(volLabelX, (phVal * cvdYScale) + cvdZeroOffset + cvd_label_offset, "VBear", true, CVDVOL_BEAR_REGULAR_COLOR, divLabels, divLabelXs, divLabelLimit)
+            labelText = hasLevel5Plus_Bear_ForLabel ? "⭐VBear" : hasLevel2to4_Bear_ForLabel ? "⚠️VBear" : "VBear"
+            f_createDivLabel(volLabelX, (phVal * cvdYScale) + cvdZeroOffset + cvd_label_offset, labelText, true, CVDVOL_BEAR_REGULAR_COLOR, divLabels, divLabelXs, divLabelLimit)
     if cvdVolBull and cvdVolBullHidden
         if not f_array_has_int(divLabelXs, volLabelX)
-            f_createDivLabel(volLabelX, (plVal * cvdYScale) + cvdZeroOffset - cvd_label_offset, "H.VBull", false, CVDVOL_BULL_HIDDEN_COLOR, divLabels, divLabelXs, divLabelLimit)
+            labelText = hasLevel5Plus_Bull_ForLabel ? "⭐H.VBull" : hasLevel2to4_Bull_ForLabel ? "⚠️H.VBull" : "H.VBull"
+            f_createDivLabel(volLabelX, (plVal * cvdYScale) + cvdZeroOffset - cvd_label_offset, labelText, false, CVDVOL_BULL_HIDDEN_COLOR, divLabels, divLabelXs, divLabelLimit)
     if cvdVolBear and cvdVolBearHidden
         if not f_array_has_int(divLabelXs, volLabelX)
-            f_createDivLabel(volLabelX, (phVal * cvdYScale) + cvdZeroOffset + cvd_label_offset, "H.VBear", true, CVDVOL_BEAR_HIDDEN_COLOR, divLabels, divLabelXs, divLabelLimit)
+            labelText = hasLevel5Plus_Bear_ForLabel ? "⭐H.VBear" : hasLevel2to4_Bear_ForLabel ? "⚠️H.VBear" : "H.VBear"
+            f_createDivLabel(volLabelX, (phVal * cvdYScale) + cvdZeroOffset + cvd_label_offset, labelText, true, CVDVOL_BEAR_HIDDEN_COLOR, divLabels, divLabelXs, divLabelLimit)
 
 // === ADVANCED ALERT SYSTEM ===
 // Note: hasVSABullish/hasVSABearish đã được khai báo ở trên (trong VSA-Div Pattern section)
@@ -905,11 +942,11 @@ alertcondition(enableBBBreakAlerts and cvd_is_oversold, '⚠️ BB: Quá Bán', 
 
 // [CẤP 4A] VSA Tăng + Phân Kỳ Tăng (smart money accumulation)
 vsaDivBull = (bullCond or cvdVolBullRegular) and hasVSABullish and hasReliableVolume
-alertcondition(enableVSAConfluentAlerts and vsaDivBull, '⭐ VSA+PK: TĂNG', 'CVPZ: 💪💪 VSA + PHÂN KỲ TĂNG\n✅ Phân kỳ Bullish\n✅ VSA Bullish (SP/SV/ST/BC/NS/SO)\n📈 Smart money đang mua\n💰 Win rate ~68%\n🎯 Entry khi break cao nến hiện tại')
+alertcondition(enableVSAConfluentAlerts and vsaDivBull, '⚠️ VSA+PK: TĂNG', 'CVPZ: 💪💪 VSA + PHÂN KỲ TĂNG\n✅ Phân kỳ Bullish\n✅ VSA Bullish (SP/SV/ST/BC/NS/SO)\n📈 Smart money đang mua\n💰 Win rate ~68%\n🎯 Entry khi break cao nến hiện tại')
 
 // [CẤP 4B] VSA Giảm + Phân Kỳ Giảm (smart money distribution)
 vsaDivBear = (bearCond or cvdVolBearRegular) and hasVSABearish and hasReliableVolume
-alertcondition(enableVSAConfluentAlerts and vsaDivBear, '⭐ VSA+PK: GIẢM', 'CVPZ: 💪💪 VSA + PHÂN KỲ GIẢM\n✅ Phân kỳ Bearish\n✅ VSA Bearish (SC/ND/UT/WK)\n📉 Smart money đang bán\n💰 Win rate ~68%\n🎯 Entry khi break thấp nến hiện tại')
+alertcondition(enableVSAConfluentAlerts and vsaDivBear, '⚠️ VSA+PK: GIẢM', 'CVPZ: 💪💪 VSA + PHÂN KỲ GIẢM\n✅ Phân kỳ Bearish\n✅ VSA Bearish (SC/ND/UT/WK)\n📉 Smart money đang bán\n💰 Win rate ~68%\n🎯 Entry khi break thấp nến hiện tại')
 
 // === 5. CAO CẤP - HỘI TỤ BA YẾU TỐ (Triple Confluence: C+P + C+V + VSA) ===
 // Mục đích: Setup CHẮC ĂN NHẤT - cả 3 yếu tố hội tụ (RẤT HIẾM!)
@@ -918,11 +955,13 @@ alertcondition(enableVSAConfluentAlerts and vsaDivBear, '⭐ VSA+PK: GIẢM', 'C
 // Tần suất: ~1-3 lần/tháng trên BTC 4H
 
 // [CẤP 5] HỘI TỤ BA - TĂNG (Holy Grail Setup)
-tripleConfluenceBull = confluentBullRegular and hasVSABullish
+// Note: Không yêu cầu hasReliableVolume - volume check đã flexible cho cấp 5+
+tripleConfluenceBull = (bullCond and cvdVolBullRegular) and hasVSABullish
 alertcondition(enableTripleConfluence and tripleConfluenceBull, '🌟 BA YẾU TỐ: TĂNG', 'CVPZ: 🚀🚀🚀 HỘI TỤ BA YẾU TỐ TĂNG 🚀🚀🚀\n━━━━━━━━━━━━━━━━━━━━\n✅ Phân kỳ CVD+Giá (Regular)\n✅ Phân kỳ CVD+Volume (Regular)\n✅ VSA Tăng (Smart money mua)\n━━━━━━━━━━━━━━━━━━━━\n🎯 XÁC SUẤT: 75-85% (CHẮC ĂN NHẤT!)\n💰 Risk: Tăng lên 2% equity\n📈 Entry: NGAY khi break cao nến hiện tại\n🛑 Stop: Dưới đáy swing gần nhất\n🎯 TP1: Resistance gần (50% close)\n🎯 TP2: Resistance chính (trail 50% còn lại)\n━━━━━━━━━━━━━━━━━━━━\n💡 Setup xuất hiện ~1-3 lần/tháng\n⚠️ KHÔNG BỎ LỠ!')
 
 // [CẤP 5] HỘI TỤ BA - GIẢM (Holy Grail Setup)
-tripleConfluenceBear = confluentBearRegular and hasVSABearish
+// Note: Không yêu cầu hasReliableVolume - volume check đã flexible cho cấp 5+
+tripleConfluenceBear = (bearCond and cvdVolBearRegular) and hasVSABearish
 alertcondition(enableTripleConfluence and tripleConfluenceBear, '🌟 BA YẾU TỐ: GIẢM', 'CVPZ: 💥💥💥 HỘI TỤ BA YẾU TỐ GIẢM 💥💥💥\n━━━━━━━━━━━━━━━━━━━━\n✅ Phân kỳ CVD+Giá (Regular)\n✅ Phân kỳ CVD+Volume (Regular)\n✅ VSA Giảm (Smart money bán)\n━━━━━━━━━━━━━━━━━━━━\n🎯 XÁC SUẤT: 75-85% (CHẮC ĂN NHẤT!)\n💰 Risk: Tăng lên 2% equity\n📉 Entry: NGAY khi break thấp nến hiện tại\n🛑 Stop: Trên đỉnh swing gần nhất\n🎯 TP1: Support gần (50% close)\n🎯 TP2: Support chính (trail 50% còn lại)\n━━━━━━━━━━━━━━━━━━━━\n💡 Setup xuất hiện ~1-3 lần/tháng\n⚠️ KHÔNG BỎ LỠ!')
 
 // === 6. CỰC ĐOAN - BB + PHÂN KỲ (Extreme Reversal Zone) ===
@@ -932,11 +971,13 @@ alertcondition(enableTripleConfluence and tripleConfluenceBear, '🌟 BA YẾU T
 // Đặc điểm: Crypto biến động mạnh → BB break thường báo hiệu đảo chiều sắp tới
 
 // [CẤP 6A] Cực Đoan Tăng (Oversold + Divergence Bull)
-bbDivBull = cvd_is_oversold and (bullCond or cvdVolBullRegular) and hasReliableVolume
+// Note: Không yêu cầu hasReliableVolume - BB extreme + divergence đủ mạnh
+bbDivBull = cvd_is_oversold and (bullCond or cvdVolBullRegular)
 alertcondition(enableBBBreakAlerts and bbDivBull, '🔥 CỰC ĐOAN: TĂNG', 'CVPZ: 🔥🔥 VÙNG ĐẢO CHIỀU CỰC ĐOAN TĂNG\n━━━━━━━━━━━━━━━━━━━━\n✅ CVD quá bán (dưới BB lower)\n✅ Phân kỳ Bullish xuất hiện\n━━━━━━━━━━━━━━━━━━━━\n📈 Đáy cực đoan → khả năng bật lên cao\n💰 Win rate ~72%\n🎯 Entry: Long sau nến đảo chiều\n🛑 Stop: Dưới BB lower\n💡 Crypto hay V-shape recovery từ vùng này')
 
 // [CẤP 6B] Cực Đoan Giảm (Overbought + Divergence Bear)
-bbDivBear = cvd_is_overbought and (bearCond or cvdVolBearRegular) and hasReliableVolume
+// Note: Không yêu cầu hasReliableVolume - BB extreme + divergence đủ mạnh
+bbDivBear = cvd_is_overbought and (bearCond or cvdVolBearRegular)
 alertcondition(enableBBBreakAlerts and bbDivBear, '🔥 CỰC ĐOAN: GIẢM', 'CVPZ: 🔥🔥 VÙNG ĐẢO CHIỀU CỰC ĐOAN GIẢM\n━━━━━━━━━━━━━━━━━━━━\n✅ CVD quá mua (trên BB upper)\n✅ Phân kỳ Bearish xuất hiện\n━━━━━━━━━━━━━━━━━━━━\n📉 Đỉnh cực đoan → khả năng rớt xuống cao\n💰 Win rate ~72%\n🎯 Entry: Short sau nến đảo chiều\n🛑 Stop: Trên BB upper\n💡 Crypto hay dump mạnh từ vùng này')
 
 // === 7. CAO CẤP - VSA→PHÂN KỲ ĐẢO CHIỀU (VSA-Divergence Reversal Pattern) ===
@@ -953,3 +994,14 @@ alertcondition(vsaDivAlertEnabled and vsaDivBearishRev, '⬥ VSA→PK: GIẢM', 
 // [CẤP 7B] ĐẢO CHIỀU TĂNG (Accumulation Pattern - Bullish)
 vsaDivBullishRev = enableVsaDivPattern and meetsMinTF and prevBarHadVSABear[1] and (bullCond or hiddenBullCond or cvdVolBullRegular or cvdVolBullHidden)
 alertcondition(vsaDivAlertEnabled and vsaDivBullishRev, '⬥ VSA→PK: TĂNG', 'CVPZ: ⬥⬥⬥ VSA→PHÂN KỲ ĐẢO CHIỀU TĂNG ⬥⬥⬥\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n🎯 SETUP XÁC SUẤT CAO 75-80%\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n📊 PATTERN PHÁT HIỆN:\n  🔴 Nến 1: VSA Giảm (fake bearish)\n  🟢 Nến 2: Phân Kỳ Tăng (confirm accumulation)\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n💡 CƠ CHẾ THỊ TRƯỜNG (Wyckoff Accumulation):\n  1️⃣ Smart money tạo illusion bearish (nến 1)\n  2️⃣ Retail panic bán ra\n  3️⃣ Smart money mua vào giá rẻ từ retail\n  4️⃣ Phân kỳ xuất hiện = confirm accumulation\n  5️⃣ Giá sẽ đảo chiều tăng mạnh\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n📈 CÁCH VÀO LỆNH:\n  ✅ Đợi nến 3 close trên high nến 2\n  ✅ Entry: Long khi break high nến 2\n  ✅ Entry agressive: Long ngay nến 2\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n🛑 STOP LOSS:\n  • Conservative: Dưới low nến 1\n  • Aggressive: Dưới low nến 2\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n🎯 TAKE PROFIT:\n  • TP1 (50%): Swing high gần nhất\n  • TP2 (30%): Resistance chính\n  • TP3 (20%): BB upper / trail\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n💰 POSITION SIZE:\n  • Tăng lên 1.5-2% risk\n  • Risk/Reward tối thiểu: 1:2\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n⚠️ LƯU Ý CRYPTO:\n  • Pattern mạnh nhất trên 4H, 1H\n  • Crypto hay V-shape recovery\n  • Tránh trade khi thị trường sideway\n  • Confirm thêm với HTF trend')
+
+// === PLOTSHAPE: NGÔI SAO CHO HỘI TỤ CẤP 5+ ===
+// Hiển thị ngôi sao ⭐ trên nến có hội tụ cấp 5 trở lên (75%+ win rate setups)
+
+// Aggregate Level 5+ signals
+hasLevel5Plus_Bull = tripleConfluenceBull or bbDivBull or vsaDivBullishRev
+hasLevel5Plus_Bear = tripleConfluenceBear or bbDivBear or vsaDivBearishRev
+
+// Plot stars above/below candles
+plotshape(hasLevel5Plus_Bull, "⭐ Level 5+ Bull", shape.labelup, location.belowbar, color.new(color.green, 0), text="⭐", textcolor=color.white, size=size.small)
+plotshape(hasLevel5Plus_Bear, "⭐ Level 5+ Bear", shape.labeldown, location.abovebar, color.new(color.red, 0), text="⭐", textcolor=color.white, size=size.small)
