@@ -59,6 +59,15 @@ structure_lvn_threshold= input.int(20, "LVN Threshold (% of Max Vol)", minval=0,
 structure_hvn_color    = input.color(color.new(color.gray, 85), "HVN Fill", group=GRP_STRUCT)
 structure_lvn_color    = input.color(color.new(color.gray, 92), "LVN Fill", group=GRP_STRUCT)
 
+// === NHOM 6B: DELTA-WEIGHTED VP (RESEARCH ENHANCEMENT) ===
+var GRP_DELTA_VP = "6B. 🔬 Delta-Weighted VP"
+enable_delta_vp = input.bool(false, "Enable Delta-Weighted VP", group=GRP_DELTA_VP, tooltip="Dùng buy/sell delta thay vì raw volume cho VP calculation. Hiển thị Ở ĐÂU smart money đang tích lũy/phân phối.")
+show_cvd_footprint = input.bool(false, "Show CVD Footprint (Buy/Sell Split)", group=GRP_DELTA_VP, tooltip="Chia mỗi VP bar thành buy volume (xanh) và sell volume (đỏ) với net delta label.")
+footprint_buy_color = input.color(color.new(color.green, 50), "Footprint Buy Color", group=GRP_DELTA_VP, inline="fp")
+footprint_sell_color = input.color(color.new(color.red, 50), "Footprint Sell Color", group=GRP_DELTA_VP, inline="fp")
+show_smart_poc = input.bool(false, "Use Smart POC (CVD-Adjusted)", group=GRP_DELTA_VP, tooltip="POC được tính bằng net delta thay vì raw volume. POC với delta dương = support mạnh, delta âm = resistance mạnh.")
+smart_poc_color = input.color(color.new(color.yellow, 0), "Smart POC Color", group=GRP_DELTA_VP)
+
 var GRP_TABLE = "7. Info Table"
 table_pos = input.string("Top Right", "Table Position", options=["Top Right","Top Left","Bottom Right","Bottom Left"], group=GRP_TABLE)
 
@@ -138,6 +147,13 @@ var line    val_line        = line(na)
 var table   info_table      = table(na)
 var label   status_label    = label(na)
 var string  last_table_pos  = ""
+
+// Delta-weighted VP arrays (RESEARCH ENHANCEMENT)
+var float[] buy_volume_at_price = array.new_float(0)
+var float[] sell_volume_at_price = array.new_float(0)
+var float[] net_delta_at_price = array.new_float(0)
+var box[]   footprint_boxes = array.new_box(0)
+var label[] delta_labels = array.new_label(0)
 
 // HTF line handles
 var line htf_poc_line = line(na)
@@ -396,6 +412,29 @@ if needs_update
 
     // recalc
     array.fill(volume_at_price, 0.0)
+    
+    // Initialize delta arrays (RESEARCH ENHANCEMENT)
+    if enable_delta_vp or show_cvd_footprint
+        if array.size(buy_volume_at_price) != vp_num_levels
+            array.clear(buy_volume_at_price)
+            array.clear(sell_volume_at_price)
+            array.clear(net_delta_at_price)
+            for _ = 0 to vp_num_levels - 1
+                array.push(buy_volume_at_price, 0.0)
+                array.push(sell_volume_at_price, 0.0)
+                array.push(net_delta_at_price, 0.0)
+        array.fill(buy_volume_at_price, 0.0)
+        array.fill(sell_volume_at_price, 0.0)
+        array.fill(net_delta_at_price, 0.0)
+        
+        // Cleanup footprint boxes
+        for fb in footprint_boxes
+            box.delete(fb)
+        array.clear(footprint_boxes)
+        for dl in delta_labels
+            label.delete(dl)
+        array.clear(delta_labels)
+    
     price_high := price_high_all
     price_low  := price_low_all
     price_step := price_step_all
@@ -433,10 +472,20 @@ if needs_update
             body_ratio = math.abs(close[b] - open[b]) / math.max(high[b] - low[b], price_step)
             typical_price = nz(body_ratio * (open[b] + close[b]) / 2 + (1 - body_ratio) * (high[b] + low[b]) / 2, close[b])
             price_range = high[b] - low[b]
+            
+            // === DELTA-WEIGHTED VP CALCULATION (RESEARCH ENHANCEMENT) ===
+            // Classify as buy or sell volume based on close vs open
+            is_buy_bar = close[b] >= open[b]
+            buy_vol = is_buy_bar ? weighted_volume : 0.0
+            sell_vol = not is_buy_bar ? weighted_volume : 0.0
 
             if price_range <= 0
                 idx = f_price_to_index(typical_price, price_low, price_step)
                 array.set(volume_at_price, idx, array.get(volume_at_price, idx) + weighted_volume * tf_minutes)
+                // Delta tracking
+                if enable_delta_vp or show_cvd_footprint
+                    array.set(buy_volume_at_price, idx, array.get(buy_volume_at_price, idx) + buy_vol * tf_minutes)
+                    array.set(sell_volume_at_price, idx, array.get(sell_volume_at_price, idx) + sell_vol * tf_minutes)
             else
                 start_idx = f_price_to_index(low[b],  price_low, price_step)
                 end_idx   = f_price_to_index(high[b], price_low, price_step)
@@ -447,33 +496,93 @@ if needs_update
                     distance_factor = math.max(0.0, 1.0 - math.abs(level_price - typical_price) / dist_denom)
                     weight = math.max(0.05, distance_factor)
                     distributed_vol = weighted_volume * weight / denom
+                    distributed_buy = buy_vol * weight / denom
+                    distributed_sell = sell_vol * weight / denom
                     array.set(volume_at_price, j, array.get(volume_at_price, j) + distributed_vol * tf_minutes)
+                    // Delta tracking
+                    if enable_delta_vp or show_cvd_footprint
+                        array.set(buy_volume_at_price, j, array.get(buy_volume_at_price, j) + distributed_buy * tf_minutes)
+                        array.set(sell_volume_at_price, j, array.get(sell_volume_at_price, j) + distributed_sell * tf_minutes)
 
+        // === DELTA-WEIGHTED POC CALCULATION (RESEARCH ENHANCEMENT) ===
+        // Calculate net delta for each level
+        if enable_delta_vp or show_cvd_footprint
+            for k = 0 to vp_num_levels - 1
+                net_delta = array.get(buy_volume_at_price, k) - array.get(sell_volume_at_price, k)
+                array.set(net_delta_at_price, k, net_delta)
+        
         max_vol = array.max(volume_at_price)
+        
+        // Smart POC: Use net delta instead of volume
+        var int smart_poc_idx = 0
+        var float smart_poc_price = 0.0
+        if show_smart_poc and max_vol > 0
+            max_abs_delta = 0.0
+            for k = 0 to vp_num_levels - 1
+                abs_delta = math.abs(array.get(net_delta_at_price, k))
+                if abs_delta > max_abs_delta
+                    max_abs_delta := abs_delta
+                    smart_poc_idx := k
+            smart_poc_price := price_low + smart_poc_idx * price_step
+        
         if max_vol > 0
             if structure_show_nodes
                 f_find_and_draw_nodes(max_vol, price_low, price_step, effective_lookback)
 
-            poc_idx = array.indexof(volume_at_price, max_vol)
-            poc_price = price_low + poc_idx * price_step
+            // Use Smart POC if enabled, otherwise traditional POC
+            poc_idx = show_smart_poc ? smart_poc_idx : array.indexof(volume_at_price, max_vol)
+            poc_price = show_smart_poc ? smart_poc_price : price_low + poc_idx * price_step
             va_percentage = intraday_mode ? intraday_va_percent : vp_va_percent
             [va_low_val, va_high_val] = f_calculate_value_area(poc_idx, array.sum(volume_at_price), price_low, price_step, va_percentage)
 
             x_base = bar_index + vp_right_offset
-            for i = 0 to vp_num_levels - 1
-                level_volume = array.get(volume_at_price, i)
-                if level_volume > 0
-                    bar_length = int(math.round(level_volume / max_vol * vp_bar_width))
-                    if bar_length > 0
+            
+            // === CVD FOOTPRINT DISPLAY (RESEARCH ENHANCEMENT) ===
+            if show_cvd_footprint
+                // Draw split bars: buy (left/green) + sell (right/red) for each level
+                for i = 0 to vp_num_levels - 1
+                    level_volume = array.get(volume_at_price, i)
+                    if level_volume > 0
                         level_price = price_low + i * price_step
-                        is_in_va = vp_show_va and not na(va_low_val) and level_price >= va_low_val and level_price <= va_high_val
-                        is_hva   = vp_show_hva and level_volume >= max_vol * vp_hva_threshold / 100
-                        is_poc   = i == poc_idx and vp_show_poc
-                        box_color = is_poc ? vp_poc_color : is_hva ? vp_hva_color : is_in_va ? vp_va_color : vp_vol_color
-                        array.push(volume_boxes, box.new(x_base, level_price - price_step / 2, x_base + bar_length, level_price + price_step / 2, bgcolor=box_color, border_color=na))
+                        buy_vol_level = array.get(buy_volume_at_price, i)
+                        sell_vol_level = array.get(sell_volume_at_price, i)
+                        net_delta_level = array.get(net_delta_at_price, i)
+                        
+                        buy_bar_length = int(math.round(buy_vol_level / max_vol * vp_bar_width))
+                        sell_bar_length = int(math.round(sell_vol_level / max_vol * vp_bar_width))
+                        
+                        // Draw buy volume (left side, green)
+                        if buy_bar_length > 0
+                            array.push(footprint_boxes, box.new(x_base, level_price - price_step / 2, x_base + buy_bar_length, level_price + price_step / 2, bgcolor=footprint_buy_color, border_color=na))
+                        
+                        // Draw sell volume (right side, red)
+                        if sell_bar_length > 0
+                            sell_x_start = x_base + buy_bar_length + 1
+                            array.push(footprint_boxes, box.new(sell_x_start, level_price - price_step / 2, sell_x_start + sell_bar_length, level_price + price_step / 2, bgcolor=footprint_sell_color, border_color=na))
+                        
+                        // Label net delta (only for significant levels)
+                        if math.abs(net_delta_level) > max_vol * 0.1 and (buy_bar_length + sell_bar_length) > vp_bar_width * 0.3
+                            delta_label_color = net_delta_level > 0 ? color.new(color.green, 0) : color.new(color.red, 0)
+                            delta_text = str.format("{0}", math.round(net_delta_level))
+                            array.push(delta_labels, label.new(x_base + buy_bar_length + sell_bar_length + 2, level_price, delta_text, style=label.style_label_left, color=color.new(color.white, 100), textcolor=delta_label_color, size=size.tiny))
+            else
+                // Traditional VP bars (when footprint disabled)
+                for i = 0 to vp_num_levels - 1
+                    level_volume = array.get(volume_at_price, i)
+                    if level_volume > 0
+                        bar_length = int(math.round(level_volume / max_vol * vp_bar_width))
+                        if bar_length > 0
+                            level_price = price_low + i * price_step
+                            is_in_va = vp_show_va and not na(va_low_val) and level_price >= va_low_val and level_price <= va_high_val
+                            is_hva   = vp_show_hva and level_volume >= max_vol * vp_hva_threshold / 100
+                            is_poc   = i == poc_idx and vp_show_poc
+                            box_color = is_poc ? vp_poc_color : is_hva ? vp_hva_color : is_in_va ? vp_va_color : vp_vol_color
+                            array.push(volume_boxes, box.new(x_base, level_price - price_step / 2, x_base + bar_length, level_price + price_step / 2, bgcolor=box_color, border_color=na))
 
+            // Smart POC box (yellow if enabled, orange if traditional)
             if vp_show_poc and not na(poc_price)
-                poc_box := box.new(bar_index - effective_lookback, poc_price - price_step / 4, bar_index + vp_right_offset - 5, poc_price + price_step / 4, bgcolor=vp_poc_color, border_color=vp_poc_color)
+                poc_display_color = show_smart_poc ? smart_poc_color : vp_poc_color
+                poc_box := box.new(bar_index - effective_lookback, poc_price - price_step / 4, bar_index + vp_right_offset - 5, poc_price + price_step / 4, bgcolor=poc_display_color, border_color=poc_display_color)
             if vp_show_va_lines and not na(va_high_val)
                 vah_line := line.new(bar_index - effective_lookback, va_high_val, bar_index + vp_right_offset + vp_bar_width, va_high_val, color=vp_va_line_color, width=vp_va_line_width, style=line.style_dashed)
                 val_line := line.new(bar_index - effective_lookback, va_low_val,  bar_index + vp_right_offset + vp_bar_width, va_low_val,  color=vp_va_line_color, width=vp_va_line_width, style=line.style_dashed)

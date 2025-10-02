@@ -20,6 +20,26 @@ maLengthInput = input.int(20, "Độ dài MA", group = GRP_CVD)
 bbMultInput = input.float(2.0, "BB StdDev", minval=0.001, maxval=50, group = GRP_CVD)
 showBollingerBands = input.bool(true, "Hiển thị Bollinger Bands", group = GRP_CVD, tooltip="BB trên CVD như mức quá mua/bán động.")
 
+// === NHOM 1B: 🔬 HYBRID CVD SYSTEM (RESEARCH ENHANCEMENT) ===
+const string GRP_HYBRID_CVD = "🔬 Hybrid CVD System"
+enable_hybrid_cvd = input.bool(true, "Enable Hybrid CVD (3 Variants)", group = GRP_HYBRID_CVD, tooltip="Sử dụng 3 CVD variants: Cumulative (divergence), Velocity (momentum), Session (intraday context)")
+show_cvd_velocity = input.bool(true, "Show CVD Velocity", group = GRP_HYBRID_CVD, tooltip="CVD velocity (tốc độ thay đổi) - auto-normalized, không có drift")
+velocity_lookback = input.int(20, "Velocity Lookback", minval=5, maxval=100, group = GRP_HYBRID_CVD)
+show_cvd_acceleration = input.bool(false, "Show CVD Acceleration", group = GRP_HYBRID_CVD, tooltip="Đạo hàm bậc 2 của CVD - phát hiện momentum shifts sớm")
+show_session_cvd = input.bool(true, "Show Session-Relative CVD", group = GRP_HYBRID_CVD, tooltip="CVD relative to session start - giữ intraday context")
+cvd_velocity_color = input.color(color.new(color.purple, 0), "Velocity Color", group = GRP_HYBRID_CVD, inline="hcvd")
+session_cvd_color = input.color(color.new(color.aqua, 0), "Session CVD Color", group = GRP_HYBRID_CVD, inline="hcvd")
+
+// === NHOM 1C: 🎯 MULTI-TF CVD ALIGNMENT (RESEARCH ENHANCEMENT) ===
+const string GRP_MTF_CVD = "🎯 Multi-TF CVD Alignment"
+enable_mtf_alignment = input.bool(true, "Enable Multi-TF Alignment", group = GRP_MTF_CVD, tooltip="Kiểm tra CVD alignment trên 3 timeframes (5m, 15m, 1H)")
+show_alignment_bar = input.bool(true, "Show Alignment Background", group = GRP_MTF_CVD, tooltip="Tô màu nền khi cả 3 TF CVD đồng ý")
+tf1_cvd = input.timeframe("5", "TF1 (Short)", group = GRP_MTF_CVD)
+tf2_cvd = input.timeframe("15", "TF2 (Medium)", group = GRP_MTF_CVD)
+tf3_cvd = input.timeframe("60", "TF3 (Long)", group = GRP_MTF_CVD)
+alignment_bull_color = input.color(color.new(color.green, 90), "Aligned Bull BG", group = GRP_MTF_CVD)
+alignment_bear_color = input.color(color.new(color.red, 90), "Aligned Bear BG", group = GRP_MTF_CVD)
+
 // === NHOM 2: DIVERGENCE ENGINE ===
 const string GRP_DIVERGENCE = "📊 Phân kỳ (Divergence)"
 // CVD+Price Divergence
@@ -133,6 +153,50 @@ cumVol += nz(volume)
 if barstate.islast and cumVol == 0
     runtime.error("This symbol has no volume data, CVD cannot be calculated.")
 
+// === 🔬 HYBRID CVD SYSTEM (RESEARCH ENHANCEMENT) ===
+// Three CVD variants for different purposes:
+// 1. Raw Cumulative CVD (no reset) - for divergence detection
+// 2. CVD Velocity (rate of change) - for momentum signals, auto-normalized
+// 3. Session-Relative CVD - for intraday context
+
+// 1. Raw Cumulative CVD (never resets)
+var float raw_cumulative_cvd = 0.0
+float delta_volume = lastVolume - nz(lastVolume[1], lastVolume)
+raw_cumulative_cvd += delta_volume
+
+// 2. CVD Velocity (auto-normalized, no drift)
+float cvd_velocity = enable_hybrid_cvd ? (raw_cumulative_cvd - raw_cumulative_cvd[velocity_lookback]) / velocity_lookback : na
+float cvd_acceleration = enable_hybrid_cvd and show_cvd_acceleration ? ta.change(cvd_velocity) : na
+
+// 3. Session-Relative CVD (preserve intraday context)
+var float session_start_cvd = 0.0
+bool new_session = ta.change(time(anchorInput)) != 0
+if new_session
+    session_start_cvd := raw_cumulative_cvd
+float session_relative_cvd = enable_hybrid_cvd ? raw_cumulative_cvd - session_start_cvd : na
+
+// === 🎯 MULTI-TF CVD ALIGNMENT (RESEARCH ENHANCEMENT) ===
+// Check CVD direction on 3 timeframes
+f_cvd_direction(cvd_series, lookback) =>
+    cvd_series > cvd_series[lookback] ? 1 : cvd_series < cvd_series[lookback] ? -1 : 0
+
+// Get CVD direction from higher timeframes
+[tf1_cvd_val] = request.security(syminfo.tickerid, tf1_cvd, [f_cvdClose()], lookahead=barmerge.lookahead_off)
+[tf2_cvd_val] = request.security(syminfo.tickerid, tf2_cvd, [f_cvdClose()], lookahead=barmerge.lookahead_off)
+[tf3_cvd_val] = request.security(syminfo.tickerid, tf3_cvd, [f_cvdClose()], lookahead=barmerge.lookahead_off)
+
+int tf1_direction = enable_mtf_alignment ? f_cvd_direction(tf1_cvd_val, 1) : 0
+int tf2_direction = enable_mtf_alignment ? f_cvd_direction(tf2_cvd_val, 1) : 0
+int tf3_direction = enable_mtf_alignment ? f_cvd_direction(tf3_cvd_val, 1) : 0
+
+// Alignment detection
+bool cvd_aligned_bull = enable_mtf_alignment and tf1_direction == 1 and tf2_direction == 1 and tf3_direction == 1
+bool cvd_aligned_bear = enable_mtf_alignment and tf1_direction == -1 and tf2_direction == -1 and tf3_direction == -1
+bool cvd_aligned = cvd_aligned_bull or cvd_aligned_bear
+
+// Background color for alignment
+bgcolor(show_alignment_bar and cvd_aligned_bull ? alignment_bull_color : show_alignment_bar and cvd_aligned_bear ? alignment_bear_color : na, title="MTF Alignment")
+
 // === DIVERGENCE ENGINE ===
 plVal = ta.pivotlow(cvdSource, lookbackLeft, lookbackRight)
 phVal = ta.pivothigh(cvdSource, lookbackLeft, lookbackRight)
@@ -210,6 +274,19 @@ bbUpper = cvdMA_bb + ta.stdev(cvdSource, maLengthInput) * bbMultInput
 bbLower = cvdMA_bb - ta.stdev(cvdSource, maLengthInput) * bbMultInput
 plot((bbUpper * cvdYScale) + cvdZeroOffset, "BB Trên", color=color.new(color.gray, cvdChartAlpha), style=plot.style_line, display=showBollingerBands ? display.all : display.none)
 plot((bbLower * cvdYScale) + cvdZeroOffset, "BB Dưới", color=color.new(color.gray, cvdChartAlpha), style=plot.style_line, display=showBollingerBands ? display.all : display.none)
+
+// === 🔬 HYBRID CVD PLOTS (RESEARCH ENHANCEMENT) ===
+// Plot CVD Velocity (auto-normalized, no drift)
+plot(show_cvd_velocity and not na(cvd_velocity) ? (cvd_velocity * cvdYScale * 0.01) + cvdZeroOffset : na, "CVD Velocity", color=color.new(cvd_velocity_color, cvdChartAlpha), linewidth=2, style=plot.style_line)
+
+// Plot CVD Acceleration (second derivative)
+plot(show_cvd_acceleration and not na(cvd_acceleration) ? (cvd_acceleration * cvdYScale * 0.001) + cvdZeroOffset : na, "CVD Acceleration", color=color.new(color.fuchsia, cvdChartAlpha), linewidth=1, style=plot.style_histogram)
+
+// Plot Session-Relative CVD (preserve intraday context)
+plot(show_session_cvd and not na(session_relative_cvd) ? (session_relative_cvd * cvdYScale * 0.5) + cvdZeroOffset : na, "Session CVD", color=color.new(session_cvd_color, cvdChartAlpha), linewidth=2, style=plot.style_stepline)
+
+// CVD Baseline for all hybrid variants
+plot(showCvdBaseline ? cvdZeroOffset : na, title="CVD Baseline", color=color.new(color.gray, 60), style=plot.style_line, linewidth=1)
 
 // === DIVERGENCE PLOTTING (Better RSI style - pivot dots + line.new() for connections) ===
 // Array lưu id label divergence để xóa label cũ khi vượt quá 100
