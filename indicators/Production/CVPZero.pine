@@ -27,15 +27,27 @@ showHidden = input.bool(true, "C+P: Phân kỳ ẩn", group = GRP_DIVERGENCE)
 // CVD+Volume Divergence
 showCvdVolRegular = input.bool(true, "C+V: Phân kỳ thường", group = GRP_DIVERGENCE)
 showCvdVolHidden = input.bool(true, "C+V: Phân kỳ ẩn", group = GRP_DIVERGENCE)
+// Z-Score Normalization (DGT Method)
+useZScorePivots = input.bool(true, "🎓 Z-Score Normalized Pivots", group = GRP_DIVERGENCE, tooltip="Professional approach from DGT's 'Enhanced Divergence Indicator'. Normalizes CVD for statistically significant pivots across all market conditions.")
+zScoreLength = input.int(20, "Z-Score Length", group = GRP_DIVERGENCE)
 // Pivot Settings
 lookbackLeft = input.int(5, "Pivot: Lookback trái", group = GRP_DIVERGENCE)
 lookbackRight = input.int(5, "Pivot: Lookback phải", group = GRP_DIVERGENCE)
 rangeLower = input.int(5, "Pivot: Range min", group = GRP_DIVERGENCE)
 rangeUpper = input.int(60, "Pivot: Range max", group = GRP_DIVERGENCE)
 
+// === NHOM 2.5: VOLUME FILTER (Optional) ===
+const string GRP_VOL_FILTER = "📈 Volume Filter (Tùy chọn)"
+enableVolumeFilter = input.bool(false, "Enable Volume Confirmation", group = GRP_VOL_FILTER, tooltip="Filter divergences by volume behavior (Luc_Trader method). Regular: exhaustion. Hidden Bear: trap.")
+volumeMA_Length = input.int(20, "Volume MA Length", group = GRP_VOL_FILTER)
+volumeThreshold = input.float(1.2, "Volume Threshold", minval=0.5, maxval=3.0, step=0.1, group = GRP_VOL_FILTER)
+enablePivotStrengthFilter = input.bool(false, "Enable Pivot Strength Filter", group = GRP_VOL_FILTER, tooltip="Only show divergences where CVD pivot is significant (> 0.5 ATR).")
+pivotStrengthThreshold = input.float(0.5, "Pivot Strength (ATR)", minval=0.1, maxval=2.0, step=0.1, group = GRP_VOL_FILTER)
+
 // === NHOM 3: DISPLAY & TABLE ===
 const string GRP_DISPLAY = "🎨 Hiển thị"
 plotStyle = input.string("Line with MA", "CVD: Kiểu vẽ", options=["Line with MA", "Candles"], group = GRP_DISPLAY)
+showZScorePlot = input.bool(false, "Show Z-Score CVD Overlay", group = GRP_DISPLAY, tooltip="Display normalized Z-Score CVD to see statistical deviations.")
 showCandleColors = input.bool(true, title="Tô màu nến khi vượt BB", group = GRP_DISPLAY)
 divChartDisplay = input.string("Split: C+P on Price / C+V on Volume", "Vị trí hiển thị Divergence", options=["All on Price Chart", "Split: C+P on Price / C+V on Volume", "All on CVD Chart"], group = GRP_DISPLAY, tooltip="Chọn nơi hiển thị đường divergence:\n• All on Price: Tất cả C+P và C+V trên Price chart\n• Split: C+P trên Price, C+V trên Volume (mặc định)\n• All on CVD: Tất cả C+P và C+V trên CVD chart")
 showCvdPriceDivLines = input.bool(true, "Hiển thị đường C+P trên CVD", group = GRP_DISPLAY, tooltip="Hiển thị đường nối CVD+Price divergence trên CVD chart")
@@ -132,9 +144,23 @@ cumVol += nz(volume)
 if barstate.islast and cumVol == 0
     runtime.error("This symbol has no volume data, CVD cannot be calculated.")
 
+// === Z-SCORE NORMALIZATION (DGT Method) ===
+cvd_zscore_ma = ta.sma(cvdSource, zScoreLength)
+cvd_zscore_stdev = ta.stdev(cvdSource, zScoreLength)
+cvd_zscore = cvd_zscore_stdev > 0 ? (cvdSource - cvd_zscore_ma) / cvd_zscore_stdev : 0
+pivotSource = useZScorePivots ? cvd_zscore : cvdSource
+
+// === VOLUME FILTER CALCULATIONS ===
+volumeMA = ta.sma(volume, volumeMA_Length)
+atr_for_pivot_strength = ta.atr(14)
+volume_at_current_pivot = volume[lookbackRight]
+isVolumeExhaustion = volume_at_current_pivot < (volumeMA / volumeThreshold)
+isVolumeTrap = volume_at_current_pivot > (volumeMA * volumeThreshold)
+isVolumeHealthy = volume_at_current_pivot < (volumeMA / volumeThreshold)
+
 // === DIVERGENCE ENGINE ===
-plVal = ta.pivotlow(cvdSource, lookbackLeft, lookbackRight)
-phVal = ta.pivothigh(cvdSource, lookbackLeft, lookbackRight)
+plVal = ta.pivotlow(pivotSource, lookbackLeft, lookbackRight)
+phVal = ta.pivothigh(pivotSource, lookbackLeft, lookbackRight)
 plFound = not na(plVal)
 phFound = not na(phVal)
 plSince = ta.barssince(plFound)
@@ -144,19 +170,31 @@ inRangePH_now = phSince[1] >= rangeLower and phSince[1] <= rangeUpper
 
 priceLL = low[lookbackRight] < ta.valuewhen(plFound, low[lookbackRight], 1)
 cvdHL   = plVal > ta.valuewhen(plFound, plVal, 1) and inRangePL_now
-bullCond = showRegular and priceLL and cvdHL and plFound
+volumeFilter_RegularBull = not enableVolumeFilter or isVolumeExhaustion
+prev_plVal_for_strength = ta.valuewhen(plFound, plVal, 1)
+pivotStrength_Bull = math.abs(plVal - prev_plVal_for_strength) / atr_for_pivot_strength
+pivotStrengthFilter_Bull = not enablePivotStrengthFilter or (pivotStrength_Bull > pivotStrengthThreshold)
+bullCond = showRegular and priceLL and cvdHL and plFound and volumeFilter_RegularBull and pivotStrengthFilter_Bull
 
 priceHH = high[lookbackRight] > ta.valuewhen(phFound, high[lookbackRight], 1)
 cvdLH   = phVal < ta.valuewhen(phFound, phVal, 1) and inRangePH_now
-bearCond = showRegular and priceHH and cvdLH and phFound
+volumeFilter_RegularBear = not enableVolumeFilter or isVolumeExhaustion
+prev_phVal_for_strength = ta.valuewhen(phFound, phVal, 1)
+pivotStrength_Bear = math.abs(phVal - prev_phVal_for_strength) / atr_for_pivot_strength
+pivotStrengthFilter_Bear = not enablePivotStrengthFilter or (pivotStrength_Bear > pivotStrengthThreshold)
+bearCond = showRegular and priceHH and cvdLH and phFound and volumeFilter_RegularBear and pivotStrengthFilter_Bear
 
 priceHL = low[lookbackRight] > ta.valuewhen(plFound, low[lookbackRight], 1)
 cvdLL   = plVal < ta.valuewhen(plFound, plVal, 1) and inRangePL_now
-hiddenBullCond = showHidden and priceHL and cvdLL and plFound
+volumeFilter_HiddenBull = not enableVolumeFilter or isVolumeHealthy
+pivotStrengthFilter_HiddenBull = not enablePivotStrengthFilter or (pivotStrength_Bull > pivotStrengthThreshold)
+hiddenBullCond = showHidden and priceHL and cvdLL and plFound and volumeFilter_HiddenBull and pivotStrengthFilter_HiddenBull
 
 priceLH = high[lookbackRight] < ta.valuewhen(phFound, high[lookbackRight], 1)
 cvdHH   = phVal > ta.valuewhen(phFound, phVal, 1) and inRangePH_now
-hiddenBearCond = showHidden and priceLH and cvdHH and phFound
+volumeFilter_HiddenBear = not enableVolumeFilter or isVolumeTrap
+pivotStrengthFilter_HiddenBear = not enablePivotStrengthFilter or (pivotStrength_Bear > pivotStrengthThreshold)
+hiddenBearCond = showHidden and priceLH and cvdHH and phFound and volumeFilter_HiddenBear and pivotStrengthFilter_HiddenBear
 
 // === CVD + VOLUME DIVERGENCE ENGINE ===
 // So sánh CVD pivots với volume TẠI các CVD pivot bars (không cần volume pivots)
@@ -172,13 +210,17 @@ prev_vol_at_cvd_high = ta.valuewhen(phFound, volume[lookbackRight], 1)
 prev_plBar = ta.valuewhen(plFound, bar_index - lookbackRight, 1)
 prev_phBar = ta.valuewhen(phFound, bar_index - lookbackRight, 1)
 
-// Regular CVD+Volume Divergence (tương tự như CVD+Price regular)
-cvdVolBullRegular = showCvdVolRegular and plFound and inRangePL_now and plVal > prev_plVal and volume[lookbackRight] < prev_vol_at_cvd_low
-cvdVolBearRegular = showCvdVolRegular and phFound and inRangePH_now and phVal < prev_phVal and volume[lookbackRight] > prev_vol_at_cvd_high
+// Regular CVD+Volume Divergence
+// Bull: CVD Higher Low + Volume LOWER = Exhaustion của sellers (yếu dần)
+cvdVolBullRegular = showCvdVolRegular and plFound and inRangePL_now and plVal > prev_plVal and volume[lookbackRight] < prev_vol_at_cvd_low and pivotStrengthFilter_Bull
+// Bear: CVD Lower High + Volume LOWER = Exhaustion của buyers (yếu dần)
+cvdVolBearRegular = showCvdVolRegular and phFound and inRangePH_now and phVal < prev_phVal and volume[lookbackRight] < prev_vol_at_cvd_high and pivotStrengthFilter_Bear
 
-// Hidden CVD+Volume Divergence (ngược với regular)
-cvdVolBullHidden = showCvdVolHidden and plFound and inRangePL_now and plVal < prev_plVal and volume[lookbackRight] < prev_vol_at_cvd_low
-cvdVolBearHidden = showCvdVolHidden and phFound and inRangePH_now and phVal > prev_phVal and volume[lookbackRight] > prev_vol_at_cvd_high
+// Hidden CVD+Volume Divergence
+// Bull: CVD Lower Low + Volume LOWER = Continuation (ít người bán theo)
+cvdVolBullHidden = showCvdVolHidden and plFound and inRangePL_now and plVal < prev_plVal and volume[lookbackRight] < prev_vol_at_cvd_low and pivotStrengthFilter_HiddenBull
+// Bear: CVD Higher High + Volume HIGHER = Continuation (nhiều người mua theo)
+cvdVolBearHidden = showCvdVolHidden and phFound and inRangePH_now and phVal > prev_phVal and volume[lookbackRight] > prev_vol_at_cvd_high and pivotStrengthFilter_HiddenBear
 
 // Combined flags for backward compatibility
 cvdVolBull = cvdVolBullRegular or cvdVolBullHidden
