@@ -7,6 +7,7 @@
 // Author: Khogao, 2025 (modified for Z-score volume coloring + multi-TF dashboard)
 
 indicator("CVD+VSA ProZero", "CVPZ", overlay = true)
+import TradingView/ta/8 as tav5
 
 // === NHOM 1: CVD ENGINE ===
 const string GRP_CVD = "⚙️ CVD Engine"
@@ -103,11 +104,11 @@ f_lowerTf() =>
 
 // Return CVD "close" from requestVolumeDelta
 f_cvdClose() =>
-    [_o, _h, _l, _c] = ta.requestVolumeDelta(f_lowerTf(), anchorInput)
+    [_o, _h, _l, _c] = tav5.requestVolumeDelta(f_lowerTf(), anchorInput)
     _c 
 
 // === CVD CALCULATION ENGINE ===
-[openVolume, maxVolume, minVolume, lastVolume] = ta.requestVolumeDelta(f_lowerTf(), anchorInput)
+[openVolume, maxVolume, minVolume, lastVolume] = tav5.requestVolumeDelta(f_lowerTf(), anchorInput)
 cvdSource = f_cvdClose()
 
 var float cumVol = 0.0
@@ -147,6 +148,9 @@ prev_plVal = ta.valuewhen(plFound, plVal, 1)
 prev_phVal = ta.valuewhen(phFound, phVal, 1)
 // Volume tại CVD pivot bar hiện tại vs trước đó
 prev_vol_at_cvd_low = ta.valuewhen(plFound, volume[lookbackRight], 1)
+// Pre-calculate values for line drawing (must be outside if blocks)
+prev_price_low = ta.valuewhen(plFound, low[lookbackRight], 1)
+prev_price_high = ta.valuewhen(phFound, high[lookbackRight], 1)
 prev_vol_at_cvd_high = ta.valuewhen(phFound, volume[lookbackRight], 1)
 
 // Regular CVD+Volume Divergence (tương tự như CVD+Price regular)
@@ -187,7 +191,7 @@ bbLower = cvdMA_bb - ta.stdev(cvdSource, maLengthInput) * bbMultInput
 plot((bbUpper * cvdYScale) + cvdZeroOffset, "BB Trên", color=color.new(color.gray, cvdChartAlpha), style=plot.style_line, display=showBollingerBands ? display.all : display.none)
 plot((bbLower * cvdYScale) + cvdZeroOffset, "BB Dưới", color=color.new(color.gray, cvdChartAlpha), style=plot.style_line, display=showBollingerBands ? display.all : display.none)
 
-// === DIVERGENCE PLOTTING (Better RSI style - pivot dots + plot lines) ===
+// === DIVERGENCE PLOTTING (Better RSI style - pivot dots + line.new() for connections) ===
 // Array lưu id label divergence để xóa label cũ khi vượt quá 100
 var label[] divLabels = array.new<label>()
 divLabelLimit = 100
@@ -196,6 +200,11 @@ var int[] divLabelXs = array.new_int()
 // separate arrays to manage CVD+Volume labels on the Volume pane (they are not price divergences)
 var label[] volDivLabels = array.new<label>()
 var int[] volDivLabelXs = array.new_int()
+// Line arrays for divergence connections (line.new does NOT count toward 64-plot limit!)
+var line[] divLines = array.new<line>()
+var line[] cvdDivLines = array.new<line>()
+var line[] volDivLines = array.new<line>()
+maxDivLines = 500
 
 // === HÀM HELPER: TẠO LABEL PHÂN KỲ (giảm code lặp) ===
 f_createDivLabel(int x, float y, string labelText, bool isBearish, color bgColor, label[] labelArray, int[] labelXArray, int maxLabels) =>
@@ -225,24 +234,62 @@ f_array_has_int(_arr, _val) =>
 // Tính ATR cho offset labels
 atr_for_labels = ta.atr(14)
 
-// Vẽ đường nối divergence trên price chart theo Better RSI style
-// Gộp regular + hidden vào 2 plots (bull/bear) để tiết kiệm plot count
+// Vẽ đường nối divergence trên price chart bằng line.new() (không tốn plot slots!)
 bullDivColor = bullCond ? BULL_COLOR : hiddenBullCond ? HIDDEN_BULL_COLOR : color.new(color.white, 100)
 bearDivColor = bearCond ? BEAR_COLOR : hiddenBearCond ? HIDDEN_BEAR_COLOR : color.new(color.white, 100)
-plot(plFound ? low[lookbackRight] : na, offset=-lookbackRight, title="Bull Divergence Lines", linewidth=2, color=bullDivColor)
-plot(phFound ? high[lookbackRight] : na, offset=-lookbackRight, title="Bear Divergence Lines", linewidth=2, color=bearDivColor)
+
+// Draw bull divergence lines on price chart using line.new
+if plFound and (bullCond or hiddenBullCond)
+    newLine = line.new(x1=bar_index - lookbackRight - plSince[1], y1=prev_price_low, x2=bar_index - lookbackRight, y2=low[lookbackRight], color=bullDivColor, width=2)
+    array.unshift(divLines, newLine)
+    if array.size(divLines) > maxDivLines
+        line.delete(array.pop(divLines))
+
+// Draw bear divergence lines on price chart using line.new
+if phFound and (bearCond or hiddenBearCond)
+    newLine = line.new(x1=bar_index - lookbackRight - phSince[1], y1=prev_price_high, x2=bar_index - lookbackRight, y2=high[lookbackRight], color=bearDivColor, width=2)
+    array.unshift(divLines, newLine)
+    if array.size(divLines) > maxDivLines
+        line.delete(array.pop(divLines))
 
 // === CVD DIVERGENCE LINES (CVD+Price on CVD chart) ===
-// Vẽ đường nối CVD+Price divergence trên CVD chart (scaled)
-plot(showCvdPriceDivLines and plFound ? (plVal * cvdYScale) + cvdZeroOffset : na, offset=-lookbackRight, title="CVD C+P Bull Lines", linewidth=2, color=bullDivColor)
-plot(showCvdPriceDivLines and phFound ? (phVal * cvdYScale) + cvdZeroOffset : na, offset=-lookbackRight, title="CVD C+P Bear Lines", linewidth=2, color=bearDivColor)
+// Vẽ đường nối CVD+Price divergence trên CVD chart bằng line.new (scaled)
+if showCvdPriceDivLines and plFound and (bullCond or hiddenBullCond)
+    y1_scaled = (prev_plVal * cvdYScale) + cvdZeroOffset
+    y2_scaled = (plVal * cvdYScale) + cvdZeroOffset
+    newLine = line.new(x1=bar_index - lookbackRight - plSince[1], y1=y1_scaled, x2=bar_index - lookbackRight, y2=y2_scaled, color=bullDivColor, width=2)
+    array.unshift(cvdDivLines, newLine)
+    if array.size(cvdDivLines) > maxDivLines
+        line.delete(array.pop(cvdDivLines))
+
+if showCvdPriceDivLines and phFound and (bearCond or hiddenBearCond)
+    y1_scaled = (prev_phVal * cvdYScale) + cvdZeroOffset
+    y2_scaled = (phVal * cvdYScale) + cvdZeroOffset
+    newLine = line.new(x1=bar_index - lookbackRight - phSince[1], y1=y1_scaled, x2=bar_index - lookbackRight, y2=y2_scaled, color=bearDivColor, width=2)
+    array.unshift(cvdDivLines, newLine)
+    if array.size(cvdDivLines) > maxDivLines
+        line.delete(array.pop(cvdDivLines))
 
 // === CVD DIVERGENCE LINES (CVD+Volume on CVD chart) ===
-// Vẽ đường nối CVD+Volume divergence trên CVD chart khi có C+V divergence
+// Vẽ đường nối CVD+Volume divergence trên CVD chart khi có C+V divergence bằng line.new
 cvdVolBullLineColor = cvdVolBull ? (cvdVolBullRegular ? color.new(color.blue, 20) : color.new(color.blue, 50)) : color.new(color.white, 100)
 cvdVolBearLineColor = cvdVolBear ? (cvdVolBearRegular ? color.new(color.orange, 20) : color.new(color.orange, 50)) : color.new(color.white, 100)
-plot(showCvdVolDivLines and plFound ? (plVal * cvdYScale) + cvdZeroOffset : na, offset=-lookbackRight, title="CVD C+V Bull Lines", linewidth=1, color=cvdVolBullLineColor, style=plot.style_circles)
-plot(showCvdVolDivLines and phFound ? (phVal * cvdYScale) + cvdZeroOffset : na, offset=-lookbackRight, title="CVD C+V Bear Lines", linewidth=1, color=cvdVolBearLineColor, style=plot.style_circles)
+
+if showCvdVolDivLines and plFound and cvdVolBull
+    y1_scaled = (prev_plVal * cvdYScale) + cvdZeroOffset
+    y2_scaled = (plVal * cvdYScale) + cvdZeroOffset
+    newLine = line.new(x1=bar_index - lookbackRight - plSince[1], y1=y1_scaled, x2=bar_index - lookbackRight, y2=y2_scaled, color=cvdVolBullLineColor, width=1, style=line.style_dotted)
+    array.unshift(cvdDivLines, newLine)
+    if array.size(cvdDivLines) > maxDivLines
+        line.delete(array.pop(cvdDivLines))
+
+if showCvdVolDivLines and phFound and cvdVolBear
+    y1_scaled = (prev_phVal * cvdYScale) + cvdZeroOffset
+    y2_scaled = (phVal * cvdYScale) + cvdZeroOffset
+    newLine = line.new(x1=bar_index - lookbackRight - phSince[1], y1=y1_scaled, x2=bar_index - lookbackRight, y2=y2_scaled, color=cvdVolBearLineColor, width=1, style=line.style_dotted)
+    array.unshift(cvdDivLines, newLine)
+    if array.size(cvdDivLines) > maxDivLines
+        line.delete(array.pop(cvdDivLines))
 
 // Use label.new for CVD+Price divergence labels to reduce plotcount (labels aren't counted as plots)
 // Create labels at the pivot bar position (bar_index - lookbackRight) with lifecycle managed by f_createDivLabel
@@ -524,8 +571,8 @@ normalLowZ = input.float(-0.5, "Z Normal Low", minval=-2.0, maxval=1.0, step=0.1
 lowZ = input.float(-1.5, "Z Low", minval=-3.0, maxval=0.0, step=0.1, group=GRP_VOL_ZSCORE)
 
 // Create persistent horizontal lines (hline) at CVD and Volume baselines
-plot(showCvdBaseline ? cvdZeroOffset : na, title="CVD Baseline", color=color.gray, style=plot.style_line, linewidth=1)
-plot(showVolumeBaseline ? volumeZeroOffset : na, title="Volume Baseline", color=color.new(color.gray, 60), style=plot.style_line, linewidth=1)
+hline(cvdZeroOffset, title="CVD Baseline", color=color.gray, linestyle=hline.style_solid, linewidth=1, display=showCvdBaseline ? display.all : display.none)
+hline(volumeZeroOffset, title="Volume Baseline", color=color.new(color.gray, 60), linestyle=hline.style_solid, linewidth=1, display=showVolumeBaseline ? display.all : display.none)
 
 // Hàm tính Z-score cho volume
 f_zscore_vol(src, len) =>
@@ -550,11 +597,25 @@ volColorZ = isUltraHigh_z ? color.new(color.purple, volumeChartAlpha) : isVeryHi
 plotcandle(volumeZeroOffset, (volume * volumeYScale) + volumeZeroOffset, volumeZeroOffset, (volume * volumeYScale) + volumeZeroOffset, title="Volume (Z-Score)", color=volColorZ, bordercolor=volColorZ, wickcolor=volColorZ, display=showVolume ? display.all : display.none)
 
 // === CVD+VOLUME DIVERGENCE trên Volume chart (tương tự CVD+Price trên Price chart) ===
-// Vẽ tại volume values của CVD pivots (không phải volume pivots), apply Y scale
+// Vẽ tại volume values của CVD pivots bằng line.new (không phải volume pivots), apply Y scale
 cvdVolBullColor = cvdVolBull ? (bullCond or hiddenBullCond ? color.blue : color.new(color.blue, 60)) : color.new(color.white, 100)
 cvdVolBearColor = cvdVolBear ? (bearCond or hiddenBearCond ? color.orange : color.new(color.orange, 60)) : color.new(color.white, 100)
-plot(plFound ? ((volume[lookbackRight] * volumeYScale) + volumeZeroOffset) : na, offset=-lookbackRight, title="CVD+Vol Bull Lines", linewidth=2, color=cvdVolBullColor)
-plot(phFound ? ((volume[lookbackRight] * volumeYScale) + volumeZeroOffset) : na, offset=-lookbackRight, title="CVD+Vol Bear Lines", linewidth=2, color=cvdVolBearColor)
+
+if plFound and cvdVolBull
+    y1_vol = (prev_vol_at_cvd_low * volumeYScale) + volumeZeroOffset
+    y2_vol = (volume[lookbackRight] * volumeYScale) + volumeZeroOffset
+    newLine = line.new(x1=bar_index - lookbackRight - plSince[1], y1=y1_vol, x2=bar_index - lookbackRight, y2=y2_vol, color=cvdVolBullColor, width=2)
+    array.unshift(volDivLines, newLine)
+    if array.size(volDivLines) > maxDivLines
+        line.delete(array.pop(volDivLines))
+
+if phFound and cvdVolBear
+    y1_vol = (prev_vol_at_cvd_high * volumeYScale) + volumeZeroOffset
+    y2_vol = (volume[lookbackRight] * volumeYScale) + volumeZeroOffset
+    newLine = line.new(x1=bar_index - lookbackRight - phSince[1], y1=y1_vol, x2=bar_index - lookbackRight, y2=y2_vol, color=cvdVolBearColor, width=2)
+    array.unshift(volDivLines, newLine)
+    if array.size(volDivLines) > maxDivLines
+        line.delete(array.pop(volDivLines))
 
 // Tính offset cho labels trên volume chart (dùng % của scaled volume range)
 vol_range = (ta.highest(volume, 20) - ta.lowest(volume, 20)) * volumeYScale
