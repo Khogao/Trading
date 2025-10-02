@@ -36,6 +36,16 @@ maLengthInput = input.int(20, "MA Length", group = GRP_MA_BB)
 bbMultInput = input.float(2.0, "BB StdDev", minval=0.001, maxval=50, group = GRP_MA_BB)
 showBollingerBands = input.bool(true, "Show Bollinger Bands", group = GRP_MA_BB)
 
+// --- 2.5 Hybrid CVD System ---
+const string GRP_HYBRID_CVD = "2.5 🔬 Hybrid CVD Variants"
+showCvdVelocity = input.bool(true, "Show CVD Velocity", group = GRP_HYBRID_CVD, tooltip="CVD rate of change (momentum indicator). Auto-normalized, leading indicator for trend changes.")
+velocityLookback = input.int(20, "Velocity Lookback", minval=5, maxval=100, group = GRP_HYBRID_CVD, tooltip="Period for velocity calculation. Default 20 bars.")
+showCvdAcceleration = input.bool(false, "Show CVD Acceleration", group = GRP_HYBRID_CVD, tooltip="2nd derivative of CVD (rate of change of velocity). Early warning for momentum shifts.")
+showSessionCvd = input.bool(true, "Show Session-Relative CVD", group = GRP_HYBRID_CVD, tooltip="CVD relative to session start (resets at 'D' anchor). Maintains intraday context without drift.")
+cvdVelocityColor = input.color(color.new(color.purple, 0), "Velocity Color", group = GRP_HYBRID_CVD, inline="hcvd_col")
+sessionCvdColor = input.color(color.new(color.aqua, 0), "Session CVD Color", group = GRP_HYBRID_CVD, inline="hcvd_col")
+accelerationColor = input.color(color.new(color.orange, 0), "Acceleration Color", group = GRP_HYBRID_CVD, inline="hcvd_col")
+
 // --- 3. Divergence Engine ---
 const string GRP_DIVERGENCE = "3. Divergence Engine"
 // C+P
@@ -138,6 +148,32 @@ cvd_zscore = cvd_zscore_stdev > 0 ? (cvdSource - cvd_zscore_ma) / cvd_zscore_std
 
 // Pivot detection source: Use Z-Score if enabled, otherwise raw CVD
 pivotSource = useZScorePivots ? cvd_zscore : cvdSource
+
+// ==============================================================================================
+// HYBRID CVD SYSTEM (3 Variants)
+// ==============================================================================================
+// 1. Cumulative CVD: Standard CVD (used for divergences above) - LAGGING indicator
+// 2. CVD Velocity: Rate of change of CVD (momentum) - LEADING indicator
+// 3. Session-Relative CVD: CVD relative to session start - INTRADAY CONTEXT
+// 4. CVD Acceleration: 2nd derivative (rate of change of velocity) - EARLY WARNING
+
+// CVD Velocity (momentum indicator)
+// Formula: velocity = (CVD[0] - CVD[n]) / n  (normalized by lookback)
+// Interpretation: Positive = bullish momentum, Negative = bearish momentum
+cvdVelocity = showCvdVelocity ? ta.roc(cvdSource, velocityLookback) : na
+
+// Session-Relative CVD (intraday context)
+// Resets CVD at session start (anchor period) to maintain intraday context
+// Prevents drift accumulation across multiple sessions
+var float sessionCvdStart = na
+if ta.change(time(anchorInput))  // Reset at anchor period (default "D")
+    sessionCvdStart := cvdSource
+sessionCvd = showSessionCvd ? (cvdSource - nz(sessionCvdStart, cvdSource)) : na
+
+// CVD Acceleration (early momentum shift detection)
+// Formula: acceleration = velocity[0] - velocity[1]  (2nd derivative)
+// Interpretation: Positive = momentum accelerating, Negative = momentum decelerating
+cvdAcceleration = showCvdAcceleration ? ta.change(ta.roc(cvdSource, velocityLookback)) : na
 
 // ==============================================================================================
 // VOLUME CONFIRMATION FILTER (Optional - Luc_Trader Method)
@@ -301,6 +337,14 @@ plot(showZScorePlot ? cvd_zscore_scaled : na, "Z-Score CVD", color=color.new(col
 pUpper = plot(showBollingerBands ? bbUpper : na, "BB Upper", color.gray, style=plot.style_line)
 pLower = plot(showBollingerBands ? bbLower : na, "BB Lower", color.gray, style=plot.style_line)
 fill(pUpper, pLower, color=showBollingerBands ? color.new(color.gray, 95) : na)
+
+// Plot Hybrid CVD Variants
+// CVD Velocity (momentum) - separate panel recommended, but plotting on same for simplicity
+plot(cvdVelocity, "CVD Velocity", color=cvdVelocityColor, linewidth=1, style=plot.style_line, display=display.all)
+// Session-Relative CVD (intraday context)
+plot(sessionCvd, "Session CVD", color=sessionCvdColor, linewidth=1, style=plot.style_line, display=display.all)
+// CVD Acceleration (2nd derivative) - usually very noisy, default off
+plot(cvdAcceleration, "CVD Acceleration", color=accelerationColor, linewidth=1, style=plot.style_line, display=display.all)
 
 // --- Divergence Drawing System (CVD+ Style) ---
 // Arrays for line and label management
