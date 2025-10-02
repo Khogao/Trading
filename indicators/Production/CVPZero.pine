@@ -161,13 +161,18 @@ cvd_zscore_stdev = ta.stdev(cvdSource, zScoreLength)
 cvd_zscore = cvd_zscore_stdev > 0 ? (cvdSource - cvd_zscore_ma) / cvd_zscore_stdev : 0
 pivotSource = useZScorePivots ? cvd_zscore : cvdSource
 
-// === VOLUME FILTER CALCULATIONS ===
+// === VOLUME FILTER CALCULATIONS (Luc_Trader Method) ===
+// Trading Logic:
+//  - Regular Divergences: Volume CẠN KIỆT = Xu hướng cũ yếu đi, sắp đảo chiều
+//  - Hidden Bear: Volume BẪY (cao) = Fake breakout, smart money distribution
+//  - Hidden Bull: Volume THẤP ở pullback = Healthy retracement, institutions holding
+// Reference: HiveScale OP - "Low volume pullback = retail panic, smart money accumulating"
 volumeMA = ta.sma(volume, volumeMA_Length)
 atr_for_pivot_strength = ta.atr(14)
 volume_at_current_pivot = volume[lookbackRight]
-isVolumeExhaustion = volume_at_current_pivot < (volumeMA / volumeThreshold)
-isVolumeTrap = volume_at_current_pivot > (volumeMA * volumeThreshold)
-isVolumeHealthy = volume_at_current_pivot < (volumeMA / volumeThreshold)
+isVolumeExhaustion = volume_at_current_pivot < (volumeMA / volumeThreshold)     // Regular: Xu hướng cũ yếu
+isVolumeTrap = volume_at_current_pivot > (volumeMA * volumeThreshold)           // Hidden Bear: Bẫy tăng giá
+isVolumeLowPullback = volume_at_current_pivot < (volumeMA / volumeThreshold)    // Hidden Bull: Pullback lành mạnh
 
 // === DIVERGENCE ENGINE ===
 plVal = ta.pivotlow(pivotSource, lookbackLeft, lookbackRight)
@@ -204,7 +209,7 @@ bearCond = showRegular and priceHH and cvdLH and phFound and volumeFilter_Regula
 
 priceHL = low[lookbackRight] > ta.valuewhen(plFound, low[lookbackRight], 1)
 cvdLL   = plVal < ta.valuewhen(plFound, plVal, 1) and inRangePL_now
-volumeFilter_HiddenBull = not enableVolumeFilter or isVolumeHealthy
+volumeFilter_HiddenBull = not enableVolumeFilter or isVolumeLowPullback
 pivotStrengthFilter_HiddenBull = not enablePivotStrengthFilter or (pivotStrength_Bull > pivotStrengthThreshold)
 hiddenBullCond = showHidden and priceHL and cvdLL and plFound and volumeFilter_HiddenBull and pivotStrengthFilter_HiddenBull
 
@@ -214,7 +219,31 @@ volumeFilter_HiddenBear = not enableVolumeFilter or isVolumeTrap
 pivotStrengthFilter_HiddenBear = not enablePivotStrengthFilter or (pivotStrength_Bear > pivotStrengthThreshold)
 hiddenBearCond = showHidden and priceLH and cvdHH and phFound and volumeFilter_HiddenBear and pivotStrengthFilter_HiddenBear
 
-// === CVD + VOLUME DIVERGENCE ENGINE ===
+// ==============================================================================================
+// CVD + VOLUME DIVERGENCE ENGINE (C+V) - TÍN HIỆU BỔ TRỢ CHO C+P
+// ==============================================================================================
+// LƯU Ý QUAN TRỌNG: C+V KHÔNG PHẢI LÀ "C+P CÓ VOLUME FILTER"!
+//
+// C+P Divergence (CVD + Price):
+//  - So sánh: Order Flow (CVD) vs Market Structure (Price)
+//  - Insight: Smart money đang làm gì khác với price action
+//  - Ví dụ: Price lower low, CVD higher low = Smart money accumulating dips
+//
+// C+V Divergence (CVD + Volume):
+//  - So sánh: Order Flow (CVD) vs Participation Intensity (Volume)
+//  - Insight: Order flow strength đang thay đổi như thế nào
+//  - Ví dụ: CVD higher low, Volume lower = Order flow improving với ít participation hơn
+//           → Smart money đang quietly accumulate
+//
+// Tại sao GIỮ cả hai:
+//  1. C+P cho biết "WHAT" smart money đang làm (accumulate/distribute)
+//  2. C+V cho biết "HOW" họ đang làm (aggressive/quiet, trap/genuine)
+//  3. Kết hợp cả hai = Confluence mạnh hơn (ví dụ: Triple Confluence alerts)
+//
+// Reference: HiveScale OP - "CVD+Volume divergence shows you the QUALITY of the order flow,
+//                            not just the direction. Low volume accumulation is stronger
+//                            than high volume accumulation (less resistance ahead)."
+// ==============================================================================================
 // So sánh CVD pivots với volume TẠI các CVD pivot bars (không cần volume pivots)
 prev_plVal = ta.valuewhen(plFound, plVal, 1)
 prev_phVal = ta.valuewhen(phFound, phVal, 1)

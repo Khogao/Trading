@@ -140,16 +140,23 @@ cvd_zscore = cvd_zscore_stdev > 0 ? (cvdSource - cvd_zscore_ma) / cvd_zscore_std
 pivotSource = useZScorePivots ? cvd_zscore : cvdSource
 
 // ==============================================================================================
-// VOLUME CONFIRMATION FILTER (Optional)
+// VOLUME CONFIRMATION FILTER (Optional - Luc_Trader Method)
 // ==============================================================================================
+// Trading Logic:
+//  - Regular Divergences: Cần volume CẠN KIỆT (exhaustion) → Xu hướng cũ yếu đi
+//  - Hidden Bear: Cần volume BẪY (trap) → Fake breakout với volume cao
+//  - Hidden Bull: Cần volume THẤP ở pullback → Healthy retracement, không có áp lực bán thực sự
+//
+// Tham khảo: HiveScale OP - "Low volume pullback = retail scared, institutions holding"
+//            Greg's Rule #4 - "Volume tells you WHO is participating"
 volumeMA = ta.sma(volume, volumeMA_Length)
 atr_for_pivot_strength = ta.atr(14)
 
 // Volume conditions (only used if enableVolumeFilter = true)
 volume_at_current_pivot = volume[lookbackRight]
-isVolumeExhaustion = volume_at_current_pivot < (volumeMA / volumeThreshold)  // Regular divergences need exhaustion
-isVolumeTrap = volume_at_current_pivot > (volumeMA * volumeThreshold)        // Hidden Bear needs volume trap
-isVolumeHealthy = volume_at_current_pivot < (volumeMA / volumeThreshold)     // Hidden Bull needs low volume pullback
+isVolumeExhaustion = volume_at_current_pivot < (volumeMA / volumeThreshold)     // Regular: Volume cạn kiệt = xu hướng cũ yếu
+isVolumeTrap = volume_at_current_pivot > (volumeMA * volumeThreshold)           // Hidden Bear: Volume cao = bẫy tăng giá
+isVolumeLowPullback = volume_at_current_pivot < (volumeMA / volumeThreshold)    // Hidden Bull: Volume thấp = pullback lành mạnh
 
 // ==============================================================================================
 // DIVERGENCE ENGINE (C+P and C+V)
@@ -224,7 +231,7 @@ bearCond = showRegular and phFound and inRangePH and priceHH and cvdLH and volum
 priceHL = low[lookbackRight] > prev_low_at_pl
 cvdLL = plVal < prev_plVal
 // Volume filter: Hidden Bull benefits from low volume (healthy pullback, few sellers following)
-volumeFilter_HiddenBull = not enableVolumeFilter or isVolumeHealthy
+volumeFilter_HiddenBull = not enableVolumeFilter or isVolumeLowPullback
 pivotStrengthFilter_HiddenBull = not enablePivotStrengthFilter or (pivotStrength_Bull > pivotStrengthThreshold)
 hiddenBullCond = showHidden and plFound and inRangePL and priceHL and cvdLL and volumeFilter_HiddenBull and pivotStrengthFilter_HiddenBull
 

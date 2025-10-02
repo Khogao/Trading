@@ -226,13 +226,19 @@ cvd_zscore_stdev = ta.stdev(cvdSource, zScoreLength)
 cvd_zscore = cvd_zscore_stdev > 0 ? (cvdSource - cvd_zscore_ma) / cvd_zscore_stdev : 0
 pivotSource = useZScorePivots ? cvd_zscore : cvdSource
 
-// === VOLUME FILTER CALCULATIONS ===
+// === VOLUME FILTER CALCULATIONS (Luc_Trader Method) ===
+// Trading Logic:
+//  - Regular Divergences: Volume CẠN KIỆT = Xu hướng cũ yếu, momentum dying
+//  - Hidden Bear: Volume BẪY (cao) = Fake breakout, distribution phase
+//  - Hidden Bull: Volume THẤP ở pullback = Healthy retracement, không có selling pressure thật
+// Theory: Greg's Rule #4 - "Volume tells you WHO is participating"
+//         Low volume pullback = Only weak hands selling, smart money still in
 volumeMA = ta.sma(volume, volumeMA_Length)
 atr_for_pivot_strength = ta.atr(14)
 volume_at_current_pivot = volume[lookbackRight]
-isVolumeExhaustion = volume_at_current_pivot < (volumeMA / volumeThreshold)
-isVolumeTrap = volume_at_current_pivot > (volumeMA * volumeThreshold)
-isVolumeHealthy = volume_at_current_pivot < (volumeMA / volumeThreshold)
+isVolumeExhaustion = volume_at_current_pivot < (volumeMA / volumeThreshold)     // Regular: Momentum dying
+isVolumeTrap = volume_at_current_pivot > (volumeMA * volumeThreshold)           // Hidden Bear: Distribution
+isVolumeLowPullback = volume_at_current_pivot < (volumeMA / volumeThreshold)    // Hidden Bull: Healthy pullback
 
 // === DIVERGENCE ENGINE ===
 plVal = ta.pivotlow(pivotSource, lookbackLeft, lookbackRight)
@@ -269,7 +275,7 @@ bearCond = showRegular and priceHH and cvdLH and phFound and volumeFilter_Regula
 
 priceHL = low[lookbackRight] > ta.valuewhen(plFound, low[lookbackRight], 1)
 cvdLL   = plVal < ta.valuewhen(plFound, plVal, 1) and inRangePL_now
-volumeFilter_HiddenBull = not enableVolumeFilter or isVolumeHealthy
+volumeFilter_HiddenBull = not enableVolumeFilter or isVolumeLowPullback
 pivotStrengthFilter_HiddenBull = not enablePivotStrengthFilter or (pivotStrength_Bull > pivotStrengthThreshold)
 hiddenBullCond = showHidden and priceHL and cvdLL and plFound and volumeFilter_HiddenBull and pivotStrengthFilter_HiddenBull
 
