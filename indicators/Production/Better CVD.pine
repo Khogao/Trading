@@ -76,6 +76,7 @@ pivotStrengthThreshold = input.float(0.5, "Pivot Strength (ATR Multiple)", minva
 const string GRP_DISPLAY = "4. Display & Styling"
 plotStyle = input.string("Line with MA", "Plot Style", options=["Line with MA", "Candles"], group = GRP_DISPLAY)
 showZScorePlot = input.bool(false, "Show Z-Score CVD Overlay", group = GRP_DISPLAY, tooltip="Display normalized Z-Score CVD (gray line) to see statistical deviations from mean. Useful for understanding pivot significance.")
+cvdChartAlpha = input.int(20, "CVD/BB/Hybrid Alpha", minval=0, maxval=100, group = GRP_DISPLAY, tooltip="Transparency for CVD lines, BB bands, and hybrid plots (0=opaque, 100=transparent)")
 showTable = input.bool(true, "Show Multi-TF CVD Table", group = GRP_DISPLAY, tooltip="Display CVD trend across multiple timeframes (5m, 15m, 1H, 4H)")
 tablePosition = input.string("top_right", "Table Position", options=["top_left", "top_right", "bottom_left", "bottom_right"], group = GRP_DISPLAY)
 // C+P Colors
@@ -333,18 +334,18 @@ plotcandle(openVolume, maxVolume, minVolume, lastVolume, "CVD Candles", color=cC
 cvd_zscore_scaled = cvd_zscore * cvd_zscore_stdev + cvd_zscore_ma
 plot(showZScorePlot ? cvd_zscore_scaled : na, "Z-Score CVD", color=color.new(color.gray, 40), linewidth=1, style=plot.style_line, display=display.all)
 
-// Plot Bollinger Bands
-pUpper = plot(showBollingerBands ? bbUpper : na, "BB Upper", color.gray, style=plot.style_line)
-pLower = plot(showBollingerBands ? bbLower : na, "BB Lower", color.gray, style=plot.style_line)
+// Plot Bollinger Bands (with alpha control like CVD+)
+pUpper = plot(showBollingerBands ? bbUpper : na, "BB Upper", color=color.new(color.gray, cvdChartAlpha), style=plot.style_line)
+pLower = plot(showBollingerBands ? bbLower : na, "BB Lower", color=color.new(color.gray, cvdChartAlpha), style=plot.style_line)
 fill(pUpper, pLower, color=showBollingerBands ? color.new(color.gray, 95) : na)
 
-// Plot Hybrid CVD Variants
+// Plot Hybrid CVD Variants (with alpha control like CVD+)
 // CVD Velocity (momentum) - separate panel recommended, but plotting on same for simplicity
-plot(cvdVelocity, "CVD Velocity", color=cvdVelocityColor, linewidth=1, style=plot.style_line, display=display.all)
+plot(showCvdVelocity ? cvdVelocity : na, "CVD Velocity", color=color.new(cvdVelocityColor, cvdChartAlpha), linewidth=2, style=plot.style_line, display=display.all)
 // Session-Relative CVD (intraday context)
-plot(sessionCvd, "Session CVD", color=sessionCvdColor, linewidth=1, style=plot.style_line, display=display.all)
+plot(showSessionCvd ? sessionCvd : na, "Session CVD", color=color.new(sessionCvdColor, cvdChartAlpha), linewidth=2, style=plot.style_stepline, display=display.all)
 // CVD Acceleration (2nd derivative) - usually very noisy, default off
-plot(cvdAcceleration, "CVD Acceleration", color=accelerationColor, linewidth=1, style=plot.style_line, display=display.all)
+plot(showCvdAcceleration ? cvdAcceleration : na, "CVD Acceleration", color=color.new(accelerationColor, cvdChartAlpha), linewidth=1, style=plot.style_histogram, display=display.all)
 
 // --- Divergence Drawing System (CVD+ Style) ---
 // Arrays for line and label management
