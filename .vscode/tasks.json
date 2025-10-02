@@ -1,0 +1,77 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "🔥 CRITICAL: Validate Pine CVD Usage",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/validate_pine_cvd.ps1"
+      ],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated",
+        "showReuseMessage": false,
+        "clear": true
+      },
+      "problemMatcher": {
+        "owner": "pine",
+        "fileLocation": "absolute",
+        "pattern": {
+          "regexp": "^(ERROR|CRITICAL):\\s+(.*)\\s+-\\s+Line\\s+(\\d+):\\s+(.*)$",
+          "file": 2,
+          "line": 3,
+          "message": 4,
+          "severity": 1
+        }
+      }
+    },
+    {
+      "label": "🔍 Quick Pine Lint (Current File)",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-Command",
+        "${workspaceFolder}/scripts/validate_pine_cvd.ps1 -FilePath '${file}'"
+      ],
+      "group": "test",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "⚠️ Pre-Commit Validation (All Pine Files)",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-File",
+        "${workspaceFolder}/scripts/validate_pine_cvd.ps1",
+        "-Mode",
+        "strict"
+      ],
+      "group": "test",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated",
+        "clear": true
+      }
+    }
+  ]
+}
