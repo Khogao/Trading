@@ -620,8 +620,12 @@ isHigh_final = vsaClassifierMethod == "zscore" ? isHigh_zscore : isHigh_ratio
 isVeryHigh_final = vsaClassifierMethod == "zscore" ? isVeryHigh_zscore : isVeryHigh_ratio
 isUltraHigh_final = vsaClassifierMethod == "zscore" ? isUltraHigh_zscore : isUltraHigh_ratio
 
-// low-volume remains ratio-based
-lowVolume_vsa = volume < volumeMA_vsa2 * 0.7
+// LOW VOLUME classification - FIXED to be consistent with high volume method
+// Z-score: -1.0 SD below mean (bottom 16% of distribution, adaptive to timeframe)
+// Ratio: 0.7x volumeMA (simple fixed threshold, works well for LTF)
+// This affects No Supply (NS), No Demand (ND), and Spring (SP) signals
+isLow_zscore = vol_z <= -1.0
+lowVolume_vsa = vsaClassifierMethod == "zscore" ? isLow_zscore : (volume < volumeMA_vsa2 * 0.7)
 
 // expose VSA booleans for signals
 highVolume_vsa = isHigh_final
