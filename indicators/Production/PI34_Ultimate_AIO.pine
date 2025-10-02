@@ -1,9 +1,10 @@
-//@version=5
+//@version=6
 // ============================================================================
 // PI34 ULTIMATE AIO - Volume Analysis Mastery
 // ============================================================================
-// Version: 1.0.0
+// Version: 1.1.0
 // Created: 2025-10-02
+// Updated: 2025-10-03 - CRITICAL: Upgraded to Pine v6 for accurate CVD calculation
 // Author: Integration of best volume analysis features from Production indicators
 // 
 // DESCRIPTION:
@@ -84,6 +85,8 @@ indicator("Volume Pro 👑",
      max_labels_count=500,
      max_boxes_count=50,
      max_bars_back=5000)
+
+import TradingView/ta/8 as tav6
 
 // ============================================================================
 // PART 1: INPUT GROUPS & GLOBAL SETTINGS
@@ -182,29 +185,25 @@ f_zscore(src, len) =>
     sd = ta.stdev(src, len)
     sd != 0 ? (src - ma) / sd : 0
 
-// === CVD CALCULATION (3 Variants) ===
+// === CVD CALCULATION (3 Variants - ACCURATE v6 METHOD) ===
+// CRITICAL: Uses ta.requestVolumeDelta() for TRUE buy/sell volume delta (Pine v6 only)
+// Previous v5 method used close direction - INACCURATE!
+
 f_cvd_cumulative() =>
-    var float cvd = 0.0
-    delta = close > close[1] ? volume : close < close[1] ? -volume : 0
-    cvd := cvd + delta
-    cvd
+    // Cumulative CVD: Never resets, shows macro trend
+    [_o, _h, _l, _c] = tav6.requestVolumeDelta("1", "ALL")
+    _c
 
 f_cvd_velocity() =>
-    delta = close > close[1] ? volume : close < close[1] ? -volume : 0
-    ta.ema(delta, cvdMaLength)
+    // CVD Velocity: Rate of change, momentum detection
+    [_o, _h, _l, _c] = tav6.requestVolumeDelta("1", "D")
+    cvdDelta = _c - _c[1]
+    ta.ema(cvdDelta, cvdMaLength)
 
 f_cvd_session() =>
-    var float sessionCvd = 0.0
-    delta = close > close[1] ? volume : close < close[1] ? -volume : 0
-    
-    // Reset on new session
-    isNewSession = ta.change(time("D")) != 0
-    if isNewSession == true  // <-- Ensure boolean condition
-        sessionCvd := delta
-    else
-        sessionCvd := sessionCvd + delta
-    
-    sessionCvd
+    // Session-Relative CVD: Resets per session, intraday bias
+    [_o, _h, _l, _c] = tav6.requestVolumeDelta("1", "D")
+    _c
 
 // Select CVD type
 cvdSource = cvdType == "Cumulative" ? f_cvd_cumulative() : cvdType == "Velocity" ? f_cvd_velocity() : f_cvd_session()
