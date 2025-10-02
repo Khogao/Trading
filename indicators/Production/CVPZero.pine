@@ -37,6 +37,8 @@ rangeUpper = input.int(60, "Pivot: Range max", group = GRP_DIVERGENCE)
 const string GRP_DISPLAY = "🎨 Hiển thị"
 plotStyle = input.string("Line with MA", "CVD: Kiểu vẽ", options=["Line with MA", "Candles"], group = GRP_DISPLAY)
 showCandleColors = input.bool(true, title="Tô màu nến khi vượt BB", group = GRP_DISPLAY)
+showCvdPriceDivLines = input.bool(true, "Hiển thị đường C+P trên CVD", group = GRP_DISPLAY, tooltip="Hiển thị đường nối CVD+Price divergence trên CVD chart")
+showCvdVolDivLines = input.bool(true, "Hiển thị đường C+V trên CVD", group = GRP_DISPLAY, tooltip="Hiển thị đường nối CVD+Volume divergence trên CVD chart")
 // Y Scale & Baseline
 cvdYScale = input.float(1.0, "Y Scale: CVD", minval=0.1, maxval=100.0, step=0.1, group = GRP_DISPLAY)
 volumeYScale = input.float(1.0, "Y Scale: Volume", minval=0.1, maxval=100.0, step=0.1, group = GRP_DISPLAY)
@@ -230,6 +232,18 @@ bullDivColor = bullCond ? BULL_COLOR : hiddenBullCond ? HIDDEN_BULL_COLOR : colo
 bearDivColor = bearCond ? BEAR_COLOR : hiddenBearCond ? HIDDEN_BEAR_COLOR : color.new(color.white, 100)
 plot(plFound ? low[lookbackRight] : na, offset=-lookbackRight, title="Bull Divergence Lines", linewidth=2, color=bullDivColor)
 plot(phFound ? high[lookbackRight] : na, offset=-lookbackRight, title="Bear Divergence Lines", linewidth=2, color=bearDivColor)
+
+// === CVD DIVERGENCE LINES (CVD+Price on CVD chart) ===
+// Vẽ đường nối CVD+Price divergence trên CVD chart (scaled)
+plot(showCvdPriceDivLines and plFound ? (plVal * cvdYScale) + cvdZeroOffset : na, offset=-lookbackRight, title="CVD C+P Bull Lines", linewidth=2, color=bullDivColor)
+plot(showCvdPriceDivLines and phFound ? (phVal * cvdYScale) + cvdZeroOffset : na, offset=-lookbackRight, title="CVD C+P Bear Lines", linewidth=2, color=bearDivColor)
+
+// === CVD DIVERGENCE LINES (CVD+Volume on CVD chart) ===
+// Vẽ đường nối CVD+Volume divergence trên CVD chart khi có C+V divergence
+cvdVolBullLineColor = cvdVolBull ? (cvdVolBullRegular ? color.new(color.blue, 20) : color.new(color.blue, 50)) : color.new(color.white, 100)
+cvdVolBearLineColor = cvdVolBear ? (cvdVolBearRegular ? color.new(color.orange, 20) : color.new(color.orange, 50)) : color.new(color.white, 100)
+plot(showCvdVolDivLines and plFound ? (plVal * cvdYScale) + cvdZeroOffset : na, offset=-lookbackRight, title="CVD C+V Bull Lines", linewidth=1, color=cvdVolBullLineColor, style=plot.style_circles)
+plot(showCvdVolDivLines and phFound ? (phVal * cvdYScale) + cvdZeroOffset : na, offset=-lookbackRight, title="CVD C+V Bear Lines", linewidth=1, color=cvdVolBearLineColor, style=plot.style_circles)
 
 // Use label.new for CVD+Price divergence labels to reduce plotcount (labels aren't counted as plots)
 // Create labels at the pivot bar position (bar_index - lookbackRight) with lifecycle managed by f_createDivLabel
