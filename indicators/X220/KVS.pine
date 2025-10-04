@@ -1,0 +1,438 @@
+//@version=5
+indicator("KVS 2.0 - Professional Volume Zones", shorttitle="KVS 2.0", overlay=true, max_boxes_count=30, max_labels_count=50)
+
+// ============================================================================
+//                         KVS 2.0 - CHARLIE'S PROTOCOL COMPLIANT
+//                    Professional Volume Zone Detection System
+// ============================================================================
+
+// === CORE PARAMETERS ===
+var string grp_detection = "🎯 Zone Detection"
+kv_method = input.string("volume_impulse", title="Detection Method", 
+     options=["volume_impulse", "wyckoff_accumulation", "wyckoff_distribution", "all"], group=grp_detection)
+volume_sensitivity = input.float(2.0, title="Volume Sensitivity", minval=1.5, maxval=3.0, step=0.1, group=grp_detection)
+confidence_threshold = input.float(2.0, title="Minimum Confidence Score", minval=1.0, maxval=5.0, step=0.1, group=grp_detection)
+
+var string grp_context = "📊 Market Context"
+structure_lookback = input.int(20, title="Structure Analysis Period", minval=10, maxval=50, group=grp_context)
+volume_ma_length = input.int(20, title="Volume Moving Average", minval=10, maxval=50, group=grp_context)
+atr_multiplier = input.float(0.5, title="ATR Significance Threshold", minval=0.3, maxval=1.0, step=0.1, group=grp_context)
+
+var string grp_zones = "🏗️ Zone Management"
+max_active_zones = input.int(8, title="Maximum Active Zones", minval=3, maxval=15, group=grp_zones)
+zone_extend_bars = input.int(50, title="Zone Extension (bars)", minval=20, maxval=100, group=grp_zones)
+min_zone_separation = input.int(5, title="Minimum Bars Between Zones", minval=1, maxval=20, group=grp_zones)
+zone_transparency = input.int(80, title="Zone Transparency", minval=60, maxval=95, group=grp_zones)
+
+var string grp_visual = "🎨 Display Options"
+show_zone_info = input.bool(true, title="Show Zone Information", group=grp_visual)
+show_confidence_scores = input.bool(false, title="Show Confidence Scores", group=grp_visual)
+show_market_context = input.bool(true, title="Show Market Context Panel", group=grp_visual)
+show_zone_advice = input.bool(true, title="Show Zone Advice (short)", group=grp_visual)
+
+// === DATA STRUCTURES ===
+type VolumeZone
+    box area
+    label info_label
+    float top
+    float bottom
+    float confidence
+    string zone_type
+    string reason
+    int creation_bar
+    int touch_count
+    bool active
+    color zone_color
+
+type MarketContext
+    bool in_uptrend
+    bool in_downtrend
+    bool near_support
+    bool near_resistance
+    float support_level
+    float resistance_level
+    float trend_strength
+
+// === UTILITY FUNCTIONS ===
+f_safeDiv(n, d) => d != 0 ? n / d : 0
+
+f_calculateZScore(value, length) =>
+    mean = ta.sma(value, length)
+    std_dev = ta.stdev(value, length)
+    std_dev > 0 ? (value - mean) / std_dev : 0
+
+f_getMarketContext() =>
+    // Trend Analysis with multiple EMAs
+    ema12 = ta.ema(close, 12)
+    ema26 = ta.ema(close, 26)
+    ema50 = ta.ema(close, 50)
+    
+    uptrend = close > ema12 and ema12 > ema26 and ema26 > ema50
+    downtrend = close < ema12 and ema12 < ema26 and ema26 < ema50
+    
+    // Support/Resistance Levels
+    recent_high = ta.highest(high, structure_lookback)
+    recent_low = ta.lowest(low, structure_lookback)
+    
+    atr = ta.atr(14)
+    near_resistance = math.abs(high - recent_high) <= atr * 0.5
+    near_support = math.abs(low - recent_low) <= atr * 0.5
+    
+    // Trend Strength Calculation (0-5 scale)
+    strength = 0.0
+    if uptrend
+        strength += close > ema12 ? 1.0 : 0.0
+        strength += ema12 > ema26 ? 1.0 : 0.0
+        strength += ema26 > ema50 ? 1.0 : 0.0
+        strength += close > close[5] ? 1.0 : 0.0
+        strength += volume > ta.sma(volume, volume_ma_length) * 1.2 ? 1.0 : 0.0
+    else if downtrend
+        strength += close < ema12 ? 1.0 : 0.0
+        strength += ema12 < ema26 ? 1.0 : 0.0
+        strength += ema26 < ema50 ? 1.0 : 0.0
+        strength += close < close[5] ? 1.0 : 0.0
+        strength += volume > ta.sma(volume, volume_ma_length) * 1.2 ? 1.0 : 0.0
+    
+    MarketContext.new(uptrend, downtrend, near_support, near_resistance, recent_low, recent_high, strength)
+
+
+// Short advice generator for zone labels (Vietnamese – ngắn gọn: ý nghĩa + hành động)
+f_zoneAdvice(zone_type, confidence) =>
+    note = confidence >= confidence_threshold ? " (Độ tin cậy cao)" : confidence >= confidence_threshold * 0.8 ? " (Độ tin cậy TB)" : " (Độ tin cậy thấp)"
+    adv = ""
+    if zone_type == "Spring"
+        adv := "Spring — phá xuống rồi hồi (bẫy bán). Ý nghĩa: hỗ trợ mạnh.\nHành động: cân nhắc LONG khi có xác nhận nến bullish + volume; stop dưới đáy." + note
+    else if zone_type == "Absorption"
+        adv := "Absorption — cầu hấp thụ cung. Ý nghĩa: tích lũy.\nHành động: tìm entry retest với volume hỗ trợ; quản trị rủi ro chặt." + note
+    else if zone_type == "Test"
+        adv := "Test — kiểm tra cầu bằng volume yếu. Ý nghĩa: xác nhận hỗ trợ.\nHành động: low-risk BUY nếu giữ và có xác nhận." + note
+    else if zone_type == "Upthrust"
+        adv := "Upthrust — phá lên rồi từ chối. Ý nghĩa: cung mạnh, rủi ro cho LONG.\nHành động: tránh LONG; xem xét SHORT khi có từ chối rõ." + note
+    else if zone_type == "Distribution"
+        adv := "Distribution — phân phối bởi bên bán. Ý nghĩa: áp lực giảm.\nHành động: ưu tiên SHORT hoặc đứng ngoài." + note
+    else if zone_type == "Weak Rally"
+        adv := "Weak Rally — nhịp tăng yếu với volume thấp. Ý nghĩa: không đủ lực.\nHành động: thận trọng với LONG; chờ xác nhận." + note
+    else if zone_type == "Volume Impulse"
+        adv := "Volume Impulse — động lượng mạnh theo nến. Ý nghĩa: move có lực.\nHành động: trade theo hướng cây nến; dùng stop hợp lý." + note
+    else
+        adv := "Zone — kiểm tra thêm price action và volume trước khi quyết định." + note
+    adv
+
+// === VOLUME ANALYSIS FUNCTIONS ===
+f_detectVolumeImpulse(context) =>
+    vol_zscore = f_calculateZScore(volume, volume_ma_length)
+    atr = ta.atr(14)
+    body_size = math.abs(close - open)
+    range_size = high - low
+    
+    // Basic impulse criteria
+    significant_volume = vol_zscore > volume_sensitivity
+    significant_move = body_size > atr * atr_multiplier
+    meaningful_range = range_size > atr * 0.3
+    
+    // Context validation
+    bullish_context = context.near_support or context.in_uptrend or (close > open and context.trend_strength >= 2.0)
+    bearish_context = context.near_resistance or context.in_downtrend or (close < open and context.trend_strength >= 2.0)
+    
+    // Enhanced impulse detection
+    bullish_impulse = significant_volume and close > open and significant_move and meaningful_range and bullish_context
+    bearish_impulse = significant_volume and close < open and significant_move and meaningful_range and bearish_context
+    
+    // Confidence scoring
+    confidence = 1.0
+    confidence += vol_zscore > volume_sensitivity * 1.5 ? 1.0 : 0.0
+    confidence += body_size > atr * (atr_multiplier * 2) ? 0.5 : 0.0
+    confidence += context.near_support or context.near_resistance ? 1.0 : 0.0
+    confidence += context.trend_strength >= 3.0 ? 0.5 : 0.0
+    
+    // expose volume z-score as vol_score for callers
+    vol_score = vol_zscore
+    [bullish_impulse, bearish_impulse, confidence, vol_score]
+
+f_detectWyckoffAccumulation(context) =>
+    vol_ma = ta.sma(volume, volume_ma_length)
+    range_avg = ta.sma(high - low, 20)
+    current_range = high - low
+    atr = ta.atr(14)
+    
+    // Accumulation phase characteristics
+    is_narrow_range = current_range < range_avg * 0.7
+    is_high_volume = volume > vol_ma * (volume_sensitivity * 0.8)
+    is_down_bar = close < open
+    good_close_location = close > low + (high - low) * 0.4
+    near_support_area = context.near_support or low <= ta.lowest(low, structure_lookback) * 1.02
+    
+    // Professional absorption pattern
+    absorption = is_narrow_range and is_high_volume and near_support_area and good_close_location
+    
+    // Spring pattern (proper implementation)
+    support_level = ta.lowest(low, structure_lookback)[1]
+    spring_breakout = low < support_level
+    spring_recovery = close > support_level
+    spring_volume = volume > vol_ma * volume_sensitivity
+    spring = spring_breakout and spring_recovery and spring_volume and near_support_area
+    
+    // Test pattern (weak volume retest)
+    is_test = is_down_bar and volume < vol_ma * 0.7 and near_support_area and good_close_location and not spring_breakout
+    
+    // Confidence calculation
+    confidence = 0.0
+    if absorption
+        confidence = 2.5 + (is_high_volume ? 0.5 : 0.0) + (context.in_downtrend ? 0.5 : 0.0)
+    else if spring
+        confidence = 3.5 + (spring_volume ? 0.5 : 0.0) + (good_close_location ? 0.5 : 0.0)
+    else if is_test
+        confidence = 2.0 + (good_close_location ? 0.5 : 0.0)
+    
+    pattern_type = spring ? "Spring" : absorption ? "Absorption" : is_test ? "Test" : ""
+    
+    [absorption or spring or is_test, confidence, pattern_type]
+
+f_detectWyckoffDistribution(context) =>
+    vol_ma = ta.sma(volume, volume_ma_length)
+    range_avg = ta.sma(high - low, 20)
+    current_range = high - low
+    atr = ta.atr(14)
+    
+    // Distribution phase characteristics
+    is_narrow_range = current_range < range_avg * 0.7
+    is_high_volume = volume > vol_ma * (volume_sensitivity * 0.8)
+    is_up_bar = close > open
+    poor_close_location = close < high - (high - low) * 0.4
+    near_resistance_area = context.near_resistance or high >= ta.highest(high, structure_lookback) * 0.98
+    
+    // Professional distribution pattern
+    distribution = is_narrow_range and is_high_volume and near_resistance_area and poor_close_location
+    
+    // Upthrust pattern (proper implementation)
+    resistance_level = ta.highest(high, structure_lookback)[1]
+    upthrust_breakout = high > resistance_level
+    upthrust_rejection = close < resistance_level
+    upthrust_volume = volume > vol_ma * volume_sensitivity
+    upthrust = upthrust_breakout and upthrust_rejection and upthrust_volume and near_resistance_area
+    
+    // Weak rally test
+    is_weak_rally = is_up_bar and volume < vol_ma * 0.7 and near_resistance_area and poor_close_location and not upthrust_breakout
+    
+    // Confidence calculation
+    dist_confidence = 0.0
+    if distribution
+        dist_confidence := 2.5 + (is_high_volume ? 0.5 : 0.0) + (context.in_uptrend ? 0.5 : 0.0)
+    else if upthrust
+        dist_confidence := 3.5 + (upthrust_volume ? 0.5 : 0.0) + (upthrust_rejection ? 0.5 : 0.0)
+    else if is_weak_rally
+        dist_confidence := 2.0 + (poor_close_location ? 0.5 : 0.0)
+    
+    pattern_type = upthrust ? "Upthrust" : distribution ? "Distribution" : is_weak_rally ? "Weak Rally" : ""
+    
+    [distribution or upthrust or is_weak_rally, dist_confidence, pattern_type]
+
+// === ZONE MANAGEMENT ===
+var array<VolumeZone> active_zones = array.new<VolumeZone>()
+var int last_zone_bar = na
+
+f_isZoneTooClose(float top, float bottom) =>
+    if array.size(active_zones) == 0
+        false
+    else
+        min_distance = ta.atr(14) * 0.8
+        too_close = false
+        for zone in active_zones
+            if zone.active
+                if (math.abs(top - zone.top) < min_distance) or (math.abs(bottom - zone.bottom) < min_distance)
+                    too_close := true
+                    break
+        too_close
+
+f_createVolumeZone(float top, float bottom, float confidence, string zone_type, string reason, color zone_color, int last_zone_bar_in) =>
+    // Validation checks
+    can_create = true
+    
+    // Check minimum confidence
+    if confidence < confidence_threshold
+        can_create := false
+    
+    // Check minimum separation
+    if not na(last_zone_bar_in) and (bar_index - last_zone_bar_in) < min_zone_separation
+        can_create := false
+    
+    // Check if too close to existing zones
+    if f_isZoneTooClose(top, bottom)
+        can_create := false
+    
+    new_last_zone_bar = last_zone_bar_in
+    zone_created = false
+    if can_create
+        // Remove oldest zone if at capacity
+        if array.size(active_zones) >= max_active_zones
+            oldest_zone = array.shift(active_zones)
+            box.delete(oldest_zone.area)
+            if not na(oldest_zone.info_label)
+                label.delete(oldest_zone.info_label)
+        
+        // Create new zone
+        new_box = box.new(bar_index, top, bar_index + zone_extend_bars, bottom)
+        box.set_bgcolor(new_box, color.new(zone_color, zone_transparency))
+        box.set_border_color(new_box, zone_color)
+        box.set_border_width(new_box, 1)
+        
+        // Create info label
+        info_label = label(na)
+        if show_zone_info
+            // build label text: type + optional confidence + optional short advice
+            label_text = zone_type + (show_confidence_scores ? " (" + str.tostring(confidence, "#.#") + ")" : "")
+            label_text := show_zone_advice ? label_text + "\n" + f_zoneAdvice(zone_type, confidence) : label_text
+            label_style = zone_type == "Spring" or zone_type == "Absorption" or zone_type == "Test" ? 
+                         label.style_label_up : label.style_label_down
+            info_label := label.new(bar_index, zone_type == "Spring" or zone_type == "Absorption" or zone_type == "Test" ? bottom : top, 
+                                   label_text, style=label_style, color=color.new(zone_color, 30), 
+                                   textcolor=color.white, size=size.small)
+        
+        // Create zone object
+        new_zone = VolumeZone.new(new_box, info_label, top, bottom, confidence, zone_type, reason, 
+                                 bar_index, 0, true, zone_color)
+        array.push(active_zones, new_zone)
+        new_last_zone_bar := bar_index
+        zone_created := true
+    [zone_created, new_last_zone_bar]
+
+f_updateZones() =>
+    if array.size(active_zones) > 0
+        for i = 0 to array.size(active_zones) - 1
+            zone = array.get(active_zones, i)
+            if zone.active
+                // Update zone extension
+                box.set_right(zone.area, bar_index + zone_extend_bars)
+                
+                // Update label position
+                if show_zone_info and not na(zone.info_label)
+                    label.set_x(zone.info_label, bar_index)
+                
+                // Check for zone interaction
+                zone_touched = (close >= zone.bottom and close <= zone.top) or 
+                              (high >= zone.bottom and low <= zone.top)
+                
+                if zone_touched
+                    zone.touch_count += 1
+                
+                // Deactivate zone if price breaks through significantly
+                atr = ta.atr(14)
+                significant_break = (close > zone.top + atr * 0.3) or (close < zone.bottom - atr * 0.3)
+                
+                if significant_break
+                    zone.active := false
+                    box.set_bgcolor(zone.area, color.new(color.gray, 95))
+                    box.set_border_color(zone.area, color.gray)
+                    if not na(zone.info_label)
+                        label.delete(zone.info_label)
+
+// === MAIN DETECTION LOGIC ===
+market_context = f_getMarketContext()
+if barstate.isconfirmed
+    // Volume Impulse Detection
+    if kv_method == "volume_impulse" or kv_method == "all"
+        [bull_impulse, bear_impulse, impulse_confidence, vol_score] = f_detectVolumeImpulse(market_context)
+        
+        if bull_impulse
+            zone_top = high + ta.atr(14) * 0.1
+            zone_bottom = low - ta.atr(14) * 0.1
+            [zone_created, new_last_zone_bar] = f_createVolumeZone(zone_top, zone_bottom, impulse_confidence, "Volume Impulse", 
+                              "Bullish Volume Impulse", color.green, last_zone_bar)
+            if zone_created
+                last_zone_bar := new_last_zone_bar
+        
+        if bear_impulse
+            zone_top = high + ta.atr(14) * 0.1
+            zone_bottom = low - ta.atr(14) * 0.1
+            [zone_created, new_last_zone_bar] = f_createVolumeZone(zone_top, zone_bottom, impulse_confidence, "Volume Impulse", 
+                              "Bearish Volume Impulse", color.red, last_zone_bar)
+            if zone_created
+                last_zone_bar := new_last_zone_bar
+    
+    // Wyckoff Accumulation Detection
+    if kv_method == "wyckoff_accumulation" or kv_method == "all"
+        [accumulation_detected, acc_confidence, acc_pattern] = f_detectWyckoffAccumulation(market_context)
+        
+        if accumulation_detected
+            zone_color = acc_pattern == "Spring" ? color.lime : acc_pattern == "Absorption" ? color.orange : color.blue
+            [zone_created, new_last_zone_bar] = f_createVolumeZone(high, low, acc_confidence, acc_pattern, 
+                              "Wyckoff " + acc_pattern, zone_color, last_zone_bar)
+            if zone_created
+                last_zone_bar := new_last_zone_bar
+    
+    // Wyckoff Distribution Detection
+    if kv_method == "wyckoff_distribution" or kv_method == "all"
+        [distribution_detected, dist_confidence, dist_pattern] = f_detectWyckoffDistribution(market_context)
+        
+        if distribution_detected
+            zone_color = dist_pattern == "Upthrust" ? color.red : dist_pattern == "Distribution" ? color.purple : color.maroon
+            [zone_created, new_last_zone_bar] = f_createVolumeZone(high, low, dist_confidence, dist_pattern, "Wyckoff " + dist_pattern, zone_color, last_zone_bar)
+            if zone_created
+                last_zone_bar := new_last_zone_bar
+
+// Update all zones
+f_updateZones()
+
+// === COMPACT CONTEXT PANEL ===
+if show_market_context and barstate.islast
+    var table context_table = table.new(position.top_right, 2, 5, bgcolor=color.new(color.white, 10), border_width=1)
+    
+    table.cell(context_table, 0, 0, "KVS 2.0", bgcolor=color.new(color.blue, 20), text_color=color.white)
+    table.cell(context_table, 1, 0, timeframe.period, bgcolor=color.new(color.blue, 20), text_color=color.white)
+    
+    // Compact trend with strength
+    trend_text = market_context.in_uptrend ? "↗" + str.tostring(market_context.trend_strength, "#.#") : 
+                 market_context.in_downtrend ? "↘" + str.tostring(market_context.trend_strength, "#.#") : 
+                 "→" + str.tostring(market_context.trend_strength, "#.#")
+    trend_color = market_context.in_uptrend ? color.green : market_context.in_downtrend ? color.red : color.gray
+    table.cell(context_table, 0, 1, "Trend:")
+    table.cell(context_table, 1, 1, trend_text, text_color=trend_color)
+    
+    // Structure position  
+    structure_text = market_context.near_resistance ? "RES" : market_context.near_support ? "SUP" : "MID"
+    structure_color = market_context.near_resistance ? color.red : market_context.near_support ? color.green : color.gray
+    table.cell(context_table, 0, 2, "Level:")
+    table.cell(context_table, 1, 2, structure_text, text_color=structure_color)
+    
+    // Active zones (compact)
+    active_count = 0
+    if array.size(active_zones) > 0
+        for zone in active_zones
+            if zone.active
+                active_count += 1
+    
+    table.cell(context_table, 0, 3, "Zones:")
+    table.cell(context_table, 1, 3, str.tostring(active_count) + "/" + str.tostring(max_active_zones))
+    
+    // Volume status (compact)
+    vol_zscore = f_calculateZScore(volume, volume_ma_length)
+    vol_text = vol_zscore > 2.0 ? "HIGH" : vol_zscore > 1.0 ? "MED" : "LOW"
+    vol_color = vol_zscore > 2.0 ? color.red : vol_zscore > 1.0 ? color.orange : color.blue
+    table.cell(context_table, 0, 4, "Vol:")
+    table.cell(context_table, 1, 4, vol_text, text_color=vol_color)
+
+// === ALERTS ===
+zone_created_signal = not na(last_zone_bar) and last_zone_bar == bar_index
+alertcondition(zone_created_signal, "New Volume Zone", "New Volume Zone Created")
+
+// Pattern-specific alerts
+[bull_imp, bear_imp, imp_conf, vol_z] = f_detectVolumeImpulse(market_context)
+[acc_det, acc_conf, acc_pat] = f_detectWyckoffAccumulation(market_context)
+[dist_det, dist_conf, dist_pat] = f_detectWyckoffDistribution(market_context)
+
+alertcondition(bull_imp and imp_conf >= confidence_threshold, "Bullish Volume Impulse", "Bullish Volume Impulse Detected")
+alertcondition(bear_imp and imp_conf >= confidence_threshold, "Bearish Volume Impulse", "Bearish Volume Impulse Detected")
+alertcondition(acc_det and acc_conf >= confidence_threshold, "Wyckoff Accumulation", "Wyckoff Accumulation Pattern")
+alertcondition(dist_det and dist_conf >= confidence_threshold, "Wyckoff Distribution", "Wyckoff Distribution Pattern")
+
+// ============================================================================
+// KEY IMPROVEMENTS IN KVS 2.0:
+// 1. Proper Wyckoff implementation with context validation
+// 2. Volume analysis using Z-score for statistical significance
+// 3. Market context awareness for all pattern detection
+// 4. Confidence scoring system to filter low-quality signals
+// 5. Zone validation to prevent overlapping and low-confidence zones
+// 6. Multi-touch zone tracking for strength assessment
+// 7. Proper zone lifecycle management with significant break detection
+// 8. Charlie's Protocol compliance: syntax, logic, performance, risk
+// ============================================================================

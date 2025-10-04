@@ -1,0 +1,81 @@
+// © 2025 Greg's Vault - VSA Wyckoff Volume v1.1
+// Original logic by Phi, refactored and upgraded by Greg.
+//
+// WHAT: This indicator analyzes the volume of each bar and categorizes it into different levels
+//       (from Very Low to Ultra High) based on its deviation from a moving average.
+// WHY: To provide a clear, immediate visual cue about the strength and intent behind price movements,
+//      which is a cornerstone of VSA and Wyckoff analysis.
+//
+//@version=5
+indicator(title="VSA Wyckoff Volume v1.1", shorttitle="VSA Volume 1.1", format=format.volume, precision=0)
+
+// ==============================================================================================
+// BLOCK 1: INPUTS & PARAMETERS
+// ==============================================================================================
+// WHAT: This block defines all user-configurable settings.
+// WHY: To allow you to fine-tune the sensitivity of volume classification without altering the code.
+//      This is your control panel for calibrating the tool to different assets or market conditions.
+// ==============================================================================================
+var string GRP_SETTINGS = "Volume Settings"
+showMA = input.bool(false, title="Show Volume Moving Average", group=GRP_SETTINGS)
+lengthVolumeMA = input.int(20, title="Length of Volume MA", minval=1, group=GRP_SETTINGS)
+ratioUltraVolume = input.float(2.2, title="Ultra High Volume Ratio", minval=0, group=GRP_SETTINGS)
+ratioVeryHighVolume = input.float(1.8, title="Very High Volume Ratio", minval=0, group=GRP_SETTINGS)
+ratioHighVolume = input.float(1.2, title="High Volume Ratio", minval=0, group=GRP_SETTINGS)
+ratioNormalVolume = input.float(0.8, title="Normal Volume Ratio", minval=0, group=GRP_SETTINGS)
+ratioLowVolume = input.float(0.4, title="Low Volume Ratio", minval=0, group=GRP_SETTINGS)
+
+// ==============================================================================================
+// BLOCK 2: MOVING AVERAGE CALCULATION (UPGRADED)
+// ==============================================================================================
+// WHAT: This block calculates the moving average of the volume.
+// WHY: The original manual calculation was correct but verbose. We've upgraded it to use the
+//      built-in `ta.rma()` function (Wilder's MA), which is more efficient, cleaner, and the
+//      standard practice in modern Pine Script. This MA serves as the baseline for "average" volume.
+// ==============================================================================================
+volumeMA = ta.rma(volume, lengthVolumeMA)
+
+// ==============================================================================================
+// BLOCK 3: VOLUME CATEGORIZATION (OPTIMIZED)
+// ==============================================================================================
+// WHAT: This block defines the thresholds for each volume category and then determines which
+//       category the current bar's volume falls into.
+// WHY: The original code used redundant ternary operators. This optimized version simplifies the
+//      logic for better readability and performance while achieving the exact same result. It directly
+//      assigns the result of the logical comparison (which is already a boolean) to the variable.
+// ==============================================================================================
+// --- Define Thresholds ---
+ultraHighVolumeMin = volumeMA * ratioUltraVolume
+veryHighVolumeMin = volumeMA * ratioVeryHighVolume
+highVolumeMin = volumeMA * ratioHighVolume
+normalVolumeMin = volumeMA * ratioNormalVolume
+lowVolumeMin = volumeMA * ratioLowVolume
+
+// --- Categorize Current Volume ---
+bool isUltraHigh = volume >= ultraHighVolumeMin
+bool isVeryHigh = volume >= veryHighVolumeMin and volume < ultraHighVolumeMin
+bool isHigh = volume >= highVolumeMin and volume < veryHighVolumeMin
+bool isNormal = volume >= normalVolumeMin and volume < highVolumeMin
+bool isLow = volume >= lowVolumeMin and volume < normalVolumeMin
+bool isVeryLow = volume < lowVolumeMin
+
+// ==============================================================================================
+// BLOCK 4: PLOTTING & VISUALIZATION
+// ==============================================================================================
+// WHAT: This block handles the visual output of the analysis. It selects a color based on the
+//       volume category and then plots the volume bars and the optional moving average.
+// WHY: To translate the numerical analysis into an intuitive visual format. A trader can instantly
+//      see the nature of the volume without having to read any numbers.
+// ==============================================================================================
+// --- Select Color Palette ---
+paletteColor = isUltraHigh ? color.new(color.purple, 20) :
+               isVeryHigh  ? color.new(color.red, 20) :
+               isHigh      ? color.new(color.orange, 20) :
+               isNormal    ? color.new(color.green, 20) :
+               isLow       ? color.new(color.blue, 20) :
+                             color.new(color.gray, 20)
+
+// --- Plot Volume Bars and MA ---
+plot(volume, color=paletteColor, style=plot.style_columns, title="Volume Bars")
+plot(showMA ? volumeMA : na, color=color.new(color.yellow, 0), title="Volume MA")
+

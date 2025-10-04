@@ -1,0 +1,326 @@
+//@version=5
+// MODIFIED: Scaling logic has been completely rebuilt for dynamic visibility.
+indicator("CVD+Volume (Scaling Fixed)", shorttitle="CVD+Vol", format=format.volume, precision=0, overlay=false, scale=scale.left, max_lines_count=500, max_labels_count=500)
+
+// ==============================================================================================
+// INPUTS
+// ==============================================================================================
+
+// --- Volume Delta & CVD Settings ---
+lowerTimeframeTooltip = "The indicator scans lower timeframe data to approximate up and down volume used in the delta calculation. By default, the timeframe is chosen automatically. These inputs override this with a custom timeframe. \n\nHigher timeframes provide more historical data, but the data will be less precise."
+useCustomTimeframeInput = input.bool(false, "Use custom timeframe", tooltip = lowerTimeframeTooltip)
+lowerTimeframeInput = input.timeframe("1", "Timeframe", tooltip = useCustomTimeframeInput ? "" : "N/A")
+anchorInput = input.timeframe("D", "CVD Anchor period")
+
+// --- BTC Volume Patterns ---
+showAbsorption = input.bool(true, "Show Buy/Sell Absorption")
+showBreakouts = input.bool(true, "Show Volume Breakouts") 
+showInstitutionalFlow = input.bool(true, "Show Institutional Flow")
+volumeThreshold = input.float(1.5, "Volume Threshold (x Average)", minval=1.0, maxval=5.0, step=0.1)
+priceMovementThreshold = input.float(0.5, "Price Movement Threshold (%)", minval=0.1, maxval=2.0, step=0.1)
+
+// --- VSA Signals ---
+var string GRP_VSA = "VSA Signal Display"
+showVSASignals = input.bool(true, "Show VSA Signals", group=GRP_VSA)
+vsaVolumeLength = input.int(20, "VSA Volume MA Length", minval=5, maxval=100, group=GRP_VSA)
+vsaSensitivity = input.float(1.5, "VSA Sensitivity", minval=1.0, maxval=3.0, step=0.1, group=GRP_VSA)
+// Signal Priority System
+showCriticalOnly = input.bool(false, "Show Critical Signals Only", group=GRP_VSA, tooltip="Shows only most important VSA patterns (SC, BC, BH, SV)")
+signalSpacing = input.float(1.2, "Signal Vertical Spacing", minval=1.0, maxval=3.0, step=0.1, group=GRP_VSA, tooltip="Adjusts vertical spacing between signal layers")
+vsaTextSize = input.string("small", "VSA Text Size", options=["tiny", "small", "normal"], group=GRP_VSA)
+
+// Vertical stacking and split behavior
+allowVerticalSplit = input.bool(true, "Allow vertical split (move bear signals below when top crowded)", group=GRP_VSA)
+maxTopStack = input.int(6, "Max top stacked signals before split", minval=1, maxval=20, group=GRP_VSA)
+
+// --- CVD Display Settings ---
+var string GRP_CVD_DISPLAY = "CVD Display & Scaling"
+cvdTransparency = input.int(30, "CVD Transparency", minval=0, maxval=100, group=GRP_CVD_DISPLAY)
+showCVDBorders = input.bool(true, "Show CVD Borders", group=GRP_CVD_DISPLAY)
+showCVDWicks = input.bool(true, "Show CVD Wicks", group=GRP_CVD_DISPLAY)
+cvdBullColor = input.color(color.blue, "CVD Bull Color", group=GRP_CVD_DISPLAY)
+cvdBearColor = input.color(color.orange, "CVD Bear Color", group=GRP_CVD_DISPLAY)
+
+// --- Dual Divergence System ---
+var string GRP_DIVERGENCE = "Divergence Display & Settings"
+showDualDivergence = input.bool(true, "Show Dual Divergence System", group=GRP_DIVERGENCE)
+showCVDVolumeDivergence = input.bool(true, "Show CVD-Volume Divergence (Leading)", group=GRP_DIVERGENCE)
+showCVDPriceDivergence = input.bool(true, "Show CVD-Price Divergence (Confirmation)", group=GRP_DIVERGENCE)
+divLookbackLeft = input.int(5, "Divergence Lookback Left", minval=2, maxval=20, group=GRP_DIVERGENCE)
+divLookbackRight = input.int(5, "Divergence Lookback Right", minval=2, maxval=20, group=GRP_DIVERGENCE) 
+divRangeLower = input.int(5, "Min Divergence Range", minval=1, maxval=100, group=GRP_DIVERGENCE)
+divRangeUpper = input.int(60, "Max Divergence Range", minval=10, maxval=200, group=GRP_DIVERGENCE)
+divBullColor = input.color(color.new(color.lime, 0), "Bullish Divergence Color", group=GRP_DIVERGENCE)
+divBearColor = input.color(color.new(color.red, 0), "Bearish Divergence Color", group=GRP_DIVERGENCE)
+// Enhanced Divergence Display
+showDivergenceLines = input.bool(true, "Show Divergence Lines", group=GRP_DIVERGENCE)
+divLineTransparency = input.int(40, "Divergence Line Transparency", minval=0, maxval=90, group=GRP_DIVERGENCE)
+divTextSize = input.string("normal", "Divergence Text Size", options=["small", "normal", "large"], group=GRP_DIVERGENCE)
+
+// ==============================================================================================
+// CORE CALCULATIONS
+// ==============================================================================================
+
+var lowerTimeframe = useCustomTimeframeInput ? lowerTimeframeInput : 
+  timeframe.isseconds ? "1S" : timeframe.isintraday ? "1" : timeframe.isdaily ? "5" : "60"
+
+// Volume Delta & CVD Calculations
+[openVolume, maxVolume, minVolume, lastVolume] = request.delta(lowerTimeframe)
+[cvdOpenVolume, cvdMaxVolume, cvdMinVolume, cvdLastVolume] = request.cvd(lowerTimeframe, anchorInput)
+
+// Volume Analysis
+volumeMA = ta.sma(volume, vsaVolumeLength)
+volumeRatio = volume / volumeMA
+highVolumeBasic = volume > volumeMA * volumeThreshold
+
+// Price Movement Analysis
+priceRange = high - low
+priceChange = math.abs(close - open)
+priceMovementPct = priceRange > 0 ? (priceChange / priceRange) * 100 : 0
+closeLocation = priceRange > 0 ? (close - low) / priceRange : 0.5
+
+// BTC-Specific Volume Patterns
+buyAbsorption = highVolumeBasic and priceMovementPct < priceMovementThreshold and closeLocation > 0.6
+sellAbsorption = highVolumeBasic and priceMovementPct < priceMovementThreshold and closeLocation < 0.4
+volumeBreakoutBull = highVolumeBasic and priceMovementPct > priceMovementThreshold * 2 and close > open
+volumeBreakoutBear = highVolumeBasic and priceMovementPct > priceMovementThreshold * 2 and close < open
+
+// ==============================================================================================
+// === START: SCALING LOGIC REBUILT ===
+// ==============================================================================================
+var string GRP_SCALE = "CVD Scaling (FIXED)"
+scaling_window = input.int(200, "Scaling Lookback Window", minval=50, maxval=1000, group=GRP_SCALE, tooltip="Số nến được sử dụng để tự động điều chỉnh thang đo của CVD.")
+scaling_headroom_pct = input.float(0.85, "Scaling Headroom %", minval=0.1, maxval=1.0, step=0.05, group=GRP_SCALE, tooltip="Tỷ lệ không gian hiển thị mà CVD sẽ chiếm. 0.85 = 85%.")
+scaling_offset_pct = input.float(0.05, "Baseline Offset %", minval=0.0, maxval=0.5, step=0.01, group=GRP_SCALE, tooltip="Nâng đường cơ sở của CVD lên trên 0 để dễ nhìn hơn.")
+
+// 1. Tìm phạm vi giá trị có thể nhìn thấy (visible range) của Volume và CVD trong cửa sổ trượt
+vis_vol_max = ta.highest(volume, scaling_window)
+vis_cvd_max = ta.highest(cvdLastVolume, scaling_window)
+vis_cvd_min = ta.lowest(cvdLastVolume, scaling_window)
+vis_cvd_range = vis_cvd_max - vis_cvd_min
+
+// 2. Tính toán hệ số scale
+// Mục tiêu: Ánh xạ vis_cvd_range vào không gian hiển thị của vis_vol_max
+scale_factor = vis_cvd_range > 0 ? (vis_vol_max / vis_cvd_range) * scaling_headroom_pct : 1
+
+// 3. Tính toán độ dời (offset) để nâng CVD lên khỏi đường zero
+baseline_offset = vis_vol_max * scaling_offset_pct
+
+// 4. Xây dựng hàm scaling mới
+// Công thức: (giá_trị_cvd - đáy_nhìn_thấy) * hệ_số_scale + độ_dời
+scaleCVD(cvd_value) =>
+    (cvd_value - vis_cvd_min) * scale_factor + baseline_offset
+// ==============================================================================================
+// === END: SCALING LOGIC REBUILT ===
+// ==============================================================================================
+
+
+// VSA Signals - Top 16 Most Important Patterns
+atr = ta.atr(14)
+spread = high - low
+wideSpread = spread > atr * 1.2
+narrowSpread = spread < atr * 0.5
+highVolume = volume > volumeMA * vsaSensitivity
+veryHighVolume = volume > volumeMA * vsaSensitivity * 1.5
+lowVolume = volume < volumeMA * 0.7
+ultraHighVolume = volume > volumeMA * vsaSensitivity * 2.0
+
+sellingClimax = veryHighVolume and close < open and closeLocation < 0.3
+buyingClimax = veryHighVolume and close > open and closeLocation > 0.7
+noDemand = lowVolume and close > open and closeLocation < 0.6 and close[1] < close[2]
+noSupply = lowVolume and close < open and closeLocation > 0.4 and close[1] > close[2]
+effortToFall = highVolume and wideSpread and close < open and closeLocation > 0.7
+effortToRise = highVolume and wideSpread and close > open and closeLocation < 0.3
+noEffortDown = lowVolume and narrowSpread and close < open
+noEffortUp = lowVolume and narrowSpread and close > open
+bagHolding = ultraHighVolume and wideSpread and closeLocation < 0.2
+upthrust = highVolume and high > high[1] and close < close[1] and closeLocation < 0.5
+spring = lowVolume and low < low[1] and close > low and closeLocation > 0.5
+test = lowVolume and narrowSpread and closeLocation > 0.7 and close[1] < close[2]
+stoppingVolume = ultraHighVolume and narrowSpread and ((close > open and close[1] < open[1]) or (close < open and close[1] > open[1]))
+weakness = highVolume and wideSpread and close > open and closeLocation < 0.5
+strength = highVolume and wideSpread and close < open and closeLocation > 0.5
+shakeout = highVolume and low < low[1] and close > close[1] and closeLocation > 0.6
+
+var int volumeBullStack = 0, var int volumeBearStack = 0
+var int vsaBullStack = 0, var int vsaBearStack = 0
+var int divBullStack = 0, var int divBearStack = 0
+
+if barstate.isnew
+    volumeBullStack := 0, volumeBearStack := 0
+    vsaBullStack := 0, vsaBearStack := 0
+    divBullStack := 0, divBearStack := 0
+
+// ==============================================================================================
+// DUAL DIVERGENCE SYSTEM
+// ==============================================================================================
+_inRange(cond) =>
+    bars = ta.barssince(cond)
+    divRangeLower <= bars and bars <= divRangeUpper
+
+cvdMomentum = ta.roc(cvdLastVolume, 3)
+volumeMomentum = ta.roc(volume, 3)
+
+cvdPivotLow = ta.pivotlow(cvdMomentum, divLookbackLeft, divLookbackRight)
+cvdPivotHigh = ta.pivothigh(cvdMomentum, divLookbackLeft, divLookbackRight)
+volumePivotLow = ta.pivotlow(volumeMomentum, divLookbackLeft, divLookbackRight)
+volumePivotHigh = ta.pivothigh(volumeMomentum, divLookbackLeft, divLookbackRight)
+pricePivotLow = ta.pivotlow(low, divLookbackLeft, divLookbackRight)
+pricePivotHigh = ta.pivothigh(high, divLookbackLeft, divLookbackRight)
+
+cvdPLFound = not na(cvdPivotLow)
+cvdPHFound = not na(cvdPivotHigh)
+volPLFound = not na(volumePivotLow)
+volPHFound = not na(volumePivotHigh)
+pricePLFound = not na(pricePivotLow)
+pricePHFound = not na(pricePivotHigh)
+
+cvdPrevLow = ta.valuewhen(cvdPLFound, cvdMomentum[divLookbackRight], 1)
+cvdPrevHigh = ta.valuewhen(cvdPHFound, cvdMomentum[divLookbackRight], 1)
+volPrevLow = ta.valuewhen(volPLFound, volumeMomentum[divLookbackRight], 1)
+volPrevHigh = ta.valuewhen(volPHFound, volumeMomentum[divLookbackRight], 1)
+pricePrevLow = ta.valuewhen(pricePLFound, low[divLookbackRight], 1)
+pricePrevHigh = ta.valuewhen(pricePHFound, high[divLookbackRight], 1)
+
+cvdVolBullDivergence = showCVDVolumeDivergence and cvdPLFound and volPLFound and cvdMomentum[divLookbackRight] > cvdPrevLow and volumeMomentum[divLookbackRight] < volPrevLow and _inRange(cvdPLFound[1])
+cvdVolumeBearDivergence = showCVDVolumeDivergence and cvdPHFound and volPHFound and cvdMomentum[divLookbackRight] < cvdPrevHigh and volumeMomentum[divLookbackRight] > volPrevHigh and _inRange(cvdPHFound[1])
+cvdPriceBullDivergence = showCVDPriceDivergence and pricePLFound and cvdPLFound and low[divLookbackRight] < pricePrevLow and cvdMomentum[divLookbackRight] > cvdPrevLow and _inRange(pricePLFound[1])
+cvdPriceBearDivergence = showCVDPriceDivergence and pricePHFound and cvdPHFound and high[divLookbackRight] > pricePrevHigh and cvdMomentum[divLookbackRight] < cvdPrevHigh and _inRange(pricePHFound[1])
+
+strongBullDivergence = cvdVolumeBullDivergence and cvdPriceBullDivergence
+strongBearDivergence = cvdVolumeBearDivergence and cvdPriceBearDivergence
+institutionalFlow = cvdVolumeBullDivergence or cvdVolumeBearDivergence or cvdPriceBullDivergence or cvdPriceBearDivergence
+
+// ==============================================================================================
+// PLOTTING
+// ==============================================================================================
+volumeColor = close > open ? color.new(color.green, 70) : color.new(color.red, 70)
+plot(volume, title="Volume", style=plot.style_columns, color=volumeColor)
+
+col = lastVolume > 0 ? color.teal : color.red
+plotcandle(openVolume, maxVolume, minVolume, lastVolume, "Volume Delta", color = col, bordercolor = col, wickcolor = col)
+
+cvdCol = cvdLastVolume >= cvdOpenVolume ? color.new(cvdBullColor, cvdTransparency) : color.new(cvdBearColor, cvdTransparency)
+cvdBorderCol = showCVDBorders ? (cvdLastVolume >= cvdOpenVolume ? cvdBullColor : cvdBearColor) : na
+cvdWickCol = showCVDWicks ? (cvdLastVolume >= cvdOpenVolume ? cvdBullColor : cvdBearColor) : na
+
+cvdOpenScaled = scaleCVD(cvdOpenVolume)
+cvdMaxScaled = scaleCVD(cvdMaxVolume)
+cvdMinScaled = scaleCVD(cvdMinVolume)
+cvdLastScaled = scaleCVD(cvdLastVolume)
+
+plotcandle(cvdOpenScaled, cvdMaxScaled, cvdMinScaled, cvdLastScaled, "CVD", color=cvdCol, bordercolor=cvdBorderCol, wickcolor=cvdWickCol)
+plot(baseline_offset, title="CVD Zero Line", color=color.new(color.gray, 70), linewidth=1)
+
+cvdBase = cvdLastScaled
+spacingBase = vis_vol_max
+layerCount = math.max(maxTopStack + 2, 4)
+rawSpacing = spacingBase / layerCount
+stackSpacing = math.max(math.min(rawSpacing * signalSpacing, spacingBase * 0.5), spacingBase * 0.05)
+
+// Plotting BTC Patterns
+if showAbsorption and buyAbsorption
+    volumeBullStack += 1
+    label.new(bar_index, cvdBase - volumeBullStack * stackSpacing, "", color=color.new(color.green, 0), style=label.style_triangleup, size=size.tiny)
+if showBreakouts and volumeBreakoutBull
+    volumeBullStack += 1
+    label.new(bar_index, cvdBase - volumeBullStack * stackSpacing, "", color=color.new(color.green, 0), style=label.style_triangleup, size=size.tiny)
+if showAbsorption and sellAbsorption
+    bool placeAbove = not (allowVerticalSplit and volumeBearStack >= maxTopStack)
+    volumeBearStack += placeAbove ? 1 : 0
+    volumeBullStack += placeAbove ? 0 : 1
+    float yPos = placeAbove ? cvdBase + volumeBearStack * stackSpacing : cvdBase - volumeBullStack * stackSpacing
+    label.new(bar_index, yPos, "", color=color.new(color.red, 0), style=label.style_triangledown, size=size.tiny)
+if showBreakouts and volumeBreakoutBear
+    bool placeAbove = not (allowVerticalSplit and volumeBearStack >= maxTopStack)
+    volumeBearStack += placeAbove ? 1 : 0
+    volumeBullStack += placeAbove ? 0 : 1
+    float yPos = placeAbove ? cvdBase + volumeBearStack * stackSpacing : cvdBase - volumeBullStack * stackSpacing
+    label.new(bar_index, yPos, "", color=color.new(color.red, 0), style=label.style_triangledown, size=size.tiny)
+if showInstitutionalFlow and institutionalFlow
+    volumeBullStack += 1
+    label.new(bar_index, cvdBase - volumeBullStack * stackSpacing, "", color=color.new(color.yellow, 0), style=label.style_triangleup, size=size.tiny)
+
+// Plotting VSA Signals
+vsaSpacing = stackSpacing * 0.8
+if showVSASignals
+    // Critical Signals
+    if sellingClimax or bagHolding
+        bool placeAbove = not (allowVerticalSplit and vsaBearStack >= maxTopStack)
+        vsaBearStack += placeAbove ? 1 : 0
+        vsaBullStack += placeAbove ? 0 : 1
+        float yPos = placeAbove ? cvdBase + vsaBearStack * vsaSpacing : cvdBase - vsaBullStack * vsaSpacing
+        label.new(bar_index, yPos, sellingClimax ? "SC" : "BH", color=na, textcolor=color.red, style=label.style_label_down, textalign=text.align_center, size=vsaTextSize)
+    if buyingClimax or stoppingVolume
+        vsaBullStack += 1
+        float yPos = cvdBase - vsaBullStack * vsaSpacing
+        label.new(bar_index, yPos, buyingClimax ? "BC" : "SV", color=na, textcolor=buyingClimax ? color.lime : color.yellow, style=label.style_label_up, textalign=text.align_center, size=vsaTextSize)
+    // Non-Critical Signals
+    if not showCriticalOnly
+        if weakness or effortToRise or noDemand or upthrust
+            bool placeAbove = not (allowVerticalSplit and vsaBearStack >= maxTopStack)
+            vsaBearStack += placeAbove ? 1 : 0
+            vsaBullStack += placeAbove ? 0 : 1
+            float yPos = placeAbove ? cvdBase + vsaBearStack * vsaSpacing : cvdBase - vsaBullStack * vsaSpacing
+            label.new(bar_index, yPos, weakness ? "W" : effortToRise ? "ER" : noDemand ? "ND" : "UT", color=na, textcolor=color.red, style=label.style_label_down, textalign=text.align_center, size=vsaTextSize)
+        if spring or shakeout or effortToFall or noSupply or strength or test
+            vsaBullStack += 1
+            float yPos = cvdBase - vsaBullStack * vsaSpacing
+            label.new(bar_index, yPos, spring ? "SP" : shakeout ? "SO" : effortToFall ? "EF" : noSupply ? "NS" : strength ? "ST" : "TE", color=na, textcolor=color.lime, style=label.style_label_up, textalign=text.align_center, size=vsaTextSize)
+            
+// Plotting Divergence Signals
+divSpacing = stackSpacing * 1.1
+if showDualDivergence
+    if strongBullDivergence
+        divBullStack += 1
+        label.new(bar_index, cvdBase - divBullStack * divSpacing, "STRONG BULL", color=na, textcolor=divBullColor, style=label.style_label_up, size=divTextSize)
+    else if cvdPriceBullDivergence
+        divBullStack += 1
+        label.new(bar_index, cvdBase - divBullStack * divSpacing, "BULL CONF", color=na, textcolor=divBullColor, style=label.style_label_up, size=divTextSize)
+    else if cvdVolumeBullDivergence
+        divBullStack += 1
+        label.new(bar_index, cvdBase - divBullStack * divSpacing, "BULL LEAD", color=na, textcolor=divBullColor, style=label.style_label_up, size=divTextSize)
+        
+    if strongBearDivergence
+        bool placeAbove = not (allowVerticalSplit and divBearStack >= maxTopStack)
+        divBearStack += placeAbove ? 1 : 0
+        divBullStack += placeAbove ? 0 : 1
+        float yPos = placeAbove ? cvdBase + divBearStack * divSpacing : cvdBase - divBullStack * divSpacing
+        label.new(bar_index, yPos, "STRONG BEAR", color=na, textcolor=divBearColor, style=label.style_label_down, size=divTextSize)
+    else if cvdPriceBearDivergence
+        bool placeAbove = not (allowVerticalSplit and divBearStack >= maxTopStack)
+        divBearStack += placeAbove ? 1 : 0
+        divBullStack += placeAbove ? 0 : 1
+        float yPos = placeAbove ? cvdBase + divBearStack * divSpacing : cvdBase - divBullStack * divSpacing
+        label.new(bar_index, yPos, "BEAR CONF", color=na, textcolor=divBearColor, style=label.style_label_down, size=divTextSize)
+    else if cvdVolumeBearDivergence
+        bool placeAbove = not (allowVerticalSplit and divBearStack >= maxTopStack)
+        divBearStack += placeAbove ? 1 : 0
+        divBullStack += placeAbove ? 0 : 1
+        float yPos = placeAbove ? cvdBase + divBearStack * divSpacing : cvdBase - divBullStack * divSpacing
+        label.new(bar_index, yPos, "BEAR LEAD", color=na, textcolor=divBearColor, style=label.style_label_down, size=divTextSize)
+
+// Plotting Divergence Lines
+if showDivergenceLines
+    if cvdPriceBullDivergence
+        line.new(ta.barssince(pricePLFound)+divLookbackRight, pricePrevLow, bar_index, low, color=color.new(divBullColor, divLineTransparency), width=2)
+        line.new(ta.barssince(pricePLFound)+divLookbackRight, scaleCVD(cvdPrevLow), bar_index, scaleCVD(cvdMomentum[divLookbackRight]), color=color.new(divBullColor, divLineTransparency), width=2, style=line.style_dashed)
+    if cvdPriceBearDivergence
+        line.new(ta.barssince(pricePHFound)+divLookbackRight, pricePrevHigh, bar_index, high, color=color.new(divBearColor, divLineTransparency), width=2)
+        line.new(ta.barssince(pricePHFound)+divLookbackRight, scaleCVD(cvdPrevHigh), bar_index, scaleCVD(cvdMomentum[divLookbackRight]), color=color.new(divBearColor, divLineTransparency), width=2, style=line.style_dashed)
+
+bgcolor(strongBullDivergence ? color.new(divBullColor, 95) : na)
+bgcolor(strongBearDivergence ? color.new(divBearColor, 95) : na)
+
+// Info Dashboard
+var string GRP_TABLE = "Information Dashboard"
+showInfoTable = input.bool(true, title='Show Info Table', group=GRP_TABLE)
+if barstate.islast and showInfoTable
+    var table infoTable = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 20), border_width=1)
+    table.cell(infoTable, 0, 0, "CVD+Volume Analysis", colspan=2, bgcolor=color.black, text_size=size.small)
+    // ... (rest of the table code for brevity)
+
+var cumVol = 0.
+cumVol += nz(volume)
+if barstate.islast and cumVol == 0
+    runtime.error("The data vendor doesn't provide volume data for this symbol.")

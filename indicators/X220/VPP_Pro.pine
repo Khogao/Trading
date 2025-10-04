@@ -1,0 +1,322 @@
+//@version=5
+// TITLE: Pure Volume Profile - Maximum Precision
+// DESC: Focused VP indicator with precise algorithms and high sensitivity for crypto intraday
+indicator(title='Pure VP Pro', shorttitle='PVP', overlay=true, max_bars_back=2000, max_boxes_count=300, max_lines_count=50)
+
+// === CORE VP INPUTS ===
+lookback = input.int(200, 'Lookback Bars', minval=50, maxval=1000)
+levels = input.int(150, 'Price Levels', minval=50, maxval=300)
+va_percent = input.int(70, 'Value Area %', minval=60, maxval=80)
+
+// === PRECISION CONTROLS ===
+update_sensitivity = input.string("High", "Update Sensitivity", options=["Medium", "High", "Maximum"])
+volume_weighting = input.string("Advanced", "Volume Algorithm", options=["Simple", "Advanced", "Institutional"])
+time_decay = input.float(0.7, "Time Decay Factor", minval=0.0, maxval=1.0, step=0.1)
+
+// === HTF INTEGRATION ===
+show_htf = input.bool(true, "Show HTF POC/VA")
+htf_timeframe = input.string("4H", "HTF Period", options=["1H", "4H", "D"])
+
+// === STYLING ===
+poc_color = input.color(color.orange, "POC Color")
+va_color = input.color(color.blue, "Value Area Color") 
+volume_color = input.color(color.gray, "Volume Bars Color")
+htf_color = input.color(color.red, "HTF Color")
+
+bar_width = input.int(40, "Bar Width", minval=20, maxval=100)
+right_offset = input.int(20, "Right Offset", minval=5, maxval=50)
+
+// === VARIABLES ===
+var array<box> vp_boxes = array.new<box>()
+var array<line> vp_lines = array.new<line>()
+var array<float> volume_profile = array.new<float>()
+var float price_min = na, var float price_max = na, var float price_step = na
+var int last_calc_bar = 0
+
+// === PRECISION VOLUME DISTRIBUTION ===
+f_distribute_volume(float vol, float o, float h, float l, float c) =>
+    distributed_vol = 0.0
+    
+    if volume_weighting == "Simple"
+        distributed_vol := vol
+    else if volume_weighting == "Advanced"
+        // VWAP-based distribution
+        body_ratio = math.abs(c - o) / (h - l)
+        wick_weight = 1.0 - body_ratio * 0.6
+        distributed_vol := vol * wick_weight
+    else // Institutional
+        // Price-volume relationship analysis
+        price_move_pct = math.abs(c - o) / o
+        vol_intensity = vol / ta.sma(volume, 20)
+        institutional_factor = math.min(2.0, vol_intensity * (1 + price_move_pct * 10))
+        distributed_vol := vol * institutional_factor
+    
+    distributed_vol
+
+// === HTF CALCULATION ===
+f_htf_vp() =>
+    htf_lookback = 50
+    htf_levels = 80
+    
+    h_htf = ta.highest(high, htf_lookback)
+    l_htf = ta.lowest(low, htf_lookback)
+    
+    if h_htf <= l_htf
+        [na, na, na]
+    else
+        step_htf = (h_htf - l_htf) / htf_levels
+        vols = array.new<float>(htf_levels, 0.0)
+        
+        for i = 0 to htf_lookback - 1
+            if i > bar_index or volume[i] <= 0
+                continue
+                
+            # Time decay
+            time_weight = math.pow(1 - time_decay, i)
+            weighted_vol = f_distribute_volume(volume[i], open[i], high[i], low[i], close[i]) * time_weight
+            
+            # Price distribution
+            typical = (high[i] + low[i] + close[i]) / 3
+            idx = math.floor((typical - l_htf) / step_htf)
+            idx := math.max(0, math.min(htf_levels - 1, idx))
+            
+            current = array.get(vols, idx)
+            array.set(vols, idx, current + weighted_vol)
+        
+        max_vol = array.max(vols)
+        if max_vol <= 0
+            [na, na, na]
+        else
+            poc_idx = array.indexof(vols, max_vol)
+            poc_price = l_htf + poc_idx * step_htf
+            
+            # Value Area calculation
+            total_vol = array.sum(vols)
+            target_vol = total_vol * va_percent / 100
+            va_vol = array.get(vols, poc_idx)
+            va_upper = poc_idx
+            va_lower = poc_idx
+            
+            while va_vol < target_vol and (va_upper < htf_levels - 1 or va_lower > 0)
+                vol_up = va_upper < htf_levels - 1 ? array.get(vols, va_upper + 1) : 0
+                vol_dn = va_lower > 0 ? array.get(vols, va_lower - 1) : 0
+                
+                if vol_up >= vol_dn and va_upper < htf_levels - 1
+                    va_upper += 1
+                    va_vol += vol_up
+                else if va_lower > 0
+                    va_lower -= 1
+                    va_vol += vol_dn
+                else
+                    break
+            
+            vah = l_htf + va_upper * step_htf
+            val = l_htf + va_lower * step_htf
+            [poc_price, vah, val]
+
+// === UPDATE TRIGGER ===
+f_should_update() =>
+    bars_since = bar_index - last_calc_bar
+    
+    update_freq = switch update_sensitivity
+        "Medium" => 5
+        "High" => 2
+        "Maximum" => 1
+        => 3
+    
+    # Volume triggers
+    vol_spike = volume > ta.sma(volume, 10) * 2.0
+    
+    # Price triggers  
+    price_change = math.abs(close - close[1]) / close[1] > 0.003
+    
+    barstate.islast or bars_since >= update_freq or vol_spike or price_change
+
+// === CLEANUP ===
+f_cleanup() =>
+    for box_obj in vp_boxes
+        box.delete(box_obj)
+    array.clear(vp_boxes)
+    
+    for line_obj in vp_lines  
+        line.delete(line_obj)
+    array.clear(vp_lines)
+
+// === MAIN VP CALCULATION ===
+if f_should_update()
+    f_cleanup()
+    
+    # Calculate price range
+    price_max := ta.highest(high, lookback)
+    price_min := ta.lowest(low, lookback)
+    price_step := (price_max - price_min) / levels
+    
+    if price_step > 0
+        # Initialize volume profile
+        if array.size(volume_profile) != levels
+            array.clear(volume_profile)
+            for i = 0 to levels - 1
+                array.push(volume_profile, 0.0)
+        else
+            array.fill(volume_profile, 0.0)
+        
+        # Distribute volume across price levels
+        for bar_back = 0 to lookback - 1
+            if bar_back > bar_index or volume[bar_back] <= 0
+                continue
+            
+            # Time weighting
+            time_weight = math.pow(1 - time_decay, bar_back)
+            
+            # Get distributed volume
+            distributed_vol = f_distribute_volume(
+                volume[bar_back], open[bar_back], high[bar_back], 
+                low[bar_back], close[bar_back]
+            )
+            
+            weighted_vol = distributed_vol * time_weight
+            
+            # Find price level index
+            typical_price = (high[bar_back] + low[bar_back] + close[bar_back]) / 3
+            level_idx = math.floor((typical_price - price_min) / price_step)  
+            level_idx := math.max(0, math.min(levels - 1, level_idx))
+            
+            # Add volume to level
+            current_vol = array.get(volume_profile, level_idx)
+            array.set(volume_profile, level_idx, current_vol + weighted_vol)
+        
+        # Find POC
+        max_volume = array.max(volume_profile)
+        if max_volume > 0
+            poc_idx = array.indexof(volume_profile, max_volume)
+            poc_price = price_min + poc_idx * price_step
+            
+            # Calculate Value Area
+            total_volume = array.sum(volume_profile) 
+            target_volume = total_volume * va_percent / 100
+            va_volume = array.get(volume_profile, poc_idx)
+            va_upper_idx = poc_idx
+            va_lower_idx = poc_idx
+            
+            # Expand VA
+            while va_volume < target_volume and (va_upper_idx < levels - 1 or va_lower_idx > 0)
+                vol_above = va_upper_idx < levels - 1 ? array.get(volume_profile, va_upper_idx + 1) : 0
+                vol_below = va_lower_idx > 0 ? array.get(volume_profile, va_lower_idx - 1) : 0
+                
+                if vol_above >= vol_below and va_upper_idx < levels - 1
+                    va_upper_idx += 1
+                    va_volume += vol_above
+                else if va_lower_idx > 0
+                    va_lower_idx -= 1
+                    va_volume += vol_below
+                else
+                    break
+            
+            vah_price = price_min + va_upper_idx * price_step
+            val_price = price_min + va_lower_idx * price_step
+            
+            # Draw volume profile
+            base_x = bar_index + right_offset
+            
+            for level_idx = 0 to levels - 1
+                level_volume = array.get(volume_profile, level_idx)
+                
+                if level_volume > max_volume * 0.02  # Filter noise
+                    volume_ratio = level_volume / max_volume
+                    bar_length = math.round(bar_width * volume_ratio)
+                    level_price = price_min + level_idx * price_step
+                    
+                    # Color logic
+                    is_poc = level_idx == poc_idx
+                    is_in_va = level_price >= val_price and level_price <= vah_price
+                    
+                    bar_color = if is_poc
+                        color.new(poc_color, 0)
+                    else if is_in_va  
+                        color.new(va_color, 60)
+                    else
+                        color.new(volume_color, 75)
+                    
+                    # Create volume bar
+                    vp_box = box.new(
+                        base_x, level_price - price_step/2,
+                        base_x + bar_length, level_price + price_step/2,
+                        bgcolor = bar_color,
+                        border_color = na
+                    )
+                    array.push(vp_boxes, vp_box)
+            
+            # Draw POC line
+            poc_line = line.new(
+                bar_index - lookback, poc_price,
+                bar_index + right_offset + bar_width + 10, poc_price,
+                color = color.new(poc_color, 0),
+                width = 2
+            )
+            array.push(vp_lines, poc_line)
+            
+            # Draw VA lines
+            line_end = bar_index + right_offset + bar_width + 10
+            
+            vah_line = line.new(
+                bar_index - lookback, vah_price,
+                line_end, vah_price,
+                color = color.new(va_color, 30),
+                width = 1,
+                style = line.style_dashed
+            )
+            array.push(vp_lines, vah_line)
+            
+            val_line = line.new(
+                bar_index - lookback, val_price,
+                line_end, val_price, 
+                color = color.new(va_color, 30),
+                width = 1,
+                style = line.style_dashed
+            )
+            array.push(vp_lines, val_line)
+    
+    last_calc_bar := bar_index
+
+// === HTF LEVELS ===
+if show_htf
+    [htf_poc, htf_vah, htf_val] = request.security(
+        syminfo.tickerid, htf_timeframe, f_htf_vp(), lookahead=barmerge.lookahead_off
+    )
+    
+    if not na(htf_poc)
+        line_span = bar_index + right_offset + bar_width + 20
+        
+        # HTF POC
+        htf_poc_line = line.new(
+            bar_index - 150, htf_poc,
+            line_span, htf_poc,
+            color = color.new(htf_color, 0),
+            width = 2,
+            style = line.style_solid
+        )
+        array.push(vp_lines, htf_poc_line)
+        
+        # HTF VA
+        if not na(htf_vah)
+            htf_vah_line = line.new(
+                bar_index - 150, htf_vah,
+                line_span, htf_vah,
+                color = color.new(htf_color, 50),
+                width = 1,
+                style = line.style_dotted
+            )
+            array.push(vp_lines, htf_vah_line)
+        
+        if not na(htf_val)
+            htf_val_line = line.new(
+                bar_index - 150, htf_val,
+                line_span, htf_val,
+                color = color.new(htf_color, 50),
+                width = 1,
+                style = line.style_dotted
+            )
+            array.push(vp_lines, htf_val_line)
+
+// === STATUS ===
+plot(na, title="Pure VP Status", display=display.status_line)

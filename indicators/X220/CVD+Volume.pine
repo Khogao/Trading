@@ -1,0 +1,724 @@
+//@version=6
+indicator("CVD+Volume", shorttitle="CVD+Vol", format=format.volume, precision=0, overlay=false, scale=scale.left, max_lines_count=500, max_labels_count=500)
+
+import TradingView/ta/8
+
+// ==============================================================================================
+// INPUTS
+// ==============================================================================================
+
+// --- Volume Delta & CVD Settings ---
+lowerTimeframeTooltip = "The indicator scans lower timeframe data to approximate up and down volume used in the delta calculation. By default, the timeframe is chosen automatically. These inputs override this with a custom timeframe.
+ \n\nHigher timeframes provide more historical data, but the data will be less precise."
+useCustomTimeframeInput = input.bool(false, "Use custom timeframe", tooltip = lowerTimeframeTooltip)
+lowerTimeframeInput = input.timeframe("1", "Timeframe", active = useCustomTimeframeInput)
+anchorInput = input.timeframe("1D", "CVD Anchor period")
+
+// --- BTC Volume Patterns ---
+showAbsorption = input.bool(true, "Show Buy/Sell Absorption")
+showBreakouts = input.bool(true, "Show Volume Breakouts") 
+showInstitutionalFlow = input.bool(true, "Show Institutional Flow")
+volumeThreshold = input.float(1.5, "Volume Threshold (x Average)", minval=1.0, maxval=5.0, step=0.1)
+priceMovementThreshold = input.float(0.5, "Price Movement Threshold (%)", minval=0.1, maxval=2.0, step=0.1)
+
+// --- VSA Signals ---
+var string GRP_VSA = "VSA Signal Display"
+showVSASignals = input.bool(true, "Show VSA Signals", group=GRP_VSA)
+vsaVolumeLength = input.int(20, "VSA Volume MA Length", minval=5, maxval=100, group=GRP_VSA)
+vsaSensitivity = input.float(1.5, "VSA Sensitivity", minval=1.0, maxval=3.0, step=0.1, group=GRP_VSA)
+// Signal Priority System
+showCriticalOnly = input.bool(false, "Show Critical Signals Only", group=GRP_VSA, tooltip="Shows only most important VSA patterns (SC, BC, BH, SV)")
+signalSpacing = input.float(1.2, "Signal Vertical Spacing", minval=1.0, maxval=3.0, step=0.1, group=GRP_VSA, tooltip="Adjusts vertical spacing between signal layers")
+vsaTextSize = input.string("small", "VSA Text Size", options=["tiny", "small", "normal"], group=GRP_VSA)
+
+// Vertical stacking and split behavior
+allowVerticalSplit = input.bool(true, "Allow vertical split (move bear signals below when top crowded)", group=GRP_VSA)
+maxTopStack = input.int(6, "Max top stacked signals before split", minval=1, maxval=20, group=GRP_VSA)
+
+// --- CVD Display Settings ---
+var string GRP_CVD_DISPLAY = "CVD Display & Scaling"
+cvdLookback = input.int(50, "CVD Scaling Lookback", minval=10, maxval=200, group=GRP_CVD_DISPLAY)
+cvdBaselineOffsetPct = input.float(0.06, "CVD Zero-line Offset (% of max vol)", minval=0.0, maxval=0.5, step=0.01, group=GRP_CVD_DISPLAY, tooltip="Raises CVD overlay above volume baseline for better visibility")
+cvdTransparency = input.int(30, "CVD Transparency", minval=0, maxval=100, group=GRP_CVD_DISPLAY)
+showCVDBorders = input.bool(true, "Show CVD Borders", group=GRP_CVD_DISPLAY)
+showCVDWicks = input.bool(true, "Show CVD Wicks", group=GRP_CVD_DISPLAY)
+cvdBullColor = input.color(color.blue, "CVD Bull Color", group=GRP_CVD_DISPLAY)
+cvdBearColor = input.color(color.orange, "CVD Bear Color", group=GRP_CVD_DISPLAY)
+
+// --- Dual Divergence System ---
+var string GRP_DIVERGENCE = "Divergence Display & Settings"
+showDualDivergence = input.bool(true, "Show Dual Divergence System", group=GRP_DIVERGENCE)
+showCVDVolumeDivergence = input.bool(true, "Show CVD-Volume Divergence (Leading)", group=GRP_DIVERGENCE)
+showCVDPriceDivergence = input.bool(true, "Show CVD-Price Divergence (Confirmation)", group=GRP_DIVERGENCE)
+divLookbackLeft = input.int(5, "Divergence Lookback Left", minval=2, maxval=20, group=GRP_DIVERGENCE)
+divLookbackRight = input.int(5, "Divergence Lookback Right", minval=2, maxval=20, group=GRP_DIVERGENCE) 
+divRangeLower = input.int(5, "Min Divergence Range", minval=1, maxval=100, group=GRP_DIVERGENCE)
+divRangeUpper = input.int(60, "Max Divergence Range", minval=10, maxval=200, group=GRP_DIVERGENCE)
+divBullColor = input.color(color.new(color.lime, 0), "Bullish Divergence Color", group=GRP_DIVERGENCE)
+divBearColor = input.color(color.new(color.red, 0), "Bearish Divergence Color", group=GRP_DIVERGENCE)
+// Enhanced Divergence Display
+showDivergenceLines = input.bool(true, "Show Divergence Lines", group=GRP_DIVERGENCE)
+divLineTransparency = input.int(40, "Divergence Line Transparency", minval=0, maxval=90, group=GRP_DIVERGENCE)
+divTextSize = input.string("normal", "Divergence Text Size", options=["small", "normal", "large"], group=GRP_DIVERGENCE)
+
+// ==============================================================================================
+// CORE CALCULATIONS
+// ==============================================================================================
+
+var lowerTimeframe = switch
+    useCustomTimeframeInput => lowerTimeframeInput
+    timeframe.isseconds     => "1S"
+    timeframe.isintraday    => "1"
+    timeframe.isdaily       => "5"
+    => "60"
+
+// Volume Delta & CVD Calculations
+[openVolume, maxVolume, minVolume, lastVolume] = ta.requestVolumeDelta(lowerTimeframe)
+[cvdOpenVolume, cvdMaxVolume, cvdMinVolume, cvdLastVolume] = ta.requestVolumeDelta(lowerTimeframe, anchorInput)
+
+// Volume Analysis
+volumeMA = ta.sma(volume, vsaVolumeLength)
+volumeRatio = volume / volumeMA
+highVolumeBasic = volume > volumeMA * volumeThreshold
+
+// Price Movement Analysis
+priceRange = high - low
+priceChange = math.abs(close - open)
+priceMovementPct = priceRange > 0 ? (priceChange / priceRange) * 100 : 0
+closeLocation = priceRange > 0 ? (close - low) / priceRange : 0.5
+
+// BTC-Specific Volume Patterns
+// 1. Buy Absorption - High volume, small price movement, close near high
+buyAbsorption = highVolumeBasic and priceMovementPct < priceMovementThreshold and closeLocation > 0.6
+
+// 2. Sell Absorption - High volume, small price movement, close near low  
+sellAbsorption = highVolumeBasic and priceMovementPct < priceMovementThreshold and closeLocation < 0.4
+
+// 3. Volume Breakouts - High volume + significant price movement
+volumeBreakoutBull = highVolumeBasic and priceMovementPct > priceMovementThreshold * 2 and close > open
+volumeBreakoutBear = highVolumeBasic and priceMovementPct > priceMovementThreshold * 2 and close < open
+
+// 4. Institutional Flow - Enhanced Dual Divergence System
+cvdDelta = cvdLastVolume - cvdOpenVolume
+
+// ==============================================================================================
+// CVD ANCHOR-BASED SCALING SYSTEM (Professional UI like CVD Pro org)
+// ==============================================================================================
+var float anchorCvdMax = na
+var float anchorCvdMin = na
+var float anchorVolMax = na
+
+isNewAnchor = ta.change(time(anchorInput)) != 0
+if isNewAnchor or na(anchorCvdMax)
+    anchorCvdMax := cvdLastVolume
+    anchorCvdMin := cvdLastVolume
+    anchorVolMax := volume
+else
+    anchorCvdMax := math.max(anchorCvdMax, cvdLastVolume)
+    anchorCvdMin := math.min(anchorCvdMin, cvdLastVolume)
+    anchorVolMax := math.max(anchorVolMax, volume)
+
+anchorCvdRange = anchorCvdMax - anchorCvdMin
+// Improved scaling options
+var string GRP_SCALE = "CVD Scaling (advanced)"
+scaleMode = input.string(defval="anchor", title="Scaling Mode", options=["anchor","rolling","fixed"], group=GRP_SCALE, tooltip="anchor: use anchor period; rolling: use recent window; fixed: use manual scale")
+rollingWindow = input.int(200, "Rolling window (bars)", minval=20, maxval=2000, group=GRP_SCALE)
+scaleSmoothing = input.float(0.2, "Scale smoothing (0-1)", minval=0.0, maxval=1.0, step=0.05, group=GRP_SCALE)
+minScale = input.float(0.1, "Min scale factor", minval=0.001, maxval=10.0, step=0.01, group=GRP_SCALE)
+maxScale = input.float(10.0, "Max scale factor", minval=0.1, maxval=100.0, step=0.1, group=GRP_SCALE)
+fixedScale = input.float(1.0, "Fixed scale factor (used when mode=fixed)", group=GRP_SCALE)
+
+// rolling extremes
+rollingCvdMax = ta.highest(cvdLastVolume, rollingWindow)
+rollingCvdMin = ta.lowest(cvdLastVolume, rollingWindow)
+rollingVolMax = ta.highest(volume, rollingWindow)
+rollingCvdRange = rollingCvdMax - rollingCvdMin
+
+// raw scale factor depending on mode
+rawScaleFactor = switch
+    scaleMode == "anchor" => anchorCvdRange > 0 ? anchorVolMax / anchorCvdRange * 0.8 : 1
+    scaleMode == "rolling" => rollingCvdRange > 0 ? rollingVolMax / rollingCvdRange * 0.8 : 1
+    => fixedScale
+
+// smooth the scale factor over time to avoid big jumps
+var float smoothScale = na
+if na(smoothScale)
+    smoothScale := rawScaleFactor
+else
+    smoothScale := nz(smoothScale[1]) * (1 - scaleSmoothing) + rawScaleFactor * scaleSmoothing
+
+// clamp
+anchorScaleFactor = math.max(minScale, math.min(maxScale, smoothScale))
+cvdZeroOffset = anchorVolMax * cvdBaselineOffsetPct
+
+// Professional CVD Scaling Function
+scaleCVD(x) =>
+    (x - anchorCvdMin) * anchorScaleFactor + cvdZeroOffset
+
+// VSA Signals - Top 16 Most Important Patterns
+atr = ta.atr(14)
+spread = high - low
+wideSpread = spread > atr * 1.2
+narrowSpread = spread < atr * 0.5
+highVolume = volume > volumeMA * vsaSensitivity
+veryHighVolume = volume > volumeMA * vsaSensitivity * 1.5
+lowVolume = volume < volumeMA * 0.7
+ultraHighVolume = volume > volumeMA * vsaSensitivity * 2.0
+
+// 1. Selling Climax (SC) - High volume, red candle, close at low
+sellingClimax = veryHighVolume and close < open and closeLocation < 0.3
+
+// 2. Buying Climax (BC) - High volume, green candle, close at high  
+buyingClimax = veryHighVolume and close > open and closeLocation > 0.7
+
+// 3. No Demand (ND) - Low volume after decline, up bar, close at mid/low
+noDemand = lowVolume and close > open and closeLocation < 0.6 and close[1] < close[2]
+
+// 4. No Supply (NS) - Low volume after rally, down bar, close at mid/high
+noSupply = lowVolume and close < open and closeLocation > 0.4 and close[1] > close[2]
+
+// 5. Effort to Fall (EF) - High volume, wide spread down, close at high
+effortToFall = highVolume and wideSpread and close < open and closeLocation > 0.7
+
+// 6. Effort to Rise (ER) - High volume, wide spread up, close at low
+effortToRise = highVolume and wideSpread and close > open and closeLocation < 0.3
+
+// 7. No Effort Down (NE) - Low volume, narrow spread, down bar
+noEffortDown = lowVolume and narrowSpread and close < open
+
+// 8. No Effort Up (NU) - Low volume, narrow spread, up bar  
+noEffortUp = lowVolume and narrowSpread and close > open
+
+// 9. Bag Holding (BH) - Ultra high volume, wide spread, close at low
+bagHolding = ultraHighVolume and wideSpread and closeLocation < 0.2
+
+// 10. Upthrust (UT) - High volume, close below previous close, higher high
+upthrust = highVolume and high > high[1] and close < close[1] and closeLocation < 0.5
+
+// 11. Spring (SP) - Low volume test of support, close above low
+spring = lowVolume and low < low[1] and close > low and closeLocation > 0.5
+
+// 12. Test (TE) - Low volume, narrow spread, close at high after decline
+test = lowVolume and narrowSpread and closeLocation > 0.7 and close[1] < close[2]
+
+// 13. Stopping Volume (SV) - Ultra high volume, narrow spread, reversal
+stoppingVolume = ultraHighVolume and narrowSpread and 
+  ((close > open and close[1] < open[1]) or (close < open and close[1] > open[1]))
+
+// 14. Weakness (WK) - High volume, wide spread up, close at mid/low
+weakness = highVolume and wideSpread and close > open and closeLocation < 0.5
+
+// 15. Strength (ST) - High volume, wide spread down, close at mid/high
+strength = highVolume and wideSpread and close < open and closeLocation > 0.5
+
+// 16. Shakeout (SO) - High volume, lower low, close above previous close
+shakeout = highVolume and low < low[1] and close > close[1] and closeLocation > 0.6
+
+// Volume Accumulation (for info dashboard)
+var float volumeAccumulation = 0.0
+if close > close[1]
+    volumeAccumulation := volumeAccumulation + volume
+else if close < close[1]
+    volumeAccumulation := volumeAccumulation - volume
+
+accumulationMA = ta.sma(volumeAccumulation, 14)
+
+// per-bar stacks for vertical placement (separate counters per section)
+var int volumeBullStack = 0
+var int volumeBearStack = 0
+var int vsaBullStack = 0
+var int vsaBearStack = 0
+var int divBullStack = 0
+var int divBearStack = 0
+
+// Reset stacks at the start of each new bar
+if barstate.isnew
+    volumeBullStack := 0
+    volumeBearStack := 0
+    vsaBullStack := 0
+    vsaBearStack := 0
+    divBullStack := 0
+    divBearStack := 0
+
+// ==============================================================================================
+// DUAL DIVERGENCE SYSTEM - CVD Volume & Price Analysis
+// ==============================================================================================
+
+// Divergence calculation helpers (based on Better RSI pattern)
+_inRange(cond) =>
+    bars = ta.barssince(cond == true)
+    divRangeLower <= bars and bars <= divRangeUpper
+
+// CVD Momentum for divergence analysis (more reliable than raw cumulative)
+cvdMomentum = ta.roc(cvdLastVolume, 3) * 100  // CVD rate of change
+volumeMomentum = ta.roc(volume, 3) * 100      // Volume rate of change
+priceMomentum = ta.roc(close, 3) * 100        // Price rate of change
+
+// Pivot detection for CVD momentum, Volume momentum, and Price
+cvdPivotLow = ta.pivotlow(cvdMomentum, divLookbackLeft, divLookbackRight)
+cvdPivotHigh = ta.pivothigh(cvdMomentum, divLookbackLeft, divLookbackRight)
+volumePivotLow = ta.pivotlow(volumeMomentum, divLookbackLeft, divLookbackRight)
+volumePivotHigh = ta.pivothigh(volumeMomentum, divLookbackLeft, divLookbackRight)
+pricePivotLow = ta.pivotlow(low, divLookbackLeft, divLookbackRight)
+pricePivotHigh = ta.pivothigh(high, divLookbackLeft, divLookbackRight)
+
+// Pivot found conditions
+cvdPLFound = not na(cvdPivotLow)
+cvdPHFound = not na(cvdPivotHigh)
+volPLFound = not na(volumePivotLow)
+volPHFound = not na(volumePivotHigh)
+pricePLFound = not na(pricePivotLow)
+pricePHFound = not na(pricePivotHigh)
+
+// Pre-calculate ta.valuewhen() and _inRange() for consistency
+cvdPrevLow = ta.valuewhen(cvdPLFound, cvdMomentum[divLookbackRight], 1)
+cvdPrevHigh = ta.valuewhen(cvdPHFound, cvdMomentum[divLookbackRight], 1)
+volPrevLow = ta.valuewhen(volPLFound, volumeMomentum[divLookbackRight], 1)
+volPrevHigh = ta.valuewhen(volPHFound, volumeMomentum[divLookbackRight], 1)
+pricePrevLow = ta.valuewhen(pricePLFound, low[divLookbackRight], 1)
+pricePrevHigh = ta.valuewhen(pricePHFound, high[divLookbackRight], 1)
+
+cvdPLInRange = _inRange(cvdPLFound[1])
+cvdPHInRange = _inRange(cvdPHFound[1])
+volPLInRange = _inRange(volPLFound[1])
+volPHInRange = _inRange(volPHFound[1])
+pricePLInRange = _inRange(pricePLFound[1])
+pricePHInRange = _inRange(pricePHFound[1])
+
+// === 1. CVD-VOLUME DIVERGENCE (Leading Indicator) ===
+// Bullish: CVD momentum makes higher low while Volume momentum makes lower low
+cvdVolBullHL = cvdPLFound and cvdMomentum[divLookbackRight] > cvdPrevLow and cvdPLInRange
+volumeLL = volPLFound and volumeMomentum[divLookbackRight] < volPrevLow and volPLInRange
+cvdVolumeBullDivergence = showCVDVolumeDivergence and cvdVolBullHL and volumeLL and cvdPLFound and volPLFound
+
+// Bearish: CVD momentum makes lower high while Volume momentum makes higher high  
+cvdVolBearLH = cvdPHFound and cvdMomentum[divLookbackRight] < cvdPrevHigh and cvdPHInRange
+volumeHH = volPHFound and volumeMomentum[divLookbackRight] > volPrevHigh and volPHInRange
+cvdVolumeBearDivergence = showCVDVolumeDivergence and cvdVolBearLH and volumeHH and cvdPHFound and volPHFound
+
+// === 2. CVD-PRICE DIVERGENCE (Confirmation) ===
+// Bullish: Price makes lower low while CVD momentum makes higher low
+priceLL = pricePLFound and low[divLookbackRight] < pricePrevLow and pricePLInRange
+cvdPriceHL = cvdPLFound and cvdMomentum[divLookbackRight] > cvdPrevLow and cvdPLInRange
+cvdPriceBullDivergence = showCVDPriceDivergence and priceLL and cvdPriceHL and pricePLFound and cvdPLFound
+
+// Bearish: Price makes higher high while CVD momentum makes lower high
+priceHH = pricePHFound and high[divLookbackRight] > pricePrevHigh and pricePHInRange
+cvdPriceLH = cvdPHFound and cvdMomentum[divLookbackRight] < cvdPrevHigh and cvdPHInRange
+cvdPriceBearDivergence = showCVDPriceDivergence and priceHH and cvdPriceLH and pricePHFound and cvdPHFound
+
+// === 3. COMBINED SIGNALS ===
+// Strong Divergence = Both CVD-Volume AND CVD-Price divergence
+strongBullDivergence = cvdVolumeBullDivergence and cvdPriceBullDivergence
+strongBearDivergence = cvdVolumeBearDivergence and cvdPriceBearDivergence
+
+// Early Warning = CVD-Volume divergence only (without price confirmation)
+earlyBullWarning = cvdVolumeBullDivergence and not cvdPriceBullDivergence
+earlyBearWarning = cvdVolumeBearDivergence and not cvdPriceBearDivergence
+
+// Updated institutional flow (any divergence detected)
+institutionalFlow = cvdVolumeBullDivergence or cvdVolumeBearDivergence or cvdPriceBullDivergence or cvdPriceBearDivergence
+
+// ==============================================================================================
+// PLOTTING
+// ==============================================================================================
+
+// Debugging helper: show test signals to verify label rendering/placement
+debugShowTestSignals = input.bool(false, "Debug: show test signals (for visibility)")
+
+
+// Plot Standard Volume (TradingView style)
+volumeColor = close > open ? color.new(color.green, 70) : color.new(color.red, 70)
+plot(volume, title="Volume", color=volumeColor, style=plot.style_columns)
+
+// Plot Volume Delta
+col = lastVolume > 0 ? color.teal : color.red
+hline(0)
+plotcandle(openVolume, maxVolume, minVolume, lastVolume, "Volume Delta", color = col, bordercolor = col, wickcolor = col)
+
+// Plot CVD (Cumulative Volume Delta) with Professional Scaling
+cvdCol = cvdLastVolume >= cvdOpenVolume ? color.new(cvdBullColor, cvdTransparency) : color.new(cvdBearColor, cvdTransparency)
+cvdBorderCol = showCVDBorders ? (cvdLastVolume >= cvdOpenVolume ? cvdBullColor : cvdBearColor) : na
+cvdWickCol = showCVDWicks ? (cvdLastVolume >= cvdOpenVolume ? cvdBullColor : cvdBearColor) : na
+
+// Apply professional scaling to CVD values
+cvdOpenScaled = scaleCVD(cvdOpenVolume)
+cvdMaxScaled = scaleCVD(cvdMaxVolume)
+cvdMinScaled = scaleCVD(cvdMinVolume)
+cvdLastScaled = scaleCVD(cvdLastVolume)
+
+plotcandle(cvdOpenScaled, cvdMaxScaled, cvdMinScaled, cvdLastScaled, "CVD", 
+           color=cvdCol, bordercolor=cvdBorderCol, wickcolor=cvdWickCol)
+
+// CVD Zero Line (professional offset)  
+plot(cvdZeroOffset, title="CVD Zero Line", color=color.new(color.gray, 70), linewidth=1, style=plot.style_line)
+// Baseline for signal placement (scaled CVD)
+cvdBase = scaleCVD(cvdLastVolume)
+cvdScaledRange = anchorCvdRange * anchorScaleFactor
+spacingBaseRaw = (na(cvdScaledRange) or cvdScaledRange == 0) ? (anchorVolMax > 0 ? anchorVolMax : volumeMA) : cvdScaledRange
+spacingBase = spacingBaseRaw == 0 ? nz(volumeMA, 1) : spacingBaseRaw
+layerCount = math.max(maxTopStack + 2, 4)
+rawSpacing = spacingBase / layerCount
+stackSpacing = math.max(math.min(rawSpacing * signalSpacing, spacingBase * 0.5), spacingBase * 0.05)
+textOffset = stackSpacing * 0.25
+
+// Bull Volume Patterns - triangles + black text
+float baY = na
+if showAbsorption and buyAbsorption
+    volumeBullStack := volumeBullStack + 1
+    baY := cvdBase - volumeBullStack * stackSpacing
+plotshape(baY, title="BA", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small)
+plotchar(not na(baY) ? baY - textOffset : na, title="BA txt", char="BA", location=location.absolute, color=color.black, size=size.small)
+
+float bbY = na
+if showBreakouts and volumeBreakoutBull
+    volumeBullStack := volumeBullStack + 1
+    bbY := cvdBase - volumeBullStack * stackSpacing
+plotshape(bbY, title="BB", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small)
+plotchar(not na(bbY) ? bbY - textOffset : na, title="BB txt", char="BB", location=location.absolute, color=color.black, size=size.small)
+
+// Bear Volume Patterns - triangles + black text
+float saY = na
+if showAbsorption and sellAbsorption
+    bool placeAbove = not (allowVerticalSplit and volumeBearStack >= maxTopStack)
+    if placeAbove
+        volumeBearStack := volumeBearStack + 1
+        saY := cvdBase + volumeBearStack * stackSpacing
+    else
+        volumeBullStack := volumeBullStack + 1
+        saY := cvdBase - volumeBullStack * stackSpacing
+plotshape(saY, title="SA", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small)
+plotchar(not na(saY) ? saY + textOffset : na, title="SA txt", char="SA", location=location.absolute, color=color.black, size=size.small)
+
+float brY = na
+if showBreakouts and volumeBreakoutBear
+    bool placeAboveBear = not (allowVerticalSplit and volumeBearStack >= maxTopStack)
+    if placeAboveBear
+        volumeBearStack := volumeBearStack + 1
+        brY := cvdBase + volumeBearStack * stackSpacing
+    else
+        volumeBullStack := volumeBullStack + 1
+        brY := cvdBase - volumeBullStack * stackSpacing
+plotshape(brY, title="BR", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small)
+plotchar(not na(brY) ? brY + textOffset : na, title="BR txt", char="BR", location=location.absolute, color=color.black, size=size.small)
+
+// Institutional flow - treated as bullish triangle below baseline
+float ifY = na
+if showInstitutionalFlow and institutionalFlow
+    volumeBullStack := volumeBullStack + 1
+    ifY := cvdBase - volumeBullStack * stackSpacing
+plotshape(ifY, title="IF", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small)
+plotchar(not na(ifY) ? ifY - textOffset : na, title="IF txt", char="IF", location=location.absolute, color=color.black, size=size.small)
+
+// ==============================================================================================
+// ENHANCED VSA SIGNALS WITH PRIORITY SYSTEM & SPACING
+// ==============================================================================================
+
+// Simple signal system - no complex layering needed
+
+// (stacked VSA plotting appears further down to avoid duplicates)
+// ENHANCED VSA SIGNALS WITH PRIORITY SYSTEM & SPACING
+
+// We'll continue using the per-bar signalStack defined earlier and stagger signals
+// by incrementing the counter each time a symbol is plotted. Offsets move horizontally.
+// Note: reset occurs where signalStack is defined before the first group.
+// VSA SIGNALS - dynamic stacked triangles with black abbreviations
+vsaSpacing = stackSpacing * 0.8
+
+float scY = na
+if showVSASignals and sellingClimax
+    bool placeAboveSC = not (allowVerticalSplit and vsaBearStack >= maxTopStack)
+    if placeAboveSC
+        vsaBearStack := vsaBearStack + 1
+        scY := cvdBase + vsaBearStack * vsaSpacing
+    else
+        vsaBullStack := vsaBullStack + 1
+        scY := cvdBase - vsaBullStack * vsaSpacing
+plotshape(scY, title="SC", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small)
+plotchar(not na(scY) ? scY + textOffset : na, title="SC txt", char="SC", location=location.absolute, color=color.black, size=size.small)
+
+float bhY = na
+if showVSASignals and bagHolding
+    bool placeAboveBH = not (allowVerticalSplit and vsaBearStack >= maxTopStack)
+    if placeAboveBH
+        vsaBearStack := vsaBearStack + 1
+        bhY := cvdBase + vsaBearStack * vsaSpacing
+    else
+        vsaBullStack := vsaBullStack + 1
+        bhY := cvdBase - vsaBullStack * vsaSpacing
+plotshape(bhY, title="BH", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small)
+plotchar(not na(bhY) ? bhY + textOffset : na, title="BH txt", char="BH", location=location.absolute, color=color.black, size=size.small)
+
+float wkY = na
+if showVSASignals and weakness and not showCriticalOnly
+    bool placeAboveWK = not (allowVerticalSplit and vsaBearStack >= maxTopStack)
+    if placeAboveWK
+        vsaBearStack := vsaBearStack + 1
+        wkY := cvdBase + vsaBearStack * vsaSpacing
+    else
+        vsaBullStack := vsaBullStack + 1
+        wkY := cvdBase - vsaBullStack * vsaSpacing
+plotshape(wkY, title="WK", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small)
+plotchar(not na(wkY) ? wkY + textOffset : na, title="WK txt", char="WK", location=location.absolute, color=color.black, size=size.small)
+
+float erY = na
+if showVSASignals and effortToRise and not showCriticalOnly
+    bool placeAboveER = not (allowVerticalSplit and vsaBearStack >= maxTopStack)
+    if placeAboveER
+        vsaBearStack := vsaBearStack + 1
+        erY := cvdBase + vsaBearStack * vsaSpacing
+    else
+        vsaBullStack := vsaBullStack + 1
+        erY := cvdBase - vsaBullStack * vsaSpacing
+plotshape(erY, title="ER", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small)
+plotchar(not na(erY) ? erY + textOffset : na, title="ER txt", char="ER", location=location.absolute, color=color.black, size=size.small)
+
+float ndY = na
+if showVSASignals and noDemand and not showCriticalOnly
+    bool placeAboveND = not (allowVerticalSplit and vsaBearStack >= maxTopStack)
+    if placeAboveND
+        vsaBearStack := vsaBearStack + 1
+        ndY := cvdBase + vsaBearStack * vsaSpacing
+    else
+        vsaBullStack := vsaBullStack + 1
+        ndY := cvdBase - vsaBullStack * vsaSpacing
+plotshape(ndY, title="ND", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small)
+plotchar(not na(ndY) ? ndY + textOffset : na, title="ND txt", char="ND", location=location.absolute, color=color.black, size=size.small)
+
+float utY = na
+if showVSASignals and upthrust and not showCriticalOnly
+    bool placeAboveUT = not (allowVerticalSplit and vsaBearStack >= maxTopStack)
+    if placeAboveUT
+        vsaBearStack := vsaBearStack + 1
+        utY := cvdBase + vsaBearStack * vsaSpacing
+    else
+        vsaBullStack := vsaBullStack + 1
+        utY := cvdBase - vsaBullStack * vsaSpacing
+plotshape(utY, title="UT", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small)
+plotchar(not na(utY) ? utY + textOffset : na, title="UT txt", char="UT", location=location.absolute, color=color.black, size=size.small)
+
+float bcY = na
+if showVSASignals and buyingClimax
+    vsaBullStack := vsaBullStack + 1
+    bcY := cvdBase - vsaBullStack * vsaSpacing
+plotshape(bcY, title="BC", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small)
+plotchar(not na(bcY) ? bcY - textOffset : na, title="BC txt", char="BC", location=location.absolute, color=color.black, size=size.small)
+
+float spY = na
+if showVSASignals and spring and not showCriticalOnly
+    vsaBullStack := vsaBullStack + 1
+    spY := cvdBase - vsaBullStack * vsaSpacing
+plotshape(spY, title="SP", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small)
+plotchar(not na(spY) ? spY - textOffset : na, title="SP txt", char="SP", location=location.absolute, color=color.black, size=size.small)
+
+float soY = na
+if showVSASignals and shakeout and not showCriticalOnly
+    vsaBullStack := vsaBullStack + 1
+    soY := cvdBase - vsaBullStack * vsaSpacing
+plotshape(soY, title="SO", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small)
+plotchar(not na(soY) ? soY - textOffset : na, title="SO txt", char="SO", location=location.absolute, color=color.black, size=size.small)
+
+float efY = na
+if showVSASignals and effortToFall and not showCriticalOnly
+    vsaBullStack := vsaBullStack + 1
+    efY := cvdBase - vsaBullStack * vsaSpacing
+plotshape(efY, title="EF", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small)
+plotchar(not na(efY) ? efY - textOffset : na, title="EF txt", char="EF", location=location.absolute, color=color.black, size=size.small)
+
+float nsY = na
+if showVSASignals and noSupply and not showCriticalOnly
+    vsaBullStack := vsaBullStack + 1
+    nsY := cvdBase - vsaBullStack * vsaSpacing
+plotshape(nsY, title="NS", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small)
+plotchar(not na(nsY) ? nsY - textOffset : na, title="NS txt", char="NS", location=location.absolute, color=color.black, size=size.small)
+
+float stY = na
+if showVSASignals and strength and not showCriticalOnly
+    vsaBullStack := vsaBullStack + 1
+    stY := cvdBase - vsaBullStack * vsaSpacing
+plotshape(stY, title="ST", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small)
+plotchar(not na(stY) ? stY - textOffset : na, title="ST txt", char="ST", location=location.absolute, color=color.black, size=size.small)
+
+float svY = na
+if showVSASignals and stoppingVolume
+    vsaBullStack := vsaBullStack + 1
+    svY := cvdBase - vsaBullStack * vsaSpacing
+plotshape(svY, title="SV", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small)
+plotchar(not na(svY) ? svY - textOffset : na, title="SV txt", char="SV", location=location.absolute, color=color.black, size=size.small)
+
+float teY = na
+if showVSASignals and test and not showCriticalOnly
+    vsaBullStack := vsaBullStack + 1
+    teY := cvdBase - vsaBullStack * vsaSpacing
+plotshape(teY, title="TE", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small)
+plotchar(not na(teY) ? teY - textOffset : na, title="TE txt", char="TE", location=location.absolute, color=color.black, size=size.small)
+
+// ==============================================================================================
+// CVD DIVERGENCE SIGNALS - STANDARDIZED TRIANGLES (implemented as text abbreviations)
+// ==============================================================================================
+
+// Divergence signal placement spacing (slightly larger for prominence)
+divSpacing = stackSpacing * 1.1
+
+// Bull divergence signals (triangles below baseline)
+float cvBullY = na
+if showDualDivergence and cvdVolumeBullDivergence and not strongBullDivergence
+    divBullStack := divBullStack + 1
+    cvBullY := cvdBase - divBullStack * divSpacing
+plotshape(cvBullY, title="CV bull", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small)
+plotchar(not na(cvBullY) ? cvBullY - textOffset : na, title="CV bull txt", char="CV", location=location.absolute, color=color.black, size=size.small)
+
+float cpBullY = na
+if showDualDivergence and cvdPriceBullDivergence and not strongBullDivergence
+    divBullStack := divBullStack + 1
+    cpBullY := cvdBase - divBullStack * divSpacing
+plotshape(cpBullY, title="CP bull", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small)
+plotchar(not na(cpBullY) ? cpBullY - textOffset : na, title="CP bull txt", char="CP", location=location.absolute, color=color.black, size=size.small)
+
+float sbY = na
+if showDualDivergence and strongBullDivergence
+    divBullStack := divBullStack + 1
+    sbY := cvdBase - divBullStack * divSpacing
+plotshape(sbY, title="SB", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small)
+plotchar(not na(sbY) ? sbY - textOffset : na, title="SB txt", char="SB", location=location.absolute, color=color.black, size=size.small)
+
+// Bear divergence signals (triangles above baseline, with optional split)
+float cvBearY = na
+if showDualDivergence and cvdVolumeBearDivergence and not strongBearDivergence
+    bool placeAboveCVBear = not (allowVerticalSplit and divBearStack >= maxTopStack)
+    if placeAboveCVBear
+        divBearStack := divBearStack + 1
+        cvBearY := cvdBase + divBearStack * divSpacing
+    else
+        divBullStack := divBullStack + 1
+        cvBearY := cvdBase - divBullStack * divSpacing
+plotshape(cvBearY, title="CV bear", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small)
+plotchar(not na(cvBearY) ? cvBearY + textOffset : na, title="CV bear txt", char="CV", location=location.absolute, color=color.black, size=size.small)
+
+float cpBearY = na
+if showDualDivergence and cvdPriceBearDivergence and not strongBearDivergence
+    bool placeAboveCPBear = not (allowVerticalSplit and divBearStack >= maxTopStack)
+    if placeAboveCPBear
+        divBearStack := divBearStack + 1
+        cpBearY := cvdBase + divBearStack * divSpacing
+    else
+        divBullStack := divBullStack + 1
+        cpBearY := cvdBase - divBullStack * divSpacing
+plotshape(cpBearY, title="CP bear", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small)
+plotchar(not na(cpBearY) ? cpBearY + textOffset : na, title="CP bear txt", char="CP", location=location.absolute, color=color.black, size=size.small)
+
+float srY = na
+if showDualDivergence and strongBearDivergence
+    bool placeAboveSR = not (allowVerticalSplit and divBearStack >= maxTopStack)
+    if placeAboveSR
+        divBearStack := divBearStack + 1
+        srY := cvdBase + divBearStack * divSpacing
+    else
+        divBullStack := divBullStack + 1
+        srY := cvdBase - divBullStack * divSpacing
+plotshape(srY, title="SR", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small)
+plotchar(not na(srY) ? srY + textOffset : na, title="SR txt", char="SR", location=location.absolute, color=color.black, size=size.small)
+
+// ==============================================================================================
+// DUAL DIVERGENCE PLOTTING (Based on Better RSI pattern)
+// ==============================================================================================
+
+// ==============================================================================================
+// ENHANCED DIVERGENCE PLOTTING WITH PROFESSIONAL LINES & POSITIONING
+// ==============================================================================================
+
+// Define professional colors and transparency
+noneColor = color.new(color.white, 100)
+bullColorTransparent = color.new(divBullColor, divLineTransparency)
+bearColorTransparent = color.new(divBearColor, divLineTransparency)
+
+// Optional: Simple divergence lines (if user wants)
+plot(showDualDivergence and showDivergenceLines and cvdPLFound ? scaleCVD(cvdLastVolume[divLookbackRight]) : na, 
+     offset=-divLookbackRight, title="CVD Bull Pivot", linewidth=1, 
+     color=(cvdVolumeBullDivergence or cvdPriceBullDivergence) ? color.new(color.lime, 70) : na)
+
+plot(showDualDivergence and showDivergenceLines and cvdPHFound ? scaleCVD(cvdLastVolume[divLookbackRight]) : na, 
+     offset=-divLookbackRight, title="CVD Bear Pivot", linewidth=1, 
+     color=(cvdVolumeBearDivergence or cvdPriceBearDivergence) ? color.new(color.red, 70) : na)
+
+// ==============================================================================================
+// CVD DIVERGENCE SIGNALS - STANDARDIZED TRIANGLES
+// ==============================================================================================
+
+// Divergence signals are plotted above/below using inline label placements earlier
+
+// Background highlighting for strong divergence areas
+bgcolor(showDualDivergence and strongBullDivergence ? color.new(color.lime, 95) : na, title="Strong Bull Divergence BG")
+bgcolor(showDualDivergence and strongBearDivergence ? color.new(color.red, 95) : na, title="Strong Bear Divergence BG")
+
+// ==============================================================================================
+// PROFESSIONAL INFO DASHBOARD (Better RSI Style)
+// ==============================================================================================
+var string GRP_TABLE = "Information Dashboard"
+showInfoTable = input.bool(true, title='Show Info Table', group=GRP_TABLE)
+tablePosition = input.string(title='Position', defval='top_right', options=['top_left','top_right','bottom_left','bottom_right'], group=GRP_TABLE, inline='1')
+tableTextSize = input.string(title=' Size', defval='small', options=['tiny','small','normal','large'], group=GRP_TABLE, inline='1')
+tableTextColor = input.color(color.white, title="Text Color", group=GRP_TABLE)
+
+if barstate.islast and showInfoTable
+    var infoTable = table.new(
+         position = tablePosition == "top_left" ? position.top_left : 
+                   tablePosition == "bottom_left" ? position.bottom_left :
+                   tablePosition == "bottom_right" ? position.bottom_right : position.top_right, 
+         columns=2, rows=8, 
+         bgcolor=color.new(color.black, 20), 
+         border_width=1, 
+         frame_color=color.new(color.white, 30), 
+         border_color=color.new(color.white, 50))
+    
+    // Header with clean styling
+    table.cell(infoTable, 0, 0, "CVD+Volume", bgcolor=color.new(color.black, 0), text_color=color.white, text_size=tableTextSize)
+    table.cell(infoTable, 1, 0, "BTC Analysis", bgcolor=color.new(color.black, 0), text_color=color.white, text_size=tableTextSize)
+    
+    // Clean Dashboard - Readable Text Colors
+    table.cell(infoTable, 0, 1, "Volume:", text_color=color.white, text_size=tableTextSize)
+    volDisplay = str.format("{0,number,#.#}K", volume / 1000)
+    table.cell(infoTable, 1, 1, volDisplay, text_color=highVolumeBasic ? color.yellow : color.white, text_size=tableTextSize)
+    
+    table.cell(infoTable, 0, 2, "Vol Ratio:", text_color=color.white, text_size=tableTextSize)
+    ratioDisplay = str.format("{0,number,#.##}x", volumeRatio)
+    ratioColor = volumeRatio > 2.0 ? color.orange : volumeRatio > 1.5 ? color.yellow : color.white
+    table.cell(infoTable, 1, 2, ratioDisplay, text_color=ratioColor, text_size=tableTextSize)
+    
+    table.cell(infoTable, 0, 3, "Vol Delta:", text_color=color.white, text_size=tableTextSize)
+    deltaDisplay = str.format("{0,number,#.#}K", lastVolume / 1000)
+    table.cell(infoTable, 1, 3, deltaDisplay, text_color=lastVolume > 0 ? color.lime : color.red, text_size=tableTextSize)
+    
+    table.cell(infoTable, 0, 4, "CVD:", text_color=color.white, text_size=tableTextSize)
+    cvdDisplay = str.format("{0,number,#.#}K", cvdDelta / 1000)
+    table.cell(infoTable, 1, 4, cvdDisplay, text_color=cvdDelta > 0 ? color.lime : color.red, text_size=tableTextSize)
+    
+    table.cell(infoTable, 0, 5, "Flow:", text_color=color.white, text_size=tableTextSize)
+    flowStatus = volumeAccumulation > accumulationMA ? "BULL" : "BEAR"
+    flowColor = volumeAccumulation > accumulationMA ? color.lime : color.red
+    table.cell(infoTable, 1, 5, flowStatus, text_color=flowColor, text_size=tableTextSize)
+    
+    table.cell(infoTable, 0, 6, "Status:", text_color=color.white, text_size=tableTextSize)
+    statusText = strongBullDivergence ? "BULL★" : strongBearDivergence ? "BEAR★" :
+      sellingClimax ? "SC" : buyingClimax ? "BC" : bagHolding ? "BH" : 
+      spring ? "SP" : shakeout ? "SO" : stoppingVolume ? "SV" :
+      buyAbsorption ? "BA" : sellAbsorption ? "SA" : "NORMAL"
+    
+    statusColor = (strongBearDivergence or sellingClimax or bagHolding or sellAbsorption) ? color.red : 
+      (strongBullDivergence or buyingClimax or spring or shakeout or buyAbsorption) ? color.lime : 
+      stoppingVolume ? color.orange : color.white
+    table.cell(infoTable, 1, 6, statusText, text_color=statusColor, text_size=tableTextSize)
+    
+    table.cell(infoTable, 0, 7, "Divergence:", text_color=color.white, text_size=tableTextSize)
+    divText = strongBullDivergence ? "STRONG+" : strongBearDivergence ? "STRONG-" :
+      cvdVolumeBullDivergence or cvdPriceBullDivergence ? "BULL" :
+      cvdVolumeBearDivergence or cvdPriceBearDivergence ? "BEAR" : "NONE"
+    divColor = (strongBullDivergence or cvdVolumeBullDivergence or cvdPriceBullDivergence) ? color.lime :
+      (strongBearDivergence or cvdVolumeBearDivergence or cvdPriceBearDivergence) ? color.red : color.white
+    table.cell(infoTable, 1, 7, divText, text_color=divColor, text_size=tableTextSize)
+
+// Volume data validation
+var cumVol = 0.
+cumVol += nz(volume)
+if barstate.islast and cumVol == 0
+    runtime.error("The data vendor doesn't provide volume data for this symbol.")

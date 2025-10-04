@@ -1,0 +1,179 @@
+// This Pine Script code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// lenguyenphi - EZ Improved
+//@version=5
+indicator("EZ Improved - VSA Trap Zones & RSI Divergence", shorttitle="EZ+", overlay=true, max_boxes_count=10, max_lines_count=20)
+
+// === INPUT GROUPS ===
+var string GRP_VSA = "VSA Trap Zones"
+vol_multiplier = input.float(2.5, title="Volume Spike Multiplier", minval=1.0, step=0.1, group=GRP_VSA)
+trap_zone_length = input.int(8, title="Trap Zone Length (bars)", minval=3, maxval=20, group=GRP_VSA)
+lookback = input.int(20, title="Volume Lookback Period", minval=5, maxval=50, group=GRP_VSA)
+max_trap_boxes = input.int(5, title="Max Trap Boxes", minval=1, maxval=10, group=GRP_VSA)
+pin_wick_ratio = input.float(2.0, title="Pin Bar Wick/Body Ratio", minval=1.5, step=0.1, group=GRP_VSA)
+
+var string GRP_SR = "Support & Resistance"
+show_sr = input.bool(true, title="Show Auto S/R", group=GRP_SR)
+sr_len = input.int(50, title="S/R Lookback Period", minval=20, maxval=100, group=GRP_SR)
+sr_proximity = input.float(0.15, title="S/R Proximity (% ATR)", minval=0.05, maxval=0.5, step=0.01, group=GRP_SR)
+
+var string GRP_RSI = "RSI Divergence"
+show_rsi_div = input.bool(true, title="Show RSI Divergence", group=GRP_RSI)
+rsi_len = input.int(14, title="RSI Length", minval=5, maxval=50, group=GRP_RSI)
+div_lookback = input.int(15, title="Divergence Lookback", minval=5, maxval=30, group=GRP_RSI)
+pivot_len = input.int(3, title="Pivot Length", minval=2, maxval=10, group=GRP_RSI)
+
+var string GRP_SIGNALS = "Entry Signals"
+show_signals = input.bool(true, title="Show Entry Signals", group=GRP_SIGNALS)
+signal_confluence = input.bool(true, title="Require S/R Confluence", group=GRP_SIGNALS)
+volume_confirmation = input.bool(true, title="Volume Confirmation", group=GRP_SIGNALS)
+signal_throttle = input.int(3, title="Signal Throttle (bars)", minval=1, maxval=10, group=GRP_SIGNALS)
+
+// === ENHANCED VOLUME ANALYSIS ===
+avg_vol = ta.sma(volume, lookback)
+vol_spike = volume > avg_vol * vol_multiplier
+vol_strength = volume / avg_vol
+atr = ta.atr(14)
+
+// === IMPROVED PIN BAR DETECTION ===
+f_is_pin_bar(bull_pin) =>
+    body = math.abs(close - open)
+    total_range = high - low
+    upper_wick = high - math.max(open, close)
+    lower_wick = math.min(open, close) - low
+    
+    if bull_pin
+        lower_wick > body * pin_wick_ratio and upper_wick < body * 0.5 and body < total_range * 0.3
+    else
+        upper_wick > body * pin_wick_ratio and lower_wick < body * 0.5 and body < total_range * 0.3
+
+bull_pin = vol_spike and f_is_pin_bar(true) and close > open
+bear_pin = vol_spike and f_is_pin_bar(false) and close < open
+
+// === ENHANCED ENGULFING PATTERNS ===
+f_is_engulfing(bull_engulf) =>
+    prev_body = math.abs(close[1] - open[1])
+    curr_body = math.abs(close - open)
+    
+    if bull_engulf
+        close[1] < open[1] and close > open and close > open[1] and open < close[1] and curr_body > prev_body * 1.2
+    else
+        close[1] > open[1] and close < open and close < open[1] and open > close[1] and curr_body > prev_body * 1.2
+
+bull_engulf = vol_spike and f_is_engulfing(true)
+bear_engulf = vol_spike and f_is_engulfing(false)
+
+// === S/R CALCULATION ===
+current_support = ta.lowest(low, sr_len)
+current_resist = ta.highest(high, sr_len)
+
+// === S/R PROXIMITY FILTER ===
+f_is_near_sr() =>
+    atr_buffer = atr * sr_proximity
+    near_support = math.abs(low - current_support) <= atr_buffer
+    near_resist = math.abs(high - current_resist) <= atr_buffer
+    [near_support, near_resist]
+
+[near_support, near_resist] = f_is_near_sr()
+
+// === TRAP ZONE LOGIC ===
+trap_bull = (bull_pin or bull_engulf) and (signal_confluence ? near_support : true)
+trap_bear = (bear_pin or bear_engulf) and (signal_confluence ? near_resist : true)
+
+// === BOX MANAGEMENT ===
+var box[] trap_boxes = array.new<box>()
+
+f_create_trap_box(is_bull) =>
+    box_color = is_bull ? color.green : color.red
+    new_box = box.new(left=bar_index,top=high + atr * 0.1,right=bar_index + trap_zone_length,bottom=low - atr * 0.1)
+    box.set_bgcolor(new_box, color.new(box_color, 85))
+    box.set_border_color(new_box, box_color)
+    box.set_border_width(new_box, 1)
+    
+    label_text = is_bull ? "TRAP BULL" : "TRAP BEAR"
+    label_y = is_bull ? low - atr * 0.3 : high + atr * 0.3
+    label_style = is_bull ? label.style_label_up : label.style_label_down
+    
+    trap_label = label.new(bar_index, label_y, label_text,color=color.new(box_color, 20), textcolor=color.white,style=label_style, size=size.tiny)
+    
+    new_box
+
+// Create trap boxes
+if trap_bull
+    new_box = f_create_trap_box(true)
+    array.unshift(trap_boxes, new_box)
+if trap_bear
+    new_box = f_create_trap_box(false)  
+    array.unshift(trap_boxes, new_box)
+
+// Cleanup old boxes
+while array.size(trap_boxes) > max_trap_boxes
+    old_box = array.pop(trap_boxes)
+    if not na(old_box)
+        box.delete(old_box)
+
+// === RSI DIVERGENCE DETECTION ===
+rsi = ta.rsi(close, rsi_len)
+
+pivot_high = ta.pivothigh(high, pivot_len, pivot_len)
+pivot_low = ta.pivotlow(low, pivot_len, pivot_len)
+rsi_pivot_high = ta.pivothigh(rsi, pivot_len, pivot_len)
+rsi_pivot_low = ta.pivotlow(rsi, pivot_len, pivot_len)
+
+var float last_pivot_high = na
+var float last_pivot_low = na
+var float last_rsi_high = na
+var float last_rsi_low = na
+var int last_high_bar = na
+var int last_low_bar = na
+
+if not na(pivot_high)
+    last_pivot_high := pivot_high
+    last_high_bar := bar_index[pivot_len]
+if not na(pivot_low)
+    last_pivot_low := pivot_low
+    last_low_bar := bar_index[pivot_len]
+if not na(rsi_pivot_high)
+    last_rsi_high := rsi_pivot_high
+if not na(rsi_pivot_low)
+    last_rsi_low := rsi_pivot_low
+
+bull_divergence = not na(last_pivot_low) and not na(pivot_low) and not na(last_rsi_low) and not na(rsi_pivot_low) and bar_index - last_low_bar <= div_lookback and    pivot_low < last_pivot_low and rsi_pivot_low > last_rsi_low
+
+bear_divergence = not na(last_pivot_high) and not na(pivot_high) and not na(last_rsi_high) and not na(rsi_pivot_high) and bar_index - last_high_bar <= div_lookback and pivot_high > last_pivot_high and rsi_pivot_high < last_rsi_high
+
+// === ENTRY SIGNALS ===
+var int last_buy_bar = na
+var int last_sell_bar = na
+
+vol_confirm = not volume_confirmation or vol_strength >= vol_multiplier
+
+can_buy = na(last_buy_bar) or (bar_index - last_buy_bar >= signal_throttle)
+can_sell = na(last_sell_bar) or (bar_index - last_sell_bar >= signal_throttle)
+
+entry_buy = show_signals and trap_bull and vol_confirm and can_buy and close > open
+entry_sell = show_signals and trap_bear and vol_confirm and can_sell and close < open
+
+if entry_buy
+    last_buy_bar := bar_index
+if entry_sell
+    last_sell_bar := bar_index
+
+// === PLOTTING ===
+plot(show_sr ? current_support : na, color=color.new(color.lime, 50), linewidth=2, style=plot.style_stepline, title="Support")
+plot(show_sr ? current_resist : na, color=color.new(color.red, 50), linewidth=2, style=plot.style_stepline, title="Resistance")
+
+plotshape(entry_buy, title="BUY", style=shape.triangleup, location=location.belowbar, color=color.new(color.lime, 0), size=size.small, text="B")
+plotshape(entry_sell, title="SELL", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.small, text="S")
+
+plotshape(show_rsi_div and bull_divergence[pivot_len], style=shape.circle, location=location.belowbar, color=color.new(color.aqua, 0), size=size.tiny, text="BD", title="Bull Div")
+plotshape(show_rsi_div and bear_divergence[pivot_len], style=shape.circle, location=location.abovebar, color=color.new(color.orange, 0), size=size.tiny, text="SD", title="Bear Div")
+
+bgcolor(vol_spike ? color.new(vol_strength >= 3 ? color.yellow : color.gray, 95) : na, title="Volume")
+
+// === ALERTS ===
+alertcondition(entry_buy, title="EZ+ Buy Entry", message="EZ+ BUY Signal - Trap Zone + Volume Confirmation")
+alertcondition(entry_sell, title="EZ+ Sell Entry", message="EZ+ SELL Signal - Trap Zone + Volume Confirmation")
+alertcondition(show_rsi_div and bull_divergence[pivot_len], title="RSI Bull Divergence", message="RSI Bullish Divergence Detected")
+alertcondition(show_rsi_div and bear_divergence[pivot_len], title="RSI Bear Divergence", message="RSI Bearish Divergence Detected")
+alertcondition(trap_bull, title="Bullish Trap Zone", message="Bullish Trap Zone Formed")
+alertcondition(trap_bear, title="Bearish Trap Zone", message="Bearish Trap Zone Formed")

@@ -1,0 +1,481 @@
+// © Gemini 2025 - Phân tích và trình bày cho người dùng Phi
+// Chú thích: Mã nguồn này được giữ ở @version=6 theo script gốc anh cung cấp.
+// Mặc dù quy tắc chung của chúng ta là v5, việc thay đổi phiên bản có thể gây ra lỗi không tương thích
+// với các hàm mới như `ta.requestVolumeDelta`. Vì vậy, giữ nguyên v6 là lựa chọn an toàn và chính xác nhất.
+
+//@version=6
+indicator("CVD+Volume", shorttitle="CVD+Vol ++", format=format.volume, precision=0, overlay=false, scale=scale.left, max_lines_count=500, max_labels_count=500)
+
+import TradingView/ta/8
+
+// ==============================================================================================
+// PHẦN NHẬP LIỆU (INPUTS)
+// ==============================================================================================
+
+// --- Cài đặt Volume Delta & CVD ---
+lowerTimeframeTooltip = "Chỉ báo quét dữ liệu ở khung thời gian thấp hơn để tính toán khối lượng mua/bán. Mặc định, khung thời gian được chọn tự động. Tùy chọn này cho phép bạn đặt một khung thời gian tùy chỉnh.\n\nKhung thời gian cao hơn cung cấp nhiều dữ liệu lịch sử hơn, nhưng độ chính xác sẽ giảm."
+useCustomTimeframeInput = input.bool(false, "Sử dụng khung thời gian tùy chỉnh", tooltip = lowerTimeframeTooltip)
+lowerTimeframeInput = input.timeframe("1", "Khung thời gian", tooltip = "Chọn khung thời gian thấp hơn (tùy chọn)")
+anchorInput = input.timeframe("1D", "Khung thời gian neo CVD")
+
+// --- Các Mẫu Hình Volume ---
+showAbsorption = input.bool(true, "Hiển thị Hấp thụ Mua/Bán (BA/SA)")
+showBreakouts = input.bool(true, "Hiển thị Đột phá Volume (BB/BR)") 
+showInstitutionalFlow = input.bool(true, "Hiển thị Dòng tiền lớn (IF)")
+volumeThreshold = input.float(1.5, "Ngưỡng Volume (x lần so với Trung bình)", minval=1.0, maxval=5.0, step=0.1)
+priceMovementThreshold = input.float(0.5, "Ngưỡng Biến động Giá (%)", minval=0.1, maxval=2.0, step=0.1)
+
+// --- Tín hiệu VSA ---
+var string GRP_VSA = "Cài đặt Hiển thị Tín hiệu VSA"
+showVSASignals = input.bool(true, "Hiển thị Tín hiệu VSA", group=GRP_VSA)
+vsaVolumeLength = input.int(20, "Độ dài MA Volume cho VSA", minval=5, maxval=100, group=GRP_VSA)
+vsaSensitivity = input.float(1.5, "Độ nhạy VSA", minval=1.0, maxval=3.0, step=0.1, group=GRP_VSA)
+showCriticalOnly = input.bool(false, "Chỉ hiển thị Tín hiệu Quan trọng", group=GRP_VSA, tooltip="Chỉ hiển thị các mẫu hình VSA quan trọng nhất (SC, BC, BH, SV)")
+signalSpacing = input.float(1.2, "Khoảng cách dọc giữa các Tín hiệu", minval=1.0, maxval=3.0, step=0.1, group=GRP_VSA, tooltip="Điều chỉnh khoảng cách theo chiều dọc giữa các lớp tín hiệu")
+
+// --- Cài đặt hiển thị CVD ---
+var string GRP_CVD_DISPLAY = "Hiển thị & Tỷ lệ CVD"
+cvdBaselineOffsetPct = input.float(0.06, "Độ dời Đường Zero-line của CVD (% so với vol tối đa)", minval=0.0, maxval=0.5, step=0.01, group=GRP_CVD_DISPLAY, tooltip="Nâng đường CVD lên trên đường cơ sở của volume để dễ nhìn hơn")
+cvdTransparency = input.int(30, "Độ trong suốt của CVD", minval=0, maxval=100, group=GRP_CVD_DISPLAY)
+showCVDBorders = input.bool(true, "Hiển thị Viền Nến CVD", group=GRP_CVD_DISPLAY)
+showCVDWicks = input.bool(true, "Hiển thị Râu Nến CVD", group=GRP_CVD_DISPLAY)
+cvdBullColor = input.color(color.blue, "Màu Tăng của CVD", group=GRP_CVD_DISPLAY)
+cvdBearColor = input.color(color.orange, "Màu Giảm của CVD", group=GRP_CVD_DISPLAY)
+
+// --- Hệ thống Phân kỳ Kép ---
+var string GRP_DIVERGENCE = "Cài đặt Hiển thị Phân kỳ"
+showDualDivergence = input.bool(true, "Hiển thị Hệ thống Phân kỳ Kép", group=GRP_DIVERGENCE)
+showCVDVolumeDivergence = input.bool(true, "Hiển thị Phân kỳ CVD-Volume (Tín hiệu sớm)", group=GRP_DIVERGENCE)
+showCVDPriceDivergence = input.bool(true, "Hiển thị Phân kỳ CVD-Giá (Tín hiệu xác nhận)", group=GRP_DIVERGENCE)
+divLookbackLeft = input.int(5, "Độ dài Phân kỳ (Bên trái)", minval=2, maxval=20, group=GRP_DIVERGENCE)
+divLookbackRight = input.int(5, "Độ dài Phân kỳ (Bên phải)", minval=2, maxval=20, group=GRP_DIVERGENCE) 
+divRangeLower = input.int(5, "Phạm vi Phân kỳ Tối thiểu", minval=1, maxval=100, group=GRP_DIVERGENCE)
+divRangeUpper = input.int(60, "Phạm vi Phân kỳ Tối đa", minval=10, maxval=200, group=GRP_DIVERGENCE)
+
+// --- Bảng thông tin ---
+var string GRP_TABLE = "Bảng Thông tin"
+showInfoTable = input.bool(true, title='Hiển thị Bảng Thông tin', group=GRP_TABLE)
+tablePosition = input.string(title='Vị trí', defval='top_right', options=['top_left','top_right','bottom_left','bottom_right'], group=GRP_TABLE)
+var table infoTable = na
+
+// ==============================================================================================
+// TÍNH TOÁN CỐT LÕI
+// ==============================================================================================
+
+var lowerTimeframe = switch
+    useCustomTimeframeInput => lowerTimeframeInput
+    timeframe.isseconds     => "1S"
+    timeframe.isintraday    => "1"
+    timeframe.isdaily       => "5"
+    => "60"
+
+// Tính toán Volume Delta & CVD
+[openVolume, maxVolume, minVolume, lastVolume] = ta.requestVolumeDelta(lowerTimeframe)
+[cvdOpenVolume, cvdMaxVolume, cvdMinVolume, cvdLastVolume] = ta.requestVolumeDelta(lowerTimeframe, anchorInput)
+
+// Phân tích Volume
+volumeMA = ta.sma(volume, vsaVolumeLength)
+volumeRatio = volume / volumeMA
+highVolumeBasic = volume > volumeMA * volumeThreshold
+
+// Phân tích Biến động Giá
+priceRange = high - low
+priceChange = math.abs(close - open)
+priceMovementPct = priceRange > 0 ? (priceChange / priceRange) * 100 : 0
+closeLocation = priceRange > 0 ? (close - low) / priceRange : 0.5
+
+// Các Mẫu Hình Volume
+buyAbsorption = highVolumeBasic and priceMovementPct < priceMovementThreshold and closeLocation > 0.6
+sellAbsorption = highVolumeBasic and priceMovementPct < priceMovementThreshold and closeLocation < 0.4
+volumeBreakoutBull = highVolumeBasic and priceMovementPct > priceMovementThreshold * 2 and close > open
+volumeBreakoutBear = highVolumeBasic and priceMovementPct > priceMovementThreshold * 2 and close < open
+cvdDelta = cvdLastVolume - cvdOpenVolume
+
+// ==============================================================================================
+// HỆ THỐNG TỶ LỆ NEO CVD (SCALING)
+// ==============================================================================================
+var float anchorCvdMax = na
+var float anchorCvdMin = na
+var float anchorVolMax = na
+
+isNewAnchor = ta.change(time(anchorInput)) != 0
+if isNewAnchor or na(anchorCvdMax)
+    anchorCvdMax := cvdMaxVolume
+    anchorCvdMin := cvdMinVolume
+    anchorVolMax := volume
+else
+    anchorCvdMax := math.max(anchorCvdMax, cvdMaxVolume)
+    anchorCvdMin := math.min(anchorCvdMin, cvdMinVolume)
+    anchorVolMax := math.max(anchorVolMax, volume)
+
+anchorCvdRange = anchorCvdMax - anchorCvdMin
+scaleFactor = anchorCvdRange > 0 ? (anchorVolMax / anchorCvdRange) * 0.8 : 1
+cvdZeroOffset = anchorVolMax * cvdBaselineOffsetPct
+
+scaleCVD(value) =>
+    (value - anchorCvdMin) * scaleFactor + cvdZeroOffset
+
+// ==============================================================================================
+// LOGIC TÍN HIỆU VSA
+// ==============================================================================================
+atr = ta.atr(14)
+spread = high - low
+wideSpread = spread > atr * 1.2
+narrowSpread = spread < atr * 0.5
+highVolume = volume > volumeMA * vsaSensitivity
+veryHighVolume = volume > volumeMA * vsaSensitivity * 1.5
+lowVolume = volume < volumeMA * 0.7
+ultraHighVolume = volume > volumeMA * vsaSensitivity * 2.0
+
+sellingClimax = veryHighVolume and close < open and closeLocation < 0.3
+buyingClimax = veryHighVolume and close > open and closeLocation > 0.7
+noDemand = lowVolume and close > open and closeLocation < 0.6 and close[1] < close[2]
+noSupply = lowVolume and close < open and closeLocation > 0.4 and close[1] > close[2]
+effortToFall = highVolume and wideSpread and close < open and closeLocation > 0.7
+effortToRise = highVolume and wideSpread and close > open and closeLocation < 0.3
+bagHolding = ultraHighVolume and wideSpread and closeLocation < 0.2
+upthrust = highVolume and high > high[1] and close < close[1] and closeLocation < 0.5
+spring = lowVolume and low < low[1] and close > low and closeLocation > 0.5
+test = lowVolume and narrowSpread and closeLocation > 0.7 and close[1] < close[2]
+stoppingVolume = ultraHighVolume and narrowSpread and ((close > open and close[1] < open[1]) or (close < open and close[1] > open[1]))
+weakness = highVolume and wideSpread and close > open and closeLocation < 0.5
+strength = highVolume and wideSpread and close < open and closeLocation > 0.5
+shakeout = highVolume and low < low[1] and close > close[1] and closeLocation > 0.6
+
+// ==============================================================================================
+// LIVE CVD DELTA TRACKING & VOLUME CLASSIFICATION (UI Enhancements)
+// ==============================================================================================
+
+var float cvdBarOpen = na
+timeChanged = ta.change(time)
+if barstate.isfirst or timeChanged != 0
+    cvdBarOpen := cvdLastVolume
+
+cvdDeltaPerBar = cvdLastVolume - nz(cvdBarOpen, cvdLastVolume)
+cvdDeltaSinceAnchor = cvdLastVolume - cvdOpenVolume
+
+volumeZScore(value, length) =>
+    mean = ta.sma(value, length)
+    stdev = ta.stdev(value, length)
+    stdev > 0 ? (value - mean) / stdev : 0
+
+volZ = volumeZScore(volume, vsaVolumeLength)
+isUltraHigh = volZ >= vsaSensitivity * 1.5
+isVeryHigh = volZ >= vsaSensitivity * 1.2 and volZ < vsaSensitivity * 1.5
+isHighVol = volZ >= vsaSensitivity and volZ < vsaSensitivity * 1.2
+isNormalVol = volZ >= vsaSensitivity * 0.5 and volZ < vsaSensitivity
+isLowVol = volZ >= 0 and volZ < vsaSensitivity * 0.5
+isVeryLowVol = volZ < 0
+
+color volumeTone = color.new(color.gray, 40)
+if isUltraHigh
+    volumeTone := color.new(color.purple, 20)
+else if isVeryHigh
+    volumeTone := color.new(color.red, 25)
+else if isHighVol
+    volumeTone := color.new(color.orange, 25)
+else if isNormalVol
+    volumeTone := color.new(color.green, 30)
+else if isLowVol
+    volumeTone := color.new(color.blue, 35)
+
+string volumePriority = "-"
+string volumeLabel = "VERY LOW"
+if isUltraHigh
+    volumePriority := "★★★"
+    volumeLabel := "ULTRA HIGH"
+else if isVeryHigh
+    volumePriority := "★★"
+    volumeLabel := "VERY HIGH"
+else if isHighVol
+    volumePriority := "★"
+    volumeLabel := "HIGH"
+else if isNormalVol
+    volumeLabel := "NORMAL"
+else if isLowVol
+    volumeLabel := "LOW"
+
+// Status-line metrics for quick glance (hidden from main pane)
+plot(nz(volume), title="Volume Status", color=color.gray, display=display.status_line)
+plot(nz(cvdLastVolume), title="CVD Status", color=color.new(color.orange, 0), display=display.status_line)
+plot(nz(cvdDeltaPerBar), title="CVD Δ Bar", color=color.new(color.green, 0), display=display.status_line)
+plot(nz(cvdDeltaSinceAnchor), title="CVD Δ Anchor", color=color.new(color.blue, 0), display=display.status_line)
+
+// ==============================================================================================
+// HỆ THỐNG PHÂN KỲ KÉP
+// ==============================================================================================
+_inRange(cond) =>
+    bars = ta.barssince(cond)
+    divRangeLower <= bars and bars <= divRangeUpper
+
+cvdMomentum = ta.roc(cvdLastVolume, 3) * 100
+volumeMomentum = ta.roc(volume, 3) * 100
+priceMomentum = ta.roc(close, 3) * 100
+
+cvdPivotLow = ta.pivotlow(cvdMomentum, divLookbackLeft, divLookbackRight)
+cvdPivotHigh = ta.pivothigh(cvdMomentum, divLookbackLeft, divLookbackRight)
+volumePivotLow = ta.pivotlow(volumeMomentum, divLookbackLeft, divLookbackRight)
+volumePivotHigh = ta.pivothigh(volumeMomentum, divLookbackLeft, divLookbackRight)
+pricePivotLow = ta.pivotlow(low, divLookbackLeft, divLookbackRight)
+pricePivotHigh = ta.pivothigh(high, divLookbackLeft, divLookbackRight)
+
+cvdPLFound = not na(cvdPivotLow)
+cvdPHFound = not na(cvdPivotHigh)
+volPLFound = not na(volumePivotLow)
+volPHFound = not na(volumePivotHigh)
+pricePLFound = not na(pricePivotLow)
+pricePHFound = not na(pricePivotHigh)
+
+cvdPrevLow = ta.valuewhen(cvdPLFound, cvdMomentum[divLookbackRight], 1)
+cvdPrevHigh = ta.valuewhen(cvdPHFound, cvdMomentum[divLookbackRight], 1)
+volPrevLow = ta.valuewhen(volPLFound, volumeMomentum[divLookbackRight], 1)
+volPrevHigh = ta.valuewhen(volPHFound, volumeMomentum[divLookbackRight], 1)
+pricePrevLow = ta.valuewhen(pricePLFound, low[divLookbackRight], 1)
+pricePrevHigh = ta.valuewhen(pricePHFound, high[divLookbackRight], 1)
+
+cvdPLInRange = _inRange(cvdPLFound[1])
+cvdPHInRange = _inRange(cvdPHFound[1])
+volPLInRange = _inRange(volPLFound[1])
+volPHInRange = _inRange(volPHFound[1])
+pricePLInRange = _inRange(pricePLFound[1])
+pricePHInRange = _inRange(pricePHFound[1])
+
+cvdVolBullHL = cvdPLFound and cvdMomentum[divLookbackRight] > cvdPrevLow and cvdPLInRange
+volumeLL = volPLFound and volumeMomentum[divLookbackRight] < volPrevLow and volPLInRange
+cvdVolumeBullDivergence = showCVDVolumeDivergence and cvdVolBullHL and volumeLL and cvdPLFound and volPLFound
+
+cvdVolBearLH = cvdPHFound and cvdMomentum[divLookbackRight] < cvdPrevHigh and cvdPHInRange
+volumeHH = volPHFound and volumeMomentum[divLookbackRight] > volPrevHigh and volPHInRange
+cvdVolumeBearDivergence = showCVDVolumeDivergence and cvdVolBearLH and volumeHH and cvdPHFound and volPHFound
+
+priceLL = pricePLFound and low[divLookbackRight] < pricePrevLow and pricePLInRange
+cvdPriceHL = cvdPLFound and cvdMomentum[divLookbackRight] > cvdPrevLow and cvdPLInRange
+cvdPriceBullDivergence = showCVDPriceDivergence and priceLL and cvdPriceHL and pricePLFound and cvdPLFound
+
+priceHH = pricePHFound and high[divLookbackRight] > pricePrevHigh and pricePHInRange
+cvdPriceLH = cvdPHFound and cvdMomentum[divLookbackRight] < cvdPrevHigh and cvdPHInRange
+cvdPriceBearDivergence = showCVDPriceDivergence and priceHH and cvdPriceLH and pricePHFound and cvdPHFound
+
+strongBullDivergence = cvdVolumeBullDivergence and cvdPriceBullDivergence
+strongBearDivergence = cvdVolumeBearDivergence and cvdPriceBearDivergence
+institutionalFlow = cvdVolumeBullDivergence or cvdVolumeBearDivergence or cvdPriceBullDivergence or cvdPriceBearDivergence
+
+volumeValueText = str.tostring(math.round(volume, 0))
+volumeComposite = volumeValueText + " | " + volumeLabel
+volHighlight = isUltraHigh ? (strongBearDivergence ? color.new(color.red, 80) : strongBullDivergence ? color.new(color.lime, 80) : color.new(color.purple, 85)) : na
+priorityColor = strongBearDivergence ? color.red : strongBullDivergence ? color.lime : color.blue
+
+// ==============================================================================================
+// HIỂN THỊ TRÊN BIỂU ĐỒ (PLOTTING)
+// ==============================================================================================
+
+// --- Hiển thị Volume và CVD ---
+plot(volume, title="Volume", color=volumeTone, style=plot.style_columns)
+plotcandle(scaleCVD(cvdOpenVolume), scaleCVD(cvdMaxVolume), scaleCVD(cvdMinVolume), scaleCVD(cvdLastVolume), "CVD", 
+           color=cvdLastVolume >= cvdOpenVolume ? color.new(cvdBullColor, cvdTransparency) : color.new(cvdBearColor, cvdTransparency), 
+           bordercolor=showCVDBorders ? (cvdLastVolume >= cvdOpenVolume ? cvdBullColor : cvdBearColor) : na, 
+           wickcolor=showCVDWicks ? (cvdLastVolume >= cvdOpenVolume ? cvdBullColor : cvdBearColor) : na)
+plot(cvdZeroOffset, title="CVD Zero Line", color=color.new(color.gray, 70), linewidth=1)
+
+// --- Logic xếp chồng tín hiệu ---
+var int bullStack = 0
+var int bearStack = 0
+if barstate.isnew
+    bullStack := 0
+    bearStack := 0
+
+cvdBase = scaleCVD(cvdLastVolume)
+spacingAnchor = anchorVolMax > 0 ? anchorVolMax : nz(volumeMA, 1)
+stackSpacing = math.max((spacingAnchor / 20) * signalSpacing, spacingAnchor * 0.05)
+
+// --- Hiển thị các mẫu hình Volume ---
+// --- Hiển thị các mẫu hình Volume ---
+float baY = na
+if showAbsorption and buyAbsorption
+    bullStack += 1
+    baY := cvdBase - bullStack * stackSpacing
+plotshape(baY, title="Buy Absorption", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small, text="BA", textcolor=color.black)
+
+float saY = na
+if showAbsorption and sellAbsorption
+    bearStack += 1
+    saY := cvdBase + bearStack * stackSpacing
+plotshape(saY, title="Sell Absorption", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small, text="SA", textcolor=color.black)
+
+float bbY = na
+if showBreakouts and volumeBreakoutBull
+    bullStack += 1
+    bbY := cvdBase - bullStack * stackSpacing
+plotshape(bbY, title="Volume Breakout Bull", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small, text="BB", textcolor=color.black)
+
+float brY = na
+if showBreakouts and volumeBreakoutBear
+    bearStack += 1
+    brY := cvdBase + bearStack * stackSpacing
+plotshape(brY, title="Volume Breakout Bear", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small, text="BR", textcolor=color.black)
+
+float ifY = na
+if showInstitutionalFlow and institutionalFlow
+    bullStack += 1
+    ifY := cvdBase - bullStack * stackSpacing
+plotshape(ifY, title="Institutional Flow", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small, text="IF", textcolor=color.black)
+
+// --- Hiển thị các tín hiệu VSA ---
+float scY = na
+if showVSASignals and sellingClimax
+    bearStack += 1
+    scY := cvdBase + bearStack * stackSpacing
+plotshape(scY, title="Selling Climax", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small, text="SC", textcolor=color.black)
+
+float bcY = na
+if showVSASignals and buyingClimax
+    bullStack += 1
+    bcY := cvdBase - bullStack * stackSpacing
+plotshape(bcY, title="Buying Climax", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small, text="BC", textcolor=color.black)
+
+float bhY = na
+if showVSASignals and bagHolding
+    bearStack += 1
+    bhY := cvdBase + bearStack * stackSpacing
+plotshape(bhY, title="Bag Holding", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small, text="BH", textcolor=color.black)
+
+float svY = na
+if showVSASignals and stoppingVolume
+    bullStack += 1
+    svY := cvdBase - bullStack * stackSpacing
+plotshape(svY, title="Stopping Volume", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small, text="SV", textcolor=color.black)
+
+float ndY = na
+if showVSASignals and not showCriticalOnly and noDemand
+    bearStack += 1
+    ndY := cvdBase + bearStack * stackSpacing
+plotshape(ndY, title="No Demand", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small, text="ND", textcolor=color.black)
+
+float nsY = na
+if showVSASignals and not showCriticalOnly and noSupply
+    bullStack += 1
+    nsY := cvdBase - bullStack * stackSpacing
+plotshape(nsY, title="No Supply", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small, text="NS", textcolor=color.black)
+
+float efY = na
+if showVSASignals and not showCriticalOnly and effortToFall
+    bullStack += 1
+    efY := cvdBase - bullStack * stackSpacing
+plotshape(efY, title="Effort to Fall", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small, text="EF", textcolor=color.black)
+
+float erY = na
+if showVSASignals and not showCriticalOnly and effortToRise
+    bearStack += 1
+    erY := cvdBase + bearStack * stackSpacing
+plotshape(erY, title="Effort to Rise", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small, text="ER", textcolor=color.black)
+
+float utY = na
+if showVSASignals and not showCriticalOnly and upthrust
+    bearStack += 1
+    utY := cvdBase + bearStack * stackSpacing
+plotshape(utY, title="Upthrust", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small, text="UT", textcolor=color.black)
+
+float spY = na
+if showVSASignals and not showCriticalOnly and spring
+    bullStack += 1
+    spY := cvdBase - bullStack * stackSpacing
+plotshape(spY, title="Spring", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small, text="SP", textcolor=color.black)
+
+float teY = na
+if showVSASignals and not showCriticalOnly and test
+    bullStack += 1
+    teY := cvdBase - bullStack * stackSpacing
+plotshape(teY, title="Test", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small, text="TE", textcolor=color.black)
+
+float wkY = na
+if showVSASignals and not showCriticalOnly and weakness
+    bearStack += 1
+    wkY := cvdBase + bearStack * stackSpacing
+plotshape(wkY, title="Weakness", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small, text="WK", textcolor=color.black)
+
+float stY = na
+if showVSASignals and not showCriticalOnly and strength
+    bullStack += 1
+    stY := cvdBase - bullStack * stackSpacing
+plotshape(stY, title="Strength", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small, text="ST", textcolor=color.black)
+
+float soY = na
+if showVSASignals and not showCriticalOnly and shakeout
+    bullStack += 1
+    soY := cvdBase - bullStack * stackSpacing
+plotshape(soY, title="Shakeout", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small, text="SO", textcolor=color.black)
+
+// --- Hiển thị các tín hiệu Phân kỳ ---
+float sbY = na
+if showDualDivergence and strongBullDivergence
+    bullStack += 1
+    sbY := cvdBase - bullStack * stackSpacing
+plotshape(sbY, title="Strong Bull Divergence", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small, text="SB", textcolor=color.black)
+
+float srY = na
+if showDualDivergence and strongBearDivergence
+    bearStack += 1
+    srY := cvdBase + bearStack * stackSpacing
+plotshape(srY, title="Strong Bear Divergence", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small, text="SR", textcolor=color.black)
+
+float cvBullY = na
+if showDualDivergence and cvdVolumeBullDivergence and not strongBullDivergence
+    bullStack += 1
+    cvBullY := cvdBase - bullStack * stackSpacing
+plotshape(cvBullY, title="CVD-Vol Bull Divergence", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small, text="CV", textcolor=color.black)
+
+float cvBearY = na
+if showDualDivergence and cvdVolumeBearDivergence and not strongBearDivergence
+    bearStack += 1
+    cvBearY := cvdBase + bearStack * stackSpacing
+plotshape(cvBearY, title="CVD-Vol Bear Divergence", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small, text="CV", textcolor=color.black)
+
+float cpBullY = na
+if showDualDivergence and cvdPriceBullDivergence and not strongBullDivergence
+    bullStack += 1
+    cpBullY := cvdBase - bullStack * stackSpacing
+plotshape(cpBullY, title="CVD-Price Bull Divergence", location=location.absolute, style=shape.triangleup, color=color.green, size=size.small, text="CP", textcolor=color.black)
+
+float cpBearY = na
+if showDualDivergence and cvdPriceBearDivergence and not strongBearDivergence
+    bearStack += 1
+    cpBearY := cvdBase + bearStack * stackSpacing
+plotshape(cpBearY, title="CVD-Price Bear Divergence", location=location.absolute, style=shape.triangledown, color=color.red, size=size.small, text="CP", textcolor=color.black)
+bgcolor(showDualDivergence and strongBullDivergence ? color.new(color.lime, 95) : na)
+bgcolor(showDualDivergence and strongBearDivergence ? color.new(color.red, 95) : na)
+
+// ==============================================================================================
+// BẢNG THÔNG TIN
+// ==============================================================================================
+if barstate.islast and showInfoTable
+    if na(infoTable)
+        infoTable := table.new(tablePosition, 2, 6, bgcolor=color.new(color.black, 12), border_width=1, frame_color=color.new(color.gray, 60))
+
+    table.cell(infoTable, 0, 0, "VSA+CVD DASH", bgcolor=color.new(color.black, 30), text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 0, "Value", bgcolor=color.new(color.black, 30), text_color=color.white, text_size=size.small, text_halign=text.align_right)
+
+    table.cell(infoTable, 0, 1, "Volume:", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 1, volumeComposite, text_color=na(volHighlight) ? color.white : color.white, bgcolor=volHighlight, text_size=size.small, text_halign=text.align_right)
+
+    table.cell(infoTable, 0, 2, "Priority:", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 2, volumePriority, text_color=priorityColor, bgcolor=volHighlight, text_size=size.small, text_halign=text.align_right)
+
+    cvdFormatted = str.tostring(math.round(cvdLastVolume, 0))
+    cvdDeltaBarText = (cvdDeltaPerBar > 0 ? "+" : cvdDeltaPerBar < 0 ? "-" : "") + str.tostring(math.abs(math.round(cvdDeltaPerBar, 0)))
+    table.cell(infoTable, 0, 3, "CVD (Δbar):", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 3, cvdFormatted + " (" + cvdDeltaBarText + ")", text_color=cvdDeltaPerBar >= 0 ? color.lime : color.red, text_size=size.small, text_halign=text.align_right)
+
+    cvdAnchorText = (cvdDeltaSinceAnchor > 0 ? "+" : cvdDeltaSinceAnchor < 0 ? "-" : "") + str.tostring(math.abs(math.round(cvdDeltaSinceAnchor, 0)))
+    table.cell(infoTable, 0, 4, "CVD Δ anchor:", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 4, cvdAnchorText, text_color=cvdDeltaSinceAnchor >= 0 ? color.lime : color.red, text_size=size.small, text_halign=text.align_right)
+
+    divSummary = strongBullDivergence ? "STRONG BULL" : strongBearDivergence ? "STRONG BEAR" : cvdVolumeBullDivergence or cvdPriceBullDivergence ? "BULL" : cvdVolumeBearDivergence or cvdPriceBearDivergence ? "BEAR" : "NONE"
+    divColor = strongBullDivergence ? color.lime : strongBearDivergence ? color.red : (cvdVolumeBullDivergence or cvdPriceBullDivergence ? color.new(color.lime, 40) : (cvdVolumeBearDivergence or cvdPriceBearDivergence ? color.new(color.red, 40) : color.gray))
+    table.cell(infoTable, 0, 5, "Divergence:", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 5, divSummary, text_color=divColor, text_size=size.small, text_halign=text.align_right)
+
+// --- Kiểm tra dữ liệu volume ---
+var cumVol = 0.
+cumVol += nz(volume)
+if barstate.islast and cumVol == 0
+    runtime.error("Nhà cung cấp dữ liệu không cung cấp dữ liệu volume cho mã giao dịch này.")

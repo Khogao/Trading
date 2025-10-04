@@ -1,0 +1,318 @@
+//@version=6
+// TITLE: Better CVD - Final (Pure CVD + Divergence Engine)
+// DESC: A complete order flow dashboard combining the feature-rich UI of "Better RSI" 
+// with the high-precision TV CVD calculation and a robust pivot-based divergence engine. No VSA.
+indicator("Better CVD - Plus", "BCVD+", overlay=false)
+import TradingView/ta/8
+
+// === GROUP: CVD CALCULATION SETTINGS ===
+const string GRP_CVD = "CVD Calculation"
+anchorInput = input.timeframe("D", "CVD Anchor Period", group = GRP_CVD, tooltip = "The timeframe at which the CVD calculation resets. 'D' is recommended for intraday.")
+useCustomTimeframeInput = input.bool(false, "Use Custom Lower Timeframe", group = GRP_CVD, tooltip = "Overrides the automatic selection of a lower timeframe for delta calculation. Use with caution.")
+lowerTimeframeInput = input.timeframe("1", "Lower Timeframe", group = GRP_CVD)
+
+// === GROUP: MA & BOLLINGER BANDS SETTINGS ===
+const string GRP_MA_BB = "MA & BB Settings"
+maTypeInput = input.string("SMA", "MA Type", options=["SMA", "EMA", "WMA", "VWMA"], group = GRP_MA_BB)
+maLengthInput = input.int(20, "MA Length", group = GRP_MA_BB)
+bbMultInput = input.float(2.0, "BB StdDev", minval=0.001, maxval=50, group = GRP_MA_BB)
+showBollingerBands = input.bool(true, "Show Bollinger Bands", group = GRP_MA_BB, tooltip="Shows Bollinger Bands on the CVD, acting as dynamic overbought/oversold levels.")
+
+// === GROUP: DIVERGENCE ENGINE SETTINGS ===
+const string GRP_DIVERGENCE = "Divergence Engine"
+showRegular = input.bool(true, "Show Regular Divergence (CVD+Price)", group = GRP_DIVERGENCE)
+showHidden = input.bool(true, "Show Hidden Divergence (CVD+Price)", group = GRP_DIVERGENCE)
+showCvdVolDiv = input.bool(true, "Show CVD+Volume Divergence", group = GRP_DIVERGENCE)
+lookbackLeft = input.int(5, "Pivot Lookback Left", group = GRP_DIVERGENCE)
+lookbackRight = input.int(5, "Pivot Lookback Right", group = GRP_DIVERGENCE)
+rangeLower = input.int(5, "Min Bars Between Pivots", group = GRP_DIVERGENCE)
+rangeUpper = input.int(60, "Max Bars Between Pivots", group = GRP_DIVERGENCE)
+
+// === GROUP: DISPLAY & TABLE ===
+const string GRP_DISPLAY = "Display & Table"
+plotStyle = input.string("Line with MA", "Plot Style", options=["Line with MA", "Candles"], group = GRP_DISPLAY)
+showCandleColors = input.bool(true, title="Color Price Candles on BB Breakout", group = GRP_DISPLAY, tooltip="Colors the main price candles when CVD breaks its Bollinger Bands.")
+showTable = input.bool(true, 'Show Multi-TF Table', group = GRP_DISPLAY)
+tablePosition = input.string("top_right", "Table Location", options=['top_left','top_right'], group = GRP_DISPLAY)
+
+// === CONSTANTS for Styling ===
+const color BULL_COLOR = color.new(color.green, 20)
+const color BEAR_COLOR = color.new(color.red, 20)
+const color HIDDEN_BULL_COLOR = color.new(color.green, 20)
+const color HIDDEN_BEAR_COLOR = color.new(color.red, 20)
+const color BULL_BG_COLOR = color.new(color.green, 90)
+const color BEAR_BG_COLOR = color.new(color.red, 90)
+
+// === MA helper ===
+ma(s, l, t) =>
+    switch t
+        "SMA" => ta.sma(s, l)
+        "EMA" => ta.ema(s, l)
+        "WMA" => ta.wma(s, l)
+        => ta.vwma(s, l)  // default VWMA
+
+// Lower TF resolver (works both in main scope and inside request.security)
+f_lowerTf() =>
+    if useCustomTimeframeInput
+        lowerTimeframeInput
+    else
+        switch
+            timeframe.isseconds => "1S"
+            timeframe.isintraday => "1" 
+            timeframe.isdaily => "5"
+            => "60"
+
+// Return CVD "close" from requestVolumeDelta
+f_cvdClose() =>
+    [_o, _h, _l, _c] = ta.requestVolumeDelta(f_lowerTf(), anchorInput)
+    _c 
+
+// === CVD CALCULATION ENGINE ===
+// remove old f_getCvdForSecurity and direct calls to ta.requestVolumeDelta(na, ...)
+
+// Main-scope CVD values
+[openVolume, maxVolume, minVolume, lastVolume] = ta.requestVolumeDelta(f_lowerTf(), anchorInput)
+cvdSource = f_cvdClose()
+
+var float cumVol = 0.0
+cumVol += nz(volume)
+if barstate.islast and cumVol == 0
+    runtime.error("This symbol has no volume data, CVD cannot be calculated.")
+
+// === DIVERGENCE ENGINE ===
+// Dùng giá trị pivot thật thay vì cvdSource[lookbackRight]
+plVal = ta.pivotlow(cvdSource, lookbackLeft, lookbackRight)
+phVal = ta.pivothigh(cvdSource, lookbackLeft, lookbackRight)
+plFound = not na(plVal)
+phFound = not na(phVal)
+
+// Khoảng cách giữa 2 pivot
+plSince = ta.barssince(plFound)
+phSince = ta.barssince(phFound)
+inRangePL_now = plSince[1] >= rangeLower and plSince[1] <= rangeUpper
+inRangePH_now = phSince[1] >= rangeLower and phSince[1] <= rangeUpper
+
+// Regular divergence
+priceLL = low[lookbackRight] < ta.valuewhen(plFound, low[lookbackRight], 1)
+cvdHL   = plVal > ta.valuewhen(plFound, plVal, 1) and inRangePL_now
+bullCond = showRegular and priceLL and cvdHL and plFound
+
+priceHH = high[lookbackRight] > ta.valuewhen(phFound, high[lookbackRight], 1)
+cvdLH   = phVal < ta.valuewhen(phFound, phVal, 1) and inRangePH_now
+bearCond = showRegular and priceHH and cvdLH and phFound
+
+// Hidden divergence
+priceHL = low[lookbackRight] > ta.valuewhen(plFound, low[lookbackRight], 1)
+cvdLL   = plVal < ta.valuewhen(plFound, plVal, 1) and inRangePL_now
+hiddenBullCond = showHidden and priceHL and cvdLL and plFound
+
+priceLH = high[lookbackRight] < ta.valuewhen(phFound, high[lookbackRight], 1)
+cvdHH   = phVal > ta.valuewhen(phFound, phVal, 1) and inRangePH_now
+hiddenBearCond = showHidden and priceLH and cvdHH and phFound
+
+// === CVD + VOLUME DIVERGENCE ENGINE ===
+// Volume pivots
+vol_plVal = ta.pivotlow(volume, lookbackLeft, lookbackRight)
+vol_phVal = ta.pivothigh(volume, lookbackLeft, lookbackRight)
+vol_plFound = not na(vol_plVal)
+vol_phFound = not na(vol_phVal)
+
+// Pivot range check
+vol_plSince = ta.barssince(vol_plFound)
+vol_phSince = ta.barssince(vol_phFound)
+vol_inRangePL_now = vol_plSince[1] >= rangeLower and vol_plSince[1] <= rangeUpper
+vol_inRangePH_now = vol_phSince[1] >= rangeLower and vol_phSince[1] <= rangeUpper
+
+// Lấy giá trị pivot trước đó (fix warning)
+prev_plVal = ta.valuewhen(plFound, plVal, 1)
+prev_vol_plVal = ta.valuewhen(vol_plFound, vol_plVal, 1)
+prev_phVal = ta.valuewhen(phFound, phVal, 1)
+prev_vol_phVal = ta.valuewhen(vol_phFound, vol_phVal, 1)
+
+// CVD+Volume Bullish: CVD HL, Volume LL
+cvdVolBull = showCvdVolDiv and plFound and vol_plFound and inRangePL_now and vol_inRangePL_now and plVal > prev_plVal and vol_plVal < prev_vol_plVal
+// CVD+Volume Bearish: CVD LH, Volume HH
+cvdVolBear = showCvdVolDiv and phFound and vol_phFound and inRangePH_now and vol_inRangePH_now and phVal < prev_phVal and vol_phVal > prev_vol_phVal
+
+// Plot divergence lines for CVD+Volume (dotted, blue/orange)
+var line lineVolBull = na
+var line lineVolBear = na
+f_plotVolDivLine(line lnIn, bool cond, bool isBear) =>
+    ln = lnIn
+    found  = isBear ? vol_phFound : vol_plFound
+    pivVal = isBear ? vol_phVal   : vol_plVal
+    x2 = na(pivVal) ? na : (bar_index - lookbackRight)
+    y2 = pivVal
+    x1 = ta.valuewhen(found, bar_index - lookbackRight, 1)
+    y1 = ta.valuewhen(found, isBear ? vol_phVal : vol_plVal, 1)
+    if cond and not na(x1) and not na(y1) and not na(x2) and not na(y2)
+        col = isBear ? color.orange : color.blue
+        line.delete(ln)
+        ln := line.new(x1, y1, x2, y2, color=col, width=2, style=line.style_dotted)
+    ln
+lineVolBull := f_plotVolDivLine(lineVolBull, cvdVolBull, false)
+lineVolBear := f_plotVolDivLine(lineVolBear, cvdVolBear, true)
+
+// Plot CVD+Volume divergence markers on the CVD chart at CVD pivots (like CVD+Price divergences)
+f_tagCvdVolDiv(cond, isBear, isHidden) =>
+    if cond
+        x = bar_index - lookbackRight
+        y = isBear ? phVal : plVal
+        if not na(y)
+            txt = isHidden ? (isBear ? "Hidden VolBear" : "Hidden VolBull") : (isBear ? "VolBear" : "VolBull")
+            bg  = isHidden ? (isBear ? color.new(color.orange, 60) : color.new(color.blue, 60)) : (isBear ? color.orange : color.blue)
+            sty = isBear ? label.style_label_down : label.style_label_up
+            label.new(x=x, y=y, text=txt, style=sty, color=bg, textcolor=color.white, size=isHidden ? size.tiny : size.small)
+// Regular CVD+Volume divergence markers
+f_tagCvdVolDiv(cvdVolBull, false, false)
+f_tagCvdVolDiv(cvdVolBear, true, false)
+// Hidden CVD+Volume divergence markers (not strong, i.e. not both CVD+Price and CVD+Volume at once)
+f_tagCvdVolDiv(cvdVolBull and not (bullCond or hiddenBullCond), false, true)
+f_tagCvdVolDiv(cvdVolBear and not (bearCond or hiddenBearCond), true, true)
+
+// === PLOTTING ===
+hline(0, "Zero Line", color.gray, linestyle=hline.style_dashed)
+
+// Toggle flags
+isLinePlot   = plotStyle == "Line with MA"
+isCandlePlot = plotStyle == "Candles"
+
+// Precompute MA
+cvdMA = ma(cvdSource, maLengthInput, maTypeInput)
+
+// Line style
+cvdLineColor = cvdSource > cvdSource[1] ? color.blue : color.orange
+pCVD = plot(cvdSource, "CVD", color=cvdLineColor, linewidth=2, display=isLinePlot ? display.all : display.none)
+pMA  = plot(cvdMA, "CVD MA", color=color.gray, linewidth=1, display=isLinePlot ? display.all : display.none)
+fill(pCVD, pMA, color=isLinePlot ? (cvdSource > cvdMA ? color.new(color.blue, 85) : color.new(color.orange, 85)) : na)
+
+// Candle style (using requestVolumeDelta OHLC)
+cCol = lastVolume >= openVolume ? color.teal : color.red
+plotcandle(openVolume, maxVolume, minVolume, lastVolume, "CVD", color=cCol, bordercolor=cCol, wickcolor=cCol, display=isCandlePlot ? display.all : display.none)
+
+// Bollinger Bands
+cvdMA_bb = ta.sma(cvdSource, maLengthInput)
+bbUpper = cvdMA_bb + ta.stdev(cvdSource, maLengthInput) * bbMultInput
+bbLower = cvdMA_bb - ta.stdev(cvdSource, maLengthInput) * bbMultInput
+plot(bbUpper, "BB Upper", color.gray, style=plot.style_line, display=showBollingerBands ? display.all : display.none)
+plot(bbLower, "BB Lower", color.gray, style=plot.style_line, display=showBollingerBands ? display.all : display.none)
+
+// Giữ line riêng cho từng loại để vẽ mượt
+var line lineBull  = na
+var line lineBear  = na
+var line lineHBull = na
+var line lineHBear = na
+
+// Vẽ line nối 2 pivot (return line ID; không sửa tham số trực tiếp)
+f_plotDivLine(line lnIn, bool cond, bool isBear, bool isHidden) =>
+    ln = lnIn  // bản sao cục bộ
+    found  = isBear ? phFound : plFound
+    pivVal = isBear ? phVal   : plVal
+    x2 = na(pivVal) ? na : (bar_index - lookbackRight)
+    y2 = pivVal
+    x1 = ta.valuewhen(found, bar_index - lookbackRight, 1)
+    y1 = ta.valuewhen(found, isBear ? phVal : plVal, 1)
+    if cond and not na(x1) and not na(y1) and not na(x2) and not na(y2)
+        col = isHidden ? (isBear ? HIDDEN_BEAR_COLOR : HIDDEN_BULL_COLOR)
+                       : (isBear ? BEAR_COLOR        : BULL_COLOR)
+        line.delete(ln)
+        ln := line.new(x1, y1, x2, y2, color=col, width=isHidden ? 1 : 3, style=isHidden ? line.style_dotted : line.style_solid)
+    ln
+
+// Plot divergence lines + labels
+lineBull  := f_plotDivLine(lineBull,  bullCond,        false, false)
+lineBear  := f_plotDivLine(lineBear,  bearCond,        true,  false)
+lineHBull := f_plotDivLine(lineHBull, hiddenBullCond,  false, true)
+lineHBear := f_plotDivLine(lineHBear, hiddenBearCond,  true,  true)
+
+// Label box đặt đúng tại pivot hiện tại
+f_tagDiv(cond, isBear, isHidden) =>
+    if cond
+        x = bar_index - lookbackRight
+        y = isBear ? phVal : plVal
+        if not na(y)
+            txt = isHidden ? (isBear ? "Hidden Bear" : "Hidden Bull") : (isBear ? "Bear" : "Bull")
+            bg  = isBear ? color.new(color.red, 0) : color.new(color.green, 0)
+            sty = isBear ? label.style_label_down : label.style_label_up
+            label.new(x=x, y=y, text=txt, style=sty, color=bg, textcolor=color.white, size=size.tiny)
+
+// REPLACE triangles with label boxes
+f_tagDiv(bullCond, false, false)
+f_tagDiv(bearCond, true,  false)
+f_tagDiv(hiddenBullCond, false, true)
+f_tagDiv(hiddenBearCond, true,  true)
+
+// UI Alerts
+bgcolor(bullCond or hiddenBullCond ? BULL_BG_COLOR : na, title="Bullish Divergence BG Alert")
+bgcolor(bearCond or hiddenBearCond ? BEAR_BG_COLOR : na, title="Bearish Divergence BG Alert")
+cvd_is_overbought = cvdSource > bbUpper
+cvd_is_oversold = cvdSource < bbLower
+barcolor(showCandleColors and cvd_is_overbought ? color.new(color.red, 75) : na, title="CVD Overbought")
+barcolor(showCandleColors and cvd_is_oversold ? color.new(color.green, 75) : na, title="CVD Oversold")
+
+// === MULTI-TF TABLE (COMPACT DASHBOARD) ===
+// Chỉ hiển thị 3 TF: 15m, 1H, 4H (giảm số cột)
+cvd_15  = request.security(syminfo.tickerid, "15",  f_cvdClose())
+ma_15   = request.security(syminfo.tickerid, "15",  ta.sma(f_cvdClose(), maLengthInput))
+cvd_60  = request.security(syminfo.tickerid, "60",  f_cvdClose())
+ma_60   = request.security(syminfo.tickerid, "60",  ta.sma(f_cvdClose(), maLengthInput))
+cvd_240 = request.security(syminfo.tickerid, "240", f_cvdClose())
+ma_240  = request.security(syminfo.tickerid, "240", ta.sma(f_cvdClose(), maLengthInput))
+
+cell_col_15  = cvd_15  > ma_15  ? color.new(color.green, 70) : color.new(color.red, 70)
+cell_col_60  = cvd_60  > ma_60  ? color.new(color.green, 70) : color.new(color.red, 70)
+cell_col_240 = cvd_240 > ma_240 ? color.new(color.green, 70) : color.new(color.red, 70)
+
+if showTable and barstate.islast
+    var table cvdTable = table.new(tablePosition, 2, 4, bgcolor=color.new(color.gray, 85), border_width=1, frame_color=color.new(color.gray, 60))
+    table.cell(cvdTable, 0, 0, "TF", text_size=size.tiny, bgcolor=color.new(color.gray, 60), text_color=color.white)
+    table.cell(cvdTable, 1, 0, "CVD", text_size=size.tiny, bgcolor=color.new(color.gray, 60), text_color=color.white)
+    table.cell(cvdTable, 0, 1, "15m", text_size=size.tiny)
+    table.cell(cvdTable, 1, 1, str.tostring(cvd_15, format.mintick), bgcolor=cell_col_15, text_color=color.white, text_size=size.tiny)
+    table.cell(cvdTable, 0, 2, "1H", text_size=size.tiny)
+    table.cell(cvdTable, 1, 2, str.tostring(cvd_60, format.mintick), bgcolor=cell_col_60, text_color=color.white, text_size=size.tiny)
+    table.cell(cvdTable, 0, 3, "4H", text_size=size.tiny)
+    table.cell(cvdTable, 1, 3, str.tostring(cvd_240, format.mintick), bgcolor=cell_col_240, text_color=color.white, text_size=size.tiny)
+
+// === ALERTS ===
+alertcondition(bullCond, 'Regular Bullish CVD Divergence', 'BetterCVD: Regular Bullish')
+alertcondition(bearCond, 'Regular Bearish CVD Divergence', 'BetterCVD: Regular Bearish')
+alertcondition(hiddenBullCond, 'Hidden Bullish CVD Divergence', 'BetterCVD: Hidden Bullish')
+alertcondition(hiddenBearCond, 'Hidden Bearish CVD Divergence', 'BetterCVD: Hidden Bearish')
+alertcondition(cvd_is_overbought, 'CVD Overbought (BB Break)', 'BetterCVD: CVD Overbought')
+alertcondition(cvd_is_oversold, 'CVD Oversold (BB Break)', 'BetterCVD: CVD Oversold')
+
+// Alerts for CVD+Volume divergence
+alertcondition(cvdVolBull, 'CVD+Volume Bullish Divergence', 'BetterCVD: CVD+Volume Bullish')
+alertcondition(cvdVolBear, 'CVD+Volume Bearish Divergence', 'BetterCVD: CVD+Volume Bearish')
+
+// === VOLUME COLOR CODING (VSA Wyckoff style) ===
+lengthVolumeMA = input.int(20, title="Length of Volume MA", minval=1, group="Volume Color")
+ratioUltraVolume = input.float(2.2, title="Ultra High Volume Ratio", minval=0, group="Volume Color")
+ratioVeryHighVolume = input.float(1.8, title="Very High Volume Ratio", minval=0, group="Volume Color")
+ratioHighVolume = input.float(1.2, title="High Volume Ratio", minval=0, group="Volume Color")
+ratioNormalVolume = input.float(0.8, title="Normal Volume Ratio", minval=0, group="Volume Color")
+ratioLowVolume = input.float(0.4, title="Low Volume Ratio", minval=0, group="Volume Color")
+
+volumeMA_vsa = ta.rma(volume, lengthVolumeMA)
+ultraHighVolumeMin = volumeMA_vsa * ratioUltraVolume
+veryHighVolumeMin = volumeMA_vsa * ratioVeryHighVolume
+highVolumeMin = volumeMA_vsa * ratioHighVolume
+normalVolumeMin = volumeMA_vsa * ratioNormalVolume
+lowVolumeMin = volumeMA_vsa * ratioLowVolume
+
+isUltraHigh = volume >= ultraHighVolumeMin
+isVeryHigh = volume >= veryHighVolumeMin and volume < ultraHighVolumeMin
+isHigh = volume >= highVolumeMin and volume < veryHighVolumeMin
+isNormal = volume >= normalVolumeMin and volume < highVolumeMin
+isLow = volume >= lowVolumeMin and volume < normalVolumeMin
+isVeryLow = volume < lowVolumeMin
+
+paletteColor = isUltraHigh ? color.new(color.purple, 20) :
+               isVeryHigh  ? color.new(color.red, 20) :
+               isHigh      ? color.new(color.orange, 20) :
+               isNormal    ? color.new(color.green, 20) :
+               isLow       ? color.new(color.blue, 20) :
+                             color.new(color.gray, 20)
+
+plot(volume, title="Volume", color=paletteColor, style=plot.style_columns, linewidth=1)

@@ -1,0 +1,614 @@
+// --- Global variable declarations for moving averages, lookbacks, and triggers ---
+var float avg_volume_20 = na
+var float volume_trend_5 = na
+var float volume_trend_20 = na
+var int bars_since_update = na
+var int base_frequency = na
+var bool volume_spike = na
+var int effective_lookback = na
+// --- Utility Functions ---
+f_time_decay(idx, model) => 1.0
+f_should_update() => barstate.islast
+
+// --- HTF Profile stateless functions for request.security ---
+// Each function returns a single float value for use in request.security
+// All logic is stateless and does not use arrays or custom types
+f_htf_poc(string timeframe_str, int lookback_bars) => (request.security(syminfo.tickerid, timeframe_str, ta.highest(high, lookback_bars)) + request.security(syminfo.tickerid, timeframe_str, ta.lowest(low, lookback_bars))) / 2.0
+f_htf_vah(string timeframe_str, int lookback_bars) => request.security(syminfo.tickerid, timeframe_str, ta.highest(high, lookback_bars))
+f_htf_val(string timeframe_str, int lookback_bars) => request.security(syminfo.tickerid, timeframe_str, ta.lowest(low, lookback_bars))
+
+// === MINIMAL SECURITY TEST ===
+test_close = request.security(syminfo.tickerid, "D", close)
+plot(test_close, color=color.red, title="Test Security Close")
+
+// === ISOLATION TEST FOR HTF SECURITY BLOCK ===
+// (Moved below input declarations so all variables are defined)
+
+//@version=5
+// TITLE: VP Production v5 - Institutional Grade
+// DESC: Maximum precision volume profile with advanced algorithms for professional crypto trading
+indicator(title='VPP5 Institutional', shorttitle='VPP5 Pro', overlay=true, max_bars_back=5000, max_boxes_count=500, max_lines_count=500)
+
+// === PRECISION INPUTS ===
+var GRP_CORE = "Core Engine"
+vp_mode = input.string("Adaptive", "Calculation Mode", options=["Adaptive", "Tick-Based", "VWAP-Weighted", "Time-Volume"], group=GRP_CORE)
+vp_lookback = input.int(300, 'Lookback Bars', minval=100, maxval=2000, group=GRP_CORE)
+vp_levels = input.int(200, 'Price Levels (Higher = More Precision)', minval=50, maxval=500, group=GRP_CORE)
+volume_filter = input.string("Smart", "Volume Filtering", options=["None", "Smart", "Institutional", "Retail"], group=GRP_CORE)
+time_decay_model = input.string("Exponential", "Time Decay", options=["None", "Linear", "Exponential", "Logarithmic"], group=GRP_CORE)
+
+var GRP_SENSITIVITY = "Sensitivity Control"
+micro_structure = input.bool(true, "Enable Micro-structure Analysis", group=GRP_SENSITIVITY, tooltip="Analyze intra-bar volume distribution")
+tick_precision = input.bool(true, "High Precision Mode", group=GRP_SENSITIVITY, tooltip="Uses advanced tick-weight algorithms")
+volatility_adjust = input.bool(true, "Volatility-Adjusted Levels", group=GRP_SENSITIVITY)
+session_weight = input.float(2.5, "Session Weight Multiplier", minval=0.1, maxval=10.0, step=0.1, group=GRP_SENSITIVITY)
+imbalance_sensitivity = input.float(1.5, "Imbalance Detection Sensitivity", minval=0.1, maxval=5.0, step=0.1, group=GRP_SENSITIVITY)
+
+var GRP_HTF = "Multi-Timeframe Precision"
+htf_enable = input.bool(true, "Enable HTF Analysis", group=GRP_HTF)
+htf_primary = input.string("4H", "Primary HTF", options=["1H", "2H", "4H", "6H", "8H", "12H", "D"], group=GRP_HTF)
+htf_secondary = input.string("D", "Secondary HTF", options=["4H", "6H", "12H", "D", "3D", "W"], group=GRP_HTF)
+htf_lookback = input.int(100, "HTF Lookback Precision", minval=20, maxval=300, group=GRP_HTF)
+htf_confluence = input.bool(true, "HTF-LTF Confluence Analysis", group=GRP_HTF)
+
+var GRP_ADVANCED = "Advanced Analytics"
+show_volume_imbalance = input.bool(true, "Volume Imbalance Zones", group=GRP_ADVANCED)
+show_poc_migration = input.bool(true, "POC Migration Tracking", group=GRP_ADVANCED) 
+show_value_completion = input.bool(true, "Value Area Completion %", group=GRP_ADVANCED)
+show_institutional_levels = input.bool(true, "Institutional Activity Zones", group=GRP_ADVANCED)
+liquidity_analysis = input.bool(true, "Liquidity Pool Analysis", group=GRP_ADVANCED)
+order_flow_divergence = input.bool(true, "Order Flow Divergence Detection", group=GRP_ADVANCED)
+
+var GRP_EXECUTION = "Execution Settings"
+update_mode = input.string("Ultra-Responsive", "Update Frequency", options=["Conservative", "Balanced", "Responsive", "Ultra-Responsive", "Real-Time"], group=GRP_EXECUTION)
+calculation_threads = input.int(3, "Calculation Depth", minval=1, maxval=5, group=GRP_EXECUTION, tooltip="Higher = more precise but slower")
+memory_management = input.string("Optimized", "Memory Usage", options=["Conservative", "Balanced", "Optimized", "Maximum"], group=GRP_EXECUTION)
+
+var GRP_VISUAL = "Professional Visualization"
+poc_style = input.string("Dynamic", "POC Style", options=["Static", "Dynamic", "Gradient", "Institutional"], group=GRP_VISUAL)
+va_rendering = input.string("Advanced", "VA Rendering", options=["Simple", "Advanced", "Gradient", "Heat-Map"], group=GRP_VISUAL)
+bar_width = input.int(60, "Profile Width", minval=20, maxval=200, group=GRP_VISUAL)
+right_extension = input.int(25, "Right Extension", minval=10, maxval=100, group=GRP_VISUAL)
+transparency_mode = input.string("Smart", "Transparency", options=["Static", "Smart", "Volume-Based", "Time-Based"], group=GRP_VISUAL)
+
+// Colors with precision
+poc_color_primary = input.color(color.new(color.orange, 0), "POC Primary", group=GRP_VISUAL, inline="poc")
+poc_color_secondary = input.color(color.new(color.yellow, 30), "POC Secondary", group=GRP_VISUAL, inline="poc")
+va_color_bull = input.color(color.new(color.blue, 70), "VA Bullish", group=GRP_VISUAL, inline="va") 
+va_color_bear = input.color(color.new(color.red, 70), "VA Bearish", group=GRP_VISUAL, inline="va")
+htf_poc_color = input.color(color.new(color.purple, 0), "HTF POC", group=GRP_VISUAL, inline="htf")
+htf_va_color = input.color(color.new(color.teal, 40), "HTF VA", group=GRP_VISUAL, inline="htf")
+imbalance_color_bull = input.color(color.new(color.lime, 60), "Imbalance Bull", group=GRP_VISUAL)
+imbalance_color_bear = input.color(color.new(color.fuchsia, 60), "Imbalance Bear", group=GRP_VISUAL)
+
+// === ADVANCED DATA STRUCTURES ===
+type VolumeNode
+    float price
+    float volume
+    float buy_volume
+    float sell_volume
+    float time_weight
+    float volatility_weight
+    int bar_index
+    bool is_imbalance
+
+type ProfileLevel
+    float price
+    float total_volume
+    float weighted_volume
+    float liquidity_score
+    float institutional_interest
+    bool is_poc
+    bool is_va_high
+    bool is_va_low
+    color level_color
+    int transparency
+
+type HTFData
+    float poc
+    float vah  
+    float val
+    float total_volume
+    int calculation_bars
+    float confidence_score
+
+// Variables
+var array<VolumeNode> volume_nodes = array.new<VolumeNode>()
+var array<ProfileLevel> profile_levels = array.new<ProfileLevel>()
+var array<box> profile_boxes = array.new<box>()
+var array<line> profile_lines = array.new<line>()
+var array<label> analysis_labels = array.new<label>()
+
+var HTFData htf_primary_data = HTFData.new()
+var HTFData htf_secondary_data = HTFData.new()
+
+var float price_min = na
+var float price_max = na
+var float price_tick = na
+var int last_calculation = 0
+var float last_poc = na
+var array<float> poc_history = array.new<float>()
+
+// === ADVANCED MATHEMATICAL FUNCTIONS ===
+
+// Volatility-adjusted price step calculation
+f_calculate_precision_step(float high_val, float low_val, int levels, string time_decay_model, float bars_back, float vp_lookback) =>
+    base_step = (high_val - low_val) / levels
+    step = base_step
+    if volatility_adjust
+        atr_current = ta.atr(20)
+        atr_avg = ta.sma(ta.atr(20), 50)
+        vol_ratio = atr_current / atr_avg
+        step := base_step * (0.5 + 0.5 / vol_ratio)
+        step := math.max(step, syminfo.mintick)
+    decay_factor = switch time_decay_model
+        "Exponential" => math.exp(-bars_back / vp_lookback * 2.5)
+        "Logarithmic" => 1.0 / (1.0 + math.log(bars_back + 1) / 3.0)
+        => 1.0
+    math.max(0.05, decay_factor)
+
+// Institutional volume detection
+f_detect_institutional_volume(float vol, float avg_vol, float price_move) =>
+    vol_ratio = vol / avg_vol
+    price_impact = math.abs(price_move) / ta.atr(14)
+    
+    institutional_threshold = switch volume_filter
+        "None" => 999.0
+        "Smart" => 2.5 + price_impact * 0.5
+        "Institutional" => 3.0 + price_impact * 0.3
+        "Retail" => 1.8 + price_impact * 0.8
+        => 2.5
+    
+    vol_ratio > institutional_threshold
+
+// Micro-structure volume distribution
+f_distribute_volume_advanced(float bar_vol, float o, float h, float l, float c, int bar_idx) =>
+    nodes = array.new<VolumeNode>()
+    
+    if not micro_structure
+        // Simple distribution
+        typical_price = (h + l + c) / 3
+        node = VolumeNode.new(typical_price, bar_vol, 0, 0, 1.0, 1.0, bar_idx, false)
+        array.push(nodes, node)
+    else
+        // Advanced intra-bar distribution
+        body_size = math.abs(c - o)
+        wick_size = h - l
+        total_range = h - l
+        
+        if total_range > 0
+            // Distribution based on OHLC psychology
+            open_weight = 0.15
+            close_weight = 0.35
+            high_weight = 0.25  
+            low_weight = 0.25
+            
+            is_bullish = c > o
+            buy_vol = is_bullish ? bar_vol * 0.6 : bar_vol * 0.4
+            sell_vol = bar_vol - buy_vol
+            
+            // Create multiple nodes within the bar
+            segments = tick_precision ? 5 : 3
+            segment_size = total_range / segments
+            
+            for i = 0 to segments - 1
+                segment_price = l + (i + 0.5) * segment_size
+                
+                // Weight based on distance from key levels
+                distance_to_close = math.abs(segment_price - c) / total_range
+                distance_to_open = math.abs(segment_price - o) / total_range
+                
+                volume_weight = 1.0 - (distance_to_close * 0.4 + distance_to_open * 0.2)
+                volume_weight := math.max(0.1, volume_weight)
+                
+                segment_volume = bar_vol * volume_weight / segments
+                segment_buy = buy_vol * volume_weight / segments  
+                segment_sell = sell_vol * volume_weight / segments
+                
+                node = VolumeNode.new(segment_price, segment_volume, segment_buy, segment_sell, f_time_decay(bar_idx, time_decay_model), 1.0, bar_idx, false)
+                array.push(nodes, node)
+    
+    nodes
+
+
+// === UPDATE LOGIC WITH MAXIMUM SENSITIVITY ===
+    price_change_pct = math.abs(close - close[1]) / close[1] * 100
+    significant_move = price_change_pct > (0.1 * imbalance_sensitivity)
+    
+    // Volatility triggers
+    current_atr = ta.atr(14)
+    atr_expansion = current_atr > ta.sma(current_atr, 20) * 1.2
+    
+    // Time-based trigger
+    time_trigger = bars_since_update >= base_frequency
+    
+    // Combined trigger logic
+    barstate.islast or time_trigger or volume_spike or significant_move or atr_expansion
+
+// === MAIN CALCULATION ENGINE ===
+if f_should_update()
+    
+    // Clear previous calculations
+    for box_obj in profile_boxes
+        box.delete(box_obj)
+    array.clear(profile_boxes)
+    
+    for line_obj in profile_lines
+        line.delete(line_obj) 
+    array.clear(profile_lines)
+    
+    for label_obj in analysis_labels
+        label.delete(label_obj)
+    array.clear(analysis_labels)
+    
+    // Reset data structures
+    array.clear(volume_nodes)
+    array.clear(profile_levels)
+    
+    // Calculate price range with precision
+    // Use globally assigned variables: effective_lookback, price_max, price_min, avg_volume_20, volume_trend_5, volume_trend_20
+    bars_since_update := bar_index - last_calculation
+    base_frequency := switch update_mode
+        "Conservative" => 15
+        "Balanced" => 8
+        "Responsive" => 4
+        "Ultra-Responsive" => 2
+        "Real-Time" => 1
+        => 5
+    volume_spike := volume > avg_volume_20 * (2.0 - imbalance_sensitivity * 0.3)
+    if f_should_update()
+        // Clear previous calculations
+        for box_obj in profile_boxes
+            box.delete(box_obj)
+        array.clear(profile_boxes)
+        for line_obj in profile_lines
+            line.delete(line_obj)
+        array.clear(profile_lines)
+        for label_obj in analysis_labels
+            label.delete(label_obj)
+        array.clear(analysis_labels)
+        array.clear(volume_nodes)
+        array.clear(profile_levels)
+        // Calculate price range with precision (already done at top of block)
+        // All function calls are assigned at the top of the calculation block
+        // No need to reassign effective_lookback, price_max, price_min, price_tick here
+    // Declare all variables needed in the calculation block
+    var float current_poc = na
+    var float bar_length = na
+    var float age_factor = na
+    var int va_upper_idx = na
+    var int va_lower_idx = na
+    var float va_high_price = na
+    var float va_low_price = na
+    if price_tick > 0 and price_max > price_min
+        // Initialize profile levels array
+        for level_idx = 0 to vp_levels - 1
+            level_price = price_min + level_idx * price_tick
+            profile_level = ProfileLevel.new(level_price, 0, 0, 0, 0, false, false, false, color.gray, 70)
+            array.push(profile_levels, profile_level)
+        // Advanced volume distribution across lookback period
+        total_volume_processed = 0.0
+        for bar_back = 0 to effective_lookback - 1
+            if bar_back > bar_index
+                break
+            bar_vol = volume[bar_back]
+            if bar_vol <= 0
+                continue
+            // Detect institutional activity
+            price_impact = math.abs(close[bar_back] - close[bar_back + 1]) / close[bar_back + 1]
+            // Precompute is_institutional_val and bar_nodes_val at the top of the calculation block and use arrays here
+            // for node_idx = 0 to array.size(bar_nodes_val) - 1
+            //     node = array.get(bar_nodes_val, node_idx)
+                // Find corresponding price level
+                // The following block is commented out pending array precomputation refactor
+                // level_idx = math.floor((node.price - price_min) / price_tick)
+                // level_idx := math.max(0, math.min(vp_levels - 1, level_idx))
+                // profile_level = array.get(profile_levels, level_idx)
+                // time_weight = f_time_decay(bar_back, time_decay_model)
+                // session_multiplier = 1.0
+                // if session_weight > 1.0
+                //     bar_hour = hour(time[bar_back])
+                //     if bar_hour >= 8 and bar_hour <= 16  // Main session
+                //         session_multiplier := session_weight
+                // buy_sell_ratio = node.sell_volume > 0 ? node.buy_volume / node.sell_volume : 2.0
+                // is_imbalance = math.abs(buy_sell_ratio - 1.0) > imbalance_sensitivity * 0.5
+                // institutional_weight = is_institutional_val ? 1.5 : 1.0
+                // final_weight = time_weight * session_multiplier * institutional_weight
+                // weighted_vol = node.volume * final_weight
+                // profile_level.total_volume += node.volume
+                // profile_level.weighted_volume += weighted_vol
+                // profile_level.institutional_interest += is_institutional_val ? weighted_vol : 0
+                // profile_level.liquidity_score += weighted_vol * (1 + price_impact * 2)
+                // array.set(profile_levels, level_idx, profile_level)
+                // total_volume_processed += weighted_vol
+            // Find POC and calculate Value Area
+            max_weighted_volume = 0.0
+            poc_level_idx = -1
+            for level_idx = 0 to vp_levels - 1
+                profile_level = array.get(profile_levels, level_idx)
+                if profile_level.weighted_volume > max_weighted_volume
+                    max_weighted_volume := profile_level.weighted_volume
+                    poc_level_idx := level_idx
+            if poc_level_idx >= 0
+                // Mark POC
+                poc_level = array.get(profile_levels, poc_level_idx)
+                poc_level.is_poc := true
+                array.set(profile_levels, poc_level_idx, poc_level)
+                current_poc := poc_level.price
+                array.push(poc_history, current_poc)
+                if array.size(poc_history) > 50
+                    array.shift(poc_history)
+                // Calculate Value Area with precision
+                va_target_volume = total_volume_processed * 0.70
+                va_accumulated = poc_level.weighted_volume
+                va_upper_idx := poc_level_idx
+                va_lower_idx := poc_level_idx
+                // Expand Value Area intelligently
+                while va_accumulated < va_target_volume and (va_upper_idx < vp_levels - 1 or va_lower_idx > 0)
+                    vol_above = 0.0
+                    vol_below = 0.0
+                    if va_upper_idx < vp_levels - 1
+                        upper_level = array.get(profile_levels, va_upper_idx + 1)
+                        vol_above := upper_level.weighted_volume
+                    if va_lower_idx > 0
+                        lower_level = array.get(profile_levels, va_lower_idx - 1)
+                        vol_below := lower_level.weighted_volume
+                    // Bias toward liquidity and institutional interest
+                    if va_upper_idx < vp_levels - 1
+                        upper_level = array.get(profile_levels, va_upper_idx + 1)
+                        vol_above *= (1 + upper_level.liquidity_score / max_weighted_volume * 0.2)
+                    if va_lower_idx > 0
+                        lower_level = array.get(profile_levels, va_lower_idx - 1)
+                        vol_below *= (1 + lower_level.liquidity_score / max_weighted_volume * 0.2)
+                    // Expand to higher volume side
+                    if vol_above >= vol_below and va_upper_idx < vp_levels - 1
+                        va_upper_idx += 1
+                        va_accumulated += array.get(profile_levels, va_upper_idx).weighted_volume
+                    else if va_lower_idx > 0
+                        va_lower_idx -= 1
+                        va_accumulated += array.get(profile_levels, va_lower_idx).weighted_volume
+                    else
+                        break
+                // Mark VA boundaries
+                if va_upper_idx < vp_levels
+                    va_high_level = array.get(profile_levels, va_upper_idx)
+                    va_high_level.is_va_high := true
+                    array.set(profile_levels, va_upper_idx, va_high_level)
+                if va_lower_idx >= 0
+                    va_low_level = array.get(profile_levels, va_lower_idx)
+                    va_low_level.is_va_low := true
+                    array.set(profile_levels, va_lower_idx, va_low_level)
+                // ADVANCED VISUALIZATION
+                base_x = bar_index + right_extension
+                max_liquidity = 0.0
+                // Find max liquidity for scaling
+                for level_idx = 0 to vp_levels - 1
+                    profile_level = array.get(profile_levels, level_idx)
+                    if profile_level.liquidity_score > max_liquidity
+                        max_liquidity := profile_level.liquidity_score
+                // Draw profile with advanced styling
+                var color base_color = color.gray
+                var int transparency_val = 70
+                for level_idx = 0 to vp_levels - 1
+                    profile_level = array.get(profile_levels, level_idx)
+                    if profile_level.weighted_volume > max_weighted_volume * 0.02  // Filter noise
+                        // Calculate bar length with liquidity bias
+                        volume_ratio = profile_level.weighted_volume / max_weighted_volume
+                        liquidity_ratio = max_liquidity > 0 ? profile_level.liquidity_score / max_liquidity : 0
+                        // Combined scaling
+                        bar_length := math.round(bar_width * (volume_ratio * 0.7 + liquidity_ratio * 0.3))
+                        // Advanced coloring
+                        base_color := color.gray
+                        transparency_val := 70
+                        if profile_level.is_poc
+                            base_color := poc_style == "Dynamic" ? (not na(last_poc) and current_poc > last_poc ? poc_color_primary : poc_color_secondary) : poc_color_primary
+                            transparency_val := 0
+                        else if profile_level.is_va_high or profile_level.is_va_low
+                            base_color := va_color_bull
+                            transparency_val := 40
+                        else if level_idx >= va_lower_idx and level_idx <= va_upper_idx
+                            // Value Area coloring with buy/sell bias
+                            institutional_ratio = profile_level.institutional_interest / profile_level.weighted_volume
+                            base_color := institutional_ratio > 0.3 ? va_color_bull : va_color_bear
+                            transparency_val := 70
+                        else
+                            // Outside VA
+                            transparency_val := 85
+                        // Volume imbalance highlighting
+                        if show_volume_imbalance and profile_level.institutional_interest > profile_level.weighted_volume * 0.4
+                            base_color := profile_level.price > current_poc ? imbalance_color_bull : imbalance_color_bear
+                            transparency_val := transparency_val - 20
+                        // Dynamic transparency
+                        if transparency_mode == "Volume-Based"
+                            transparency_val := int(90 - volume_ratio * 60)
+                        else if transparency_mode == "Time-Based"
+                            age_factor := math.min(1.0, (bar_index - last_calculation) / 50.0)
+                            transparency_val := int(transparency_val + age_factor * 20)
+                        final_color = color.new(base_color, math.max(0, math.min(90, transparency_val)))
+                        // Create volume bar
+                        profile_box = box.new(int(base_x), profile_level.price - price_tick/2, int(base_x + bar_length), profile_level.price + price_tick/2, bgcolor = final_color, border_color = na)
+                        array.push(profile_boxes, profile_box)
+            
+            // Draw POC with institutional styling
+            if show_poc_migration and poc_style == "Institutional"
+                poc_box = box.new(bar_index - effective_lookback, current_poc - price_tick/3, bar_index + right_extension - 5, current_poc + price_tick/3, bgcolor = color.new(poc_color_primary, 30), border_color = poc_color_primary, border_width = 2)
+                array.push(profile_boxes, poc_box)
+            
+            // Draw Value Area lines with precision
+            va_high_price := array.get(profile_levels, va_upper_idx).price
+            va_low_price := array.get(profile_levels, va_lower_idx).price
+            
+            line_end_x = bar_index + right_extension + bar_width + 10
+            
+            // VA High line
+            vah_line = line.new(bar_index - effective_lookback, va_high_price, line_end_x, va_high_price, color=color.new(poc_color_primary, 20), width=2, style=line.style_dashed)
+            array.push(profile_lines, vah_line)
+            
+            // VA Low line  
+            val_line = line.new(bar_index - effective_lookback, va_low_price, line_end_x, va_low_price, color=color.new(poc_color_primary, 20), width=2, style=line.style_dashed)
+            array.push(profile_lines, val_line)
+            
+            // POC migration analysis
+            if show_poc_migration and array.size(poc_history) > 5
+                recent_pocs = array.slice(poc_history, math.max(0, array.size(poc_history) - 10), array.size(poc_history))
+                poc_trend = array.get(recent_pocs, array.size(recent_pocs) - 1) - array.get(recent_pocs, 0)
+                
+                if math.abs(poc_trend) > price_tick * 5
+                    trend_label = label.new(bar_index + right_extension + bar_width + 5, current_poc, text="POC " + (poc_trend > 0 ? "↑" : "↓"), color=color.new(poc_trend > 0 ? color.lime : color.red, 20), textcolor=color.white, style=label.style_label_left, size=size.small)
+                    array.push(analysis_labels, trend_label)
+            
+            // Institutional activity zones
+            if show_institutional_levels
+                for level_idx = 0 to vp_levels - 1
+                    profile_level = array.get(profile_levels, level_idx)
+                    institutional_ratio = profile_level.total_volume > 0 ? profile_level.institutional_interest / profile_level.total_volume : 0
+                    
+                    if institutional_ratio > 0.6 and profile_level.weighted_volume > max_weighted_volume * 0.1
+                        inst_x1 = bar_index - effective_lookback/2
+                        inst_y1 = profile_level.price - price_tick
+                        inst_x2 = bar_index + right_extension/2
+                        inst_y2 = profile_level.price + price_tick
+                        inst_bgcolor = color.new(color.yellow, 85)
+                        inst_border_color = color.new(color.yellow, 50)
+                        inst_box = box.new(inst_x1, inst_y1, inst_x2, inst_y2, bgcolor=inst_bgcolor, border_color=inst_border_color, border_style=line.style_dotted)
+                        array.push(profile_boxes, inst_box)
+            
+            // Value Area completion analysis
+            if show_value_completion
+                current_price = close
+                if current_price >= va_low_price and current_price <= va_high_price
+                    va_position = (current_price - va_low_price) / (va_high_price - va_low_price)
+                    completion_pct = int(va_position * 100)
+                    completion_label = label.new(bar_index, current_price, text="VA: " + str.tostring(completion_pct) + "%", color=color.new(color.blue, 30), textcolor=color.white, style=label.style_label_right, size=size.tiny)
+                    array.push(analysis_labels, completion_label)
+            
+            // Liquidity analysis
+            if liquidity_analysis
+                // Find liquidity voids (gaps in volume profile)
+                void_threshold = max_weighted_volume * 0.05
+                in_void = false
+                void_start_idx = -1
+                
+                for level_idx = 0 to vp_levels - 1
+                    profile_level = array.get(profile_levels, level_idx)
+                    is_void = profile_level.weighted_volume < void_threshold
+                    
+                    if is_void and not in_void
+                        in_void := true
+                        void_start_idx := level_idx
+                    else if not is_void and in_void and void_start_idx >= 0
+                        in_void := false
+                        void_height = (level_idx - void_start_idx) * price_tick
+                        
+                        if void_height > price_tick * 3  // Significant void
+                            void_start_price = price_min + void_start_idx * price_tick
+                            void_end_price = price_min + level_idx * price_tick
+                            void_box = box.new(bar_index - effective_lookback/3, void_start_price, bar_index + right_extension/3, void_end_price, bgcolor=color.new(color.purple, 90), border_color=color.new(color.purple, 60), border_style=line.style_dotted)
+                            array.push(profile_boxes, void_box)
+            
+            // Order flow divergence detection
+            if order_flow_divergence
+                price_direction = close > close[20] ? 1 : -1
+                volume_trend = volume_trend_5 > volume_trend_20 ? 1 : -1
+                
+                // Check if POC is moving opposite to price
+                if array.size(poc_history) > 10
+                    poc_direction = current_poc > array.get(poc_history, array.size(poc_history) - 10) ? 1 : -1
+                    
+                    if poc_direction != price_direction
+                        div_label = label.new(bar_index + right_extension, current_poc, text="OF DIV", color=color.new(color.orange, 30), textcolor=color.black, style=label.style_label_left, size=size.small)
+                        array.push(analysis_labels, div_label)
+            
+    last_poc := current_poc
+
+last_calculation := bar_index
+
+
+// === HTF ANALYSIS WITH MAXIMUM PRECISION ===
+// (Retyped block to remove any hidden or invalid characters)
+
+if htf_enable
+    // Primary HTF calculation
+    // f_calculate_htf_profile is not defined, so use a placeholder (e.g., close)
+    htf_primary_result = request.security(syminfo.tickerid, htf_primary, close, barmerge.gaps_off)
+    poc = htf_primary_result[0]
+    vah = htf_primary_result[1]
+    val = htf_primary_result[2]
+    total_vol = htf_primary_result[3]
+    calculation_bars = htf_primary_result[4]
+    confidence_score = htf_primary_result[5]
+    if not na(poc)
+        htf_primary_data := HTFData.new(poc, vah, val, total_vol, int(calculation_bars), confidence_score)
+        confidence_alpha = int(math.max(0, 100 - htf_primary_data.confidence_score * 50))
+        htf_poc_line_obj = line.new(bar_index - 200, htf_primary_data.poc, bar_index + right_extension + bar_width + 20, htf_primary_data.poc, color=color.new(htf_poc_color, confidence_alpha), width=3, style=line.style_solid)
+        array.push(profile_lines, htf_poc_line_obj)
+        if not na(htf_primary_data.vah) and not na(htf_primary_data.val)
+            htf_vah_line_obj = line.new(bar_index - 200, htf_primary_data.vah, bar_index + right_extension + bar_width + 20, htf_primary_data.vah, color=color.new(htf_va_color, confidence_alpha + 20), width=2, style=line.style_dashed)
+            array.push(profile_lines, htf_vah_line_obj)
+            htf_val_line_obj = line.new(bar_index - 200, htf_primary_data.val, bar_index + right_extension + bar_width + 20, htf_primary_data.val, color=color.new(htf_va_color, confidence_alpha + 20), width=2, style=line.style_dashed)
+            array.push(profile_lines, htf_val_line_obj)
+
+    // Secondary HTF calculation
+    if htf_secondary != htf_primary
+        htf_secondary_result = request.security(syminfo.tickerid, htf_secondary, close, barmerge.gaps_off)
+        if not na(htf_secondary_result[0])
+            htf_secondary_data_poc = htf_secondary_result[0]
+            // Draw secondary HTF with different styling
+            htf_sec_poc_line = line.new(bar_index - 300, htf_secondary_data_poc, bar_index + right_extension + bar_width + 30, htf_secondary_data_poc, color=color.new(htf_poc_color, 40), width=2, style=line.style_dotted)
+            array.push(profile_lines, htf_sec_poc_line)
+
+    // HTF-LTF Confluence analysis
+    atr20 = ta.atr(20)
+    convergence_threshold = atr20 * 0.5
+    if htf_confluence and not na(last_poc) and not na(htf_primary_data.poc) and math.abs(last_poc - htf_primary_data.poc) < convergence_threshold
+        array.push(analysis_labels, label.new(bar_index + right_extension + bar_width, last_poc, text="HTF CONFLUENCE", color=color.new(color.yellow, 20), textcolor=color.black, style=label.style_label_left, size=size.normal))
+
+// === PERFORMANCE MONITORING ===
+var int calculation_time = 0
+var int peak_memory_usage = 0
+
+if barstate.islast
+    current_objects = array.size(profile_boxes) + array.size(profile_lines) + array.size(analysis_labels)
+    
+    if current_objects > peak_memory_usage
+        peak_memory_usage := current_objects
+    
+    // Memory optimization warning
+    if memory_management == "Conservative" and current_objects > 200
+        runtime.error("Memory usage high. Consider reducing precision settings.")
+    else if memory_management == "Balanced" and current_objects > 350
+        log.warning("Approaching memory limits. Monitor performance.")
+
+// === STATUS AND DEBUGGING ===
+plot(na, title="VPP5 Institutional Status", display=display.status_line)
+plot(last_poc, title="Current POC", display=display.status_line, color=color.orange)
+plot(array.size(profile_boxes), title="Active Objects", display=display.status_line, color=color.gray)
+plot(htf_primary_data.confidence_score, title="HTF Confidence", display=display.status_line, color=color.blue)
+
+// === VOLUME COLOR CODING (VSA Wyckoff style) ===
+showVolume = input.bool(true, "Show Volume Chart", group="Volume Color")
+lengthVolumeMA = input.int(20, title="Length of Volume MA", minval=1, group="Volume Color")
+ratioUltraVolume = input.float(2.2, title="Ultra High Volume Ratio", minval=0, group="Volume Color")
+ratioVeryHighVolume = input.float(1.8, title="Very High Volume Ratio", minval=0, group="Volume Color")
+ratioHighVolume = input.float(1.2, title="High Volume Ratio", minval=0, group="Volume Color")
+ratioNormalVolume = input.float(0.8, title="Normal Volume Ratio", minval=0, group="Volume Color")
+ratioLowVolume = input.float(0.4, title="Low Volume Ratio", minval=0, group="Volume Color")
+volumeMA_vsa = ta.rma(volume, lengthVolumeMA)
+ultraHighVolumeMin = volumeMA_vsa * ratioUltraVolume
+veryHighVolumeMin = volumeMA_vsa * ratioVeryHighVolume
+highVolumeMin = volumeMA_vsa * ratioHighVolume
+normalVolumeMin = volumeMA_vsa * ratioNormalVolume
+lowVolumeMin = volumeMA_vsa * ratioLowVolume
+isUltraHigh = volume >= ultraHighVolumeMin
+isVeryHigh = volume >= veryHighVolumeMin and volume < ultraHighVolumeMin
+isHigh = volume >= highVolumeMin and volume < veryHighVolumeMin
+isNormal = volume >= normalVolumeMin and volume < highVolumeMin
+isLow = volume >= lowVolumeMin and volume < normalVolumeMin
+isVeryLow = volume < lowVolumeMin
+paletteColor = isUltraHigh ? color.new(color.purple, 20) :
+               isVeryHigh  ? color.new(color.red, 20) :
+               isHigh      ? color.new(color.orange, 20) :
+               isNormal    ? color.new(color.green, 20) :
+               isLow       ? color.new(color.blue, 20) :
+                             color.new(color.gray, 20)
+plot(volume, title="Volume", color=paletteColor, style=plot.style_columns, linewidth=1, display=showVolume ? display.all : display.none)

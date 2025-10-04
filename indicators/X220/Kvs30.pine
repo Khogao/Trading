@@ -1,0 +1,170 @@
+//@version=5
+indicator("KVS v3.0 (Structure Integrated)", overlay=true, max_boxes_count=50, max_labels_count=50)
+
+// ============================================================================
+//                         KVS v3.0 - "THE RECTANGLE & THE LINE"
+//      Combines KVS 2.2 Event Detection with SMPA Premium/Discount Structure
+// ============================================================================
+
+// === P/D/E STRUCTURE SETTINGS ===
+var string grp_structure = "🏗️ Premium/Discount Structure"
+pd_swing_lookback = input.int(20, title="Swing Lookback for Range", group=grp_structure, minval=5)
+pd_show_zones = input.bool(true, title="Show P/D/E Zones", group=grp_structure)
+pd_transparency = input.int(90, title="Zone Transparency", group=grp_structure, minval=0, maxval=100)
+
+// === KVS EVENT DETECTION SETTINGS ===
+var string grp_detection = "🎯 KV Event Detection"
+kv_method = input.string("all", title="Detection Method",
+     options=["volume_impulse", "wyckoff", "all"], group=grp_detection)
+kv_sensitivity = input.float(2.0, title="Volume Sensitivity (Z-score)", minval=1.5, maxval=3.0, step=0.1, group=grp_detection)
+kv_lookback = input.int(20, title="Lookback Period", minval=10, maxval=50, group=grp_detection)
+
+// === VISUAL SETTINGS ===
+var string grp_visual = "🎨 Display Options"
+show_intel_markers = input.bool(true, title="Show Intel Markers (KV Events)", group=grp_visual)
+show_market_context = input.bool(true, title="Show Market Context Panel", group=grp_visual)
+
+// === DATA STRUCTURES ===
+type MarketContext
+    bool in_uptrend
+    bool in_downtrend
+    float trend_strength
+
+// === UTILITY & ANALYSIS FUNCTIONS ===
+f_calculateZScore(value, length) =>
+    mean = ta.sma(value, length)
+    std_dev = ta.stdev(value, length)
+    std_dev > 0 ? (value - mean) / std_dev : 0
+
+f_getMarketContext() =>
+    ema21 = ta.ema(close, 21), ema50 = ta.ema(close, 50)
+    uptrend = ema21 > ema50, downtrend = ema21 < ema50
+    strength = 0.0
+    if uptrend
+        strength := math.abs(ema21 - ema50) / ta.atr(14)
+    if downtrend
+        strength := math.abs(ema21 - ema50) / ta.atr(14)
+    MarketContext.new(uptrend, downtrend, strength)
+
+// --- KVS Event Detection Engine (from v2.2) ---
+f_detectKVEvents(context) =>
+    // Volume Impulse
+    vol_zscore = f_calculateZScore(volume, kv_lookback)
+    atr = ta.atr(14)
+    body_size = math.abs(close - open)
+    hasSignificantVolume = vol_zscore > kv_sensitivity
+    hasSignificantMove = body_size > atr * 0.5
+    bullish_impulse = hasSignificantVolume and close > open and hasSignificantMove
+    bearish_impulse = hasSignificantVolume and close < open and hasSignificantMove
+
+    // Wyckoff Events
+    vol_ma = ta.sma(volume, kv_lookback)
+    support_level = ta.lowest(low, kv_lookback)[1]
+    resistance_level = ta.highest(high, kv_lookback)[1]
+    spring = low < support_level and close > support_level and volume > vol_ma * kv_sensitivity
+    upthrust = high > resistance_level and close < resistance_level and volume > vol_ma * kv_sensitivity
+    
+    // Return the detected event
+    string event = na
+    color eventColor = na
+    int eventLocation = 0
+
+    if bullish_impulse
+        event := "🔥" // Bull Impulse
+        eventColor := color.green
+        eventLocation := -1 // Below bar
+    else if bearish_impulse
+        event := "🔥" // Bear Impulse
+        eventColor := color.red
+        eventLocation := 1 // Above bar
+    else if spring
+        event := "🎯" // Spring
+        eventColor := color.lime
+        eventLocation := -1 // Below bar
+    else if upthrust
+        event := "🎯" // Upthrust
+        eventColor := color.maroon
+        eventLocation := 1 // Above bar
+    
+    [event, eventColor, eventLocation]
+
+// === P/D/E ZONE DRAWING LOGIC (from SMPA) ===
+f_drawPDZones() =>
+    // Find the current operating range
+    swing_high = ta.pivothigh(high, pd_swing_lookback, pd_swing_lookback)
+    swing_low = ta.pivotlow(low, pd_swing_lookback, pd_swing_lookback)
+
+    var float range_high = na
+    var float range_low = na
+    var int range_high_bar = na
+    var int range_low_bar = na
+
+    if not na(swing_high)
+        range_high := swing_high
+        range_high_bar := bar_index[pd_swing_lookback]
+    if not na(swing_low)
+        range_low := swing_low
+        range_low_bar := bar_index[pd_swing_lookback]
+
+    // Only draw if we have a valid range
+    if not na(range_high) and not na(range_low)
+        equilibrium = (range_high + range_low) / 2
+        
+        // Define boxes
+        var box premium_box = box.new(na, na, na, na, border_color=na)
+        var box discount_box = box.new(na, na, na, na, border_color=na)
+        var box eq_line_box = box.new(na, na, na, na, border_color=na, border_style=line.style_dashed)
+        
+        // Use the older of the two pivots as the start of the range
+        start_bar = math.min(range_high_bar, range_low_bar)
+
+        // Premium Zone (50% to 100%)
+        box.set_left(premium_box, start_bar)
+        box.set_top(premium_box, range_high)
+        box.set_right(premium_box, bar_index + 20)
+        box.set_bottom(premium_box, equilibrium)
+        box.set_bgcolor(premium_box, color.new(color.red, pd_transparency))
+
+        // Discount Zone (0% to 50%)
+        box.set_left(discount_box, start_bar)
+        box.set_top(discount_box, equilibrium)
+        box.set_right(discount_box, bar_index + 20)
+        box.set_bottom(discount_box, range_low)
+        box.set_bgcolor(discount_box, color.new(color.green, pd_transparency))
+
+// === MAIN LOGIC ===
+market_context = f_getMarketContext()
+
+// Draw P/D/E Zones
+if pd_show_zones
+    f_drawPDZones()
+
+// Detect and plot Intel Markers
+if show_intel_markers and barstate.isconfirmed
+    [event, eventColor, eventLocation] = f_detectKVEvents(market_context)
+    if not na(event)
+        y_pos = eventLocation == -1 ? low - ta.atr(14) * 0.2 : high + ta.atr(14) * 0.2
+        label.new(bar_index, y_pos, event, style=label.style_none, textcolor=eventColor, size=size.small)
+
+// === MARKET CONTEXT PANEL ===
+if show_market_context and barstate.islast
+    var table context_table = table.new(position.top_right, 2, 4, border_width = 1)
+    table.cell(context_table, 0, 0, "KVS 3.0", bgcolor=color.new(color.blue, 50), text_color=color.white, width=12)
+    table.cell(context_table, 1, 0, timeframe.period, bgcolor=color.new(color.blue, 50), text_color=color.white, width=12)
+    
+    trend_text = market_context.in_uptrend ? "↗ UP" : market_context.in_downtrend ? "↘ DOWN" : "→ SIDEWAYS"
+    trend_color = market_context.in_uptrend ? color.green : market_context.in_downtrend ? color.red : color.gray
+    table.cell(context_table, 0, 1, "Trend:")
+    table.cell(context_table, 1, 1, trend_text, text_color=trend_color)
+    
+    strength_color = market_context.trend_strength > 1.0 ? color.lime : market_context.trend_strength > 0.5 ? color.yellow : color.gray
+    table.cell(context_table, 0, 2, "Strength:")
+    table.cell(context_table, 1, 2, str.tostring(market_context.trend_strength, "#.##"), text_color=strength_color)
+
+    // Determine current price zone
+    swing_high = ta.highest(pd_swing_lookback), swing_low = ta.lowest(pd_swing_lookback)
+    equilibrium = (swing_high + swing_low) / 2
+    price_zone = close > equilibrium ? "PREMIUM" : "DISCOUNT"
+    price_zone_color = close > equilibrium ? color.red : color.green
+    table.cell(context_table, 0, 3, "Price Zone:")
+    table.cell(context_table, 1, 3, price_zone, text_color=price_zone_color)

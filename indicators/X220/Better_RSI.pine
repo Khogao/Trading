@@ -1,0 +1,363 @@
+//@version=5
+indicator(title="Better RSI [PineWave] - REFERENCE", shorttitle="Better RSI REF", format=format.price, precision=2, overlay=false)
+
+// ⚠️ DO NOT MODIFY THIS FILE - REFERENCE VERSION ONLY ⚠️
+// Use this file as reference for divergence logic implementation
+// Original Better RSI indicator for comparison and code copying
+
+// ======== INPUTS ========== //
+rsiLengthInput = input.int(14, minval=1, title="RSI Length", group="RSI Settings")
+rsiSourceInput = input.source(close, "Source", group="RSI Settings")
+maTypeInput = input.string("SMA", title="MA Type", options=["SMA", "EMA", "SMMA (RMA)", "WMA", "VWMA"], group="MA Settings")
+maLengthInput = input.int(14, title="MA Length", group="MA Settings")
+bbMultInput = input.float(2.0, minval=0.001, maxval=50, title="BB StdDev", group="MA Settings")
+showDivergence = input.bool(true, title="Show Regular Divergence", group="RSI Settings")
+ShowHDivergence = input.bool(false, title="Show Hidden Divergence", group="RSI Settings")
+showBollingerBands = input.bool(false, title="Show Bollinger Bands", group="Bollinger Band Settings")
+showBBBreakouts = input.bool(false, title="Highlight Bollinger Band Breakouts", group="Bollinger Band Settings")
+showGoldHighlights = input.bool(true, title="Highlight BB Breakout w/ RSI overbought/oversold", group="Bollinger Band Settings")
+rsiShowTable = input(true, title='RSI Table', group="RSI TABLE")
+rsiTablePosition = input.string(title='Location', defval='top_right', options=['top_left','top_right'], group="RSI TABLE", inline='1')
+rsiTextSize = input.string(title=' Size', defval='small', options=['auto','tiny','small','normal','large','huge'], group="RSI TABLE", inline='1')
+textColor = input.color(color.white, title="Text Color", group="RSI TABLE")
+
+showRSIClouds = input.bool(true, title="Show RSI Clouds", group="Display Settings")
+showCandleColors = input.bool(true, title="Show Candle Colors", group="Display Settings")
+candleType = input.string("Heikin Ashi", title="Candle Type", options=["Candlestick", "Heikin Ashi", "None"], group="Display Settings")
+
+// New inputs for additional levels
+enableAdditionalLevels = input.bool(true, title="Enable Additional Levels", group="RSI Settings")
+additionalLevel1 = input.int(40, title="Additional Level 1", minval=0, maxval=100, group="RSI Settings")
+additionalLevel2 = input.int(60, title="Additional Level 2", minval=0, maxval=100, group="RSI Settings")
+
+// Enable CRSI input
+enableCRSI = input.bool(false, title="Enable cRSI", group="CRSI Settings")
+domcycle = input.int(20, minval=10, title='Dominant Cycle Length', group="CRSI Settings")
+
+
+// ======== RSI CALCULATIONS ========== //
+ma(source, length, type) =>
+    switch type
+        "SMA" => ta.sma(source, length)
+        "EMA" => ta.ema(source, length)
+        "SMMA (RMA)" => ta.rma(source, length)
+        "WMA" => ta.wma(source, length)
+        "VWMA" => ta.vwma(source, length)
+
+up = ta.rma(math.max(ta.change(rsiSourceInput), 0), rsiLengthInput)
+down = ta.rma(-math.min(ta.change(rsiSourceInput), 0), rsiLengthInput)
+rsi = down == 0 ? 100 : up == 0 ? 0 : 100 - (100 / (1 + up / down))
+rsiMA = ma(rsi, maLengthInput, maTypeInput)
+
+// ======== CRSI CALCULATIONS ========== //
+
+// Declare variables outside the 'if' block
+cyclelen = int(domcycle / 2.0)
+vibration = 10.0
+phasingLag = (vibration - 1.0) / 2.0
+torque = 2.0 / (vibration + 1.0)
+leveling = 10.0
+cyclicmemory = domcycle * 2
+
+var float crsi = na
+var float lowband = na
+var float highband = na
+
+if enableCRSI
+    up_crsi = ta.rma(math.max(ta.change(rsiSourceInput), 0), cyclelen)
+    down_crsi = ta.rma(-math.min(ta.change(rsiSourceInput), 0), cyclelen)
+    rsi_crsi = down_crsi == 0 ? 100 : up_crsi == 0 ? 0 : 100 - 100 / (1 + up_crsi / down_crsi)
+    crsi := torque * (2 * rsi_crsi - rsi_crsi[int(phasingLag)]) + (1 - torque) * nz(crsi[1])
+
+    // Initialize lmax and lmin
+    lmax = -999999.0
+    lmin = 999999.0
+
+    // Calculate lmax and lmin over the cyclicmemory period
+    for i = 0 to cyclicmemory - 1
+        val = nz(crsi[i], -999999.0)
+        if val > lmax
+            lmax := val
+        if val < lmin
+            lmin := val
+
+    mstep = (lmax - lmin) / 100.0
+    aperc = leveling / 100.0
+
+    // Calculate db (lower band)
+    db = 0.0
+    for steps = 0 to 100
+        testvalue = lmin + mstep * steps
+        below = 0
+        for m = 0 to cyclicmemory - 1
+            below += (crsi[m] < testvalue ? 1 : 0)
+        ratio = below / cyclicmemory
+        if ratio >= aperc
+            db := testvalue
+            break
+
+    // Calculate ub (upper band)
+    ub = 0.0
+    for steps = 0 to 100
+        testvalue = lmax - mstep * steps
+        above = 0
+        for m = 0 to cyclicmemory - 1
+            above += (crsi[m] >= testvalue ? 1 : 0)
+        ratio = above / cyclicmemory
+        if ratio >= aperc
+            ub := testvalue
+            break
+
+    // Assign the calculated bands
+    lowband := db
+    highband := ub
+
+divergenceRSI = enableCRSI ? crsi : rsi
+
+// Plot CRSI bands outside of local scope
+plot(enableCRSI ? lowband : na, title="LowBand", color=color.new(color.aqua, 0))
+plot(enableCRSI ? highband : na, title="HighBand", color=color.new(color.aqua, 0))
+fill(plot1=plot(enableCRSI ? lowband : na, title="LowBand", color=color.new(color.aqua, 0)), plot2=plot(enableCRSI ? highband : na, title="HighBand", color=color.new(color.aqua, 0)), color=color.new(color.gray, 90))
+
+// Plot CRSI outside of local scope
+plot(enableCRSI ? crsi : na, title="CRSI", color=color.new(color.fuchsia, 0))
+
+// ======== PLOTTING RSI ========== //
+rsiPlot = plot(not enableCRSI ? rsi : na, "RSI", color=color.new(color.purple, 0))
+
+rsiUpperBand = hline(70, "RSI Upper Band", color=#787B86)
+line1 = hline(additionalLevel2, "Additional Line 1", color=color.new(#787B86, 75))
+midline = hline(50, "RSI Middle Band", color=color.new(#787B86, 50))
+line2 = hline(additionalLevel1, "Additional Line 2", color=color.new(#787B86, 75))
+rsiLowerBand = hline(30, "RSI Lower Band", color=#787B86)
+fill(rsiUpperBand, rsiLowerBand, color=color.rgb(126, 87, 194, 90), title="RSI Background Fill")
+
+// ======== RSI MA CLOUDS ========== //
+maCloudLength1Input = input.int(5, title="MA Cloud Length 1", group="MA Cloud Settings")
+maCloudLength2Input = input.int(12, title="MA Cloud Length 2", group="MA Cloud Settings")
+maCloudTypeInput = input.string("EMA", title="MA Cloud Type", options=["SMA", "EMA", "SMMA (RMA)", "WMA", "VWMA"], group="MA Cloud Settings")
+
+rsiMA1 = ma(rsi, maCloudLength1Input, maCloudTypeInput)
+rsiMA2 = ma(rsi, maCloudLength2Input, maCloudTypeInput)
+
+p1 = plot(showRSIClouds ? rsiMA1 : na, title="RSI MA Line 1", linewidth=1, color=color.new(color.green, 100))
+p2 = plot(showRSIClouds ? rsiMA2 : na, title="RSI MA Line 2", linewidth=1, color=color.new(color.red, 100))
+fill(p1, p2, color=rsiMA1 > rsiMA2 ? color.new(color.green, 70) : color.new(color.red, 70), title="RSI MA Cloud Fill")
+
+// ======== BOLLINGER BANDS ========== //
+bbSource = enableCRSI ? crsi : rsi
+rsiMA_bb = ma(bbSource, maLengthInput, maTypeInput)
+bbUpperBand = plot(showBollingerBands ? rsiMA_bb + ta.stdev(rsi, maLengthInput) * bbMultInput : na, title = "Upper Bollinger Band", color=color.green)
+bbLowerBand = plot(showBollingerBands ? rsiMA_bb - ta.stdev(rsi, maLengthInput) * bbMultInput : na, title = "Lower Bollinger Band", color=color.red)
+
+midLinePlot = plot(50, color = na, editable = false, display = display.none)
+fill(rsiPlot, midLinePlot, 100, 70, top_color = color.new(color.green, 0), bottom_color = color.new(color.green, 100), title = "Overbought Gradient Fill")
+fill(rsiPlot, midLinePlot, 30, 0, top_color = color.new(color.red, 100), bottom_color = color.new(color.red, 0), title = "Oversold Gradient Fill")
+
+bbUpperBandValue = rsiMA_bb + ta.stdev(rsi, maLengthInput) * bbMultInput
+bbLowerBandValue = rsiMA_bb - ta.stdev(rsi, maLengthInput) * bbMultInput
+
+bbUpperBreakout = rsiMA_bb > bbUpperBandValue
+bbLowerBreakout = rsiMA_bb < bbLowerBandValue
+
+overboughtLevel = 70
+oversoldLevel = 30
+
+bbUpperExtremeBreakout = bbSource > bbUpperBandValue and rsi > overboughtLevel
+bbLowerExtremeBreakout = bbSource < bbLowerBandValue and rsi < oversoldLevel
+
+bgcolor(showBBBreakouts and bbUpperBreakout ? color.new(color.green, 90) : na, title="RSI Above Upper Bollinger Band")
+bgcolor(showBBBreakouts and bbLowerBreakout ? color.new(color.red, 90) : na, title="RSI Below Lower Bollinger Band")
+bgcolor(showGoldHighlights and bbUpperExtremeBreakout ? color.new(color.yellow, 90) : na, title="RSI Extreme Breakout Above")
+bgcolor(showGoldHighlights and bbLowerExtremeBreakout ? color.new(color.yellow, 90) : na, title="RSI Extreme Breakout Below")
+
+// ======== DIVERGENCE CALCULATIONS ========== //
+lookbackRight = 5
+lookbackLeft = 5
+rangeUpper = 60
+rangeLower = 5
+bearColor = color.red
+bullColor = color.green
+noneColor = color.new(color.white, 100)
+
+// Use divergenceRSI instead of rsi
+plFound = na(ta.pivotlow(divergenceRSI, lookbackLeft, lookbackRight)) ? false : true
+phFound = na(ta.pivothigh(divergenceRSI, lookbackLeft, lookbackRight)) ? false : true
+
+_inRange(cond) =>
+    bars = ta.barssince(cond == true)
+    rangeLower <= bars and bars <= rangeUpper
+
+// ======== REGULAR DIVERGENCE ========== //
+// Bullish Divergence
+rsiHL = divergenceRSI[lookbackRight] > ta.valuewhen(plFound, divergenceRSI[lookbackRight], 1) and _inRange(plFound[1])
+priceLL = low[lookbackRight] < ta.valuewhen(plFound, low[lookbackRight], 1)
+bullCondAlert = priceLL and rsiHL and plFound
+bullCond = showDivergence and bullCondAlert
+
+// Bearish Divergence
+rsiLH = divergenceRSI[lookbackRight] < ta.valuewhen(phFound, divergenceRSI[lookbackRight], 1) and _inRange(phFound[1])
+priceHH = high[lookbackRight] > ta.valuewhen(phFound, high[lookbackRight], 1)
+bearCondAlert = priceHH and rsiLH and phFound
+bearCond = showDivergence and bearCondAlert
+
+// ======== HIDDEN DIVERGENCE ========== //
+// Hidden Bullish
+priceHL = high[lookbackRight] > ta.valuewhen(phFound, low[lookbackRight], 1)
+rsiLL = divergenceRSI[lookbackRight] < ta.valuewhen(plFound, divergenceRSI[lookbackRight], 1) and _inRange(plFound[1])
+hiddenBullCondAlert = priceHL and rsiLL and plFound
+hiddenBullCond = ShowHDivergence and hiddenBullCondAlert
+
+// Hidden Bearish
+rsiHH = divergenceRSI[lookbackRight] > ta.valuewhen(phFound, divergenceRSI[lookbackRight], 1) and _inRange(plFound[1])
+priceLH = low[lookbackRight] < ta.valuewhen(plFound, high[lookbackRight], 1)
+hiddenBearCondAlert = priceLH and rsiHH and plFound
+hiddenBearCond = ShowHDivergence and hiddenBearCondAlert
+
+plot(
+     plFound ? divergenceRSI[lookbackRight] : na,
+     offset=-lookbackRight,
+     title="Regular Bullish",
+     linewidth=2,
+     color=(bullCond ? bullColor : noneColor)
+     )
+
+plotshape(
+     bullCond ? divergenceRSI[lookbackRight] : na,
+     offset=-lookbackRight,
+     title="Regular Bullish Label",
+     text=" Bull ",
+     style=shape.labelup,
+     location=location.absolute,
+     color=bullColor,
+     textcolor=textColor
+     )
+
+plot(
+     phFound ? divergenceRSI[lookbackRight] : na,
+     offset=-lookbackRight,
+     title="Regular Bearish",
+     linewidth=2,
+     color=(bearCond ? bearColor : noneColor)
+     )
+
+plotshape(
+     bearCond ? divergenceRSI[lookbackRight] : na,
+     offset=-lookbackRight,
+     title="Regular Bearish Label",
+     text="Bear",
+     style=shape.labeldown,
+     location=location.absolute,
+     color=bearColor,
+     textcolor=textColor
+     )
+
+// Plotting Hidden Divergence
+plot(
+     phFound ? divergenceRSI[lookbackRight] : na,
+     offset=-lookbackRight,
+     title="Hidden Bearish",
+     linewidth=2,
+     color=(hiddenBearCond ? bearColor : noneColor)
+     )
+
+plotshape(
+     hiddenBearCond ? divergenceRSI[lookbackRight] : na,
+     offset=-lookbackRight,
+     title="Hidden Bearish Label",
+     text="Hidden Bear",
+     style=shape.labeldown,
+     location=location.absolute,
+     color=bearColor,
+     textcolor=textColor
+     )
+
+plot(
+     plFound ? divergenceRSI[lookbackRight] : na,
+     offset=-lookbackRight,
+     title="Hidden Bullish",
+     linewidth=2,
+     color=(hiddenBullCond ? bullColor : noneColor)
+     )
+
+plotshape(
+     hiddenBullCond ? divergenceRSI[lookbackRight] : na,
+     offset=-lookbackRight,
+     title="Hidden Bullish Label",
+     text="Hidden Bull",
+     style=shape.labelup,
+     location=location.absolute,
+     color=bullColor,
+     textcolor=textColor
+     )
+
+// ======== ALERTS ========== //
+alertcondition(bullCondAlert, title='Regular Bullish Divergence', message="Found a new Regular Bullish Divergence.")
+alertcondition(bearCondAlert, title='Regular Bearish Divergence', message="Found a new Regular Bearish Divergence.")
+alertcondition(hiddenBullCondAlert, title='Hidden Bullish Divergence', message="Found a new Hidden Bullish Divergence.")
+alertcondition(hiddenBearCondAlert, title='Hidden Bearish Divergence', message="Found a new Hidden Bearish Divergence.")
+
+// ======== TABLE ========== //
+rsi5m = request.security(syminfo.tickerid, "5", ta.rsi(rsiSourceInput, rsiLengthInput))
+rsi15m = request.security(syminfo.tickerid, "15", ta.rsi(rsiSourceInput, rsiLengthInput))
+rsi1h  = request.security(syminfo.tickerid, "60", ta.rsi(rsiSourceInput, rsiLengthInput))
+rsi4h  = request.security(syminfo.tickerid, "240", ta.rsi(rsiSourceInput, rsiLengthInput))
+rsi1d  = request.security(syminfo.tickerid, "1440", ta.rsi(rsiSourceInput, rsiLengthInput))
+
+rsiMA5m  = request.security(syminfo.tickerid, "5", ma(rsi5m, maLengthInput, maTypeInput))
+rsiMA15m  = request.security(syminfo.tickerid, "15", ma(rsi15m, maLengthInput, maTypeInput))
+rsiMA1h   = request.security(syminfo.tickerid, "60", ma(rsi1h, maLengthInput, maTypeInput))
+rsiMA4h   = request.security(syminfo.tickerid, "240", ma(rsi4h, maLengthInput, maTypeInput))
+rsiMA1d   = request.security(syminfo.tickerid, "1440", ma(rsi1d, maLengthInput, maTypeInput))
+
+// Color conditions based on RSI vs RSI Source Input
+isAboveMA = rsi > rsiMA
+isBelowMA = rsi < rsiMA
+
+// RSI Info Table Setting
+width_c0 = 0
+width_c1 = 4
+
+var table rsi_Table = table.new(position=rsiTablePosition, columns=2, rows=5, bgcolor=color.rgb(18,22,33,50), frame_color=color.black, frame_width=1, border_color=color.black, border_width=1)
+if rsiShowTable
+    table.cell(table_id=rsi_Table, column=0, row=0, text=" RSI 5m:", width=width_c0, text_color=textColor, text_size=rsiTextSize, text_halign='right')    
+    table.cell(table_id=rsi_Table, column=0, row=1, text=" RSI 15m:", width=width_c0, text_color=textColor, text_size=rsiTextSize, text_halign='right')
+    table.cell(table_id=rsi_Table, column=0, row=2, text=" RSI 1h:", width=width_c0, text_color=textColor, text_size=rsiTextSize, text_halign='right')
+    table.cell(table_id=rsi_Table, column=0, row=3, text=" RSI 4h:", width=width_c0, text_color=textColor, text_size=rsiTextSize, text_halign='right')
+    table.cell(table_id=rsi_Table, column=0, row=4, text=" RSI 1d:", width=width_c0, text_color=textColor, text_size=rsiTextSize, text_halign='right')
+
+    table.cell(table_id=rsi_Table, column=1, row=0, text=str.format("{0,number,#.##} ", rsi5m), width=width_c1, text_color=textColor, bgcolor=(rsi5m > rsiMA5m ? bullColor : bearColor), text_size=rsiTextSize, text_halign='left')    
+    table.cell(table_id=rsi_Table, column=1, row=1, text=str.format("{0,number,#.##} ", rsi15m), width=width_c1, text_color=textColor, bgcolor=(rsi15m > rsiMA15m ? bullColor : bearColor), text_size=rsiTextSize, text_halign='left')
+    table.cell(table_id=rsi_Table, column=1, row=2, text=str.format("{0,number,#.##} ", rsi1h), width=width_c1, text_color=textColor, bgcolor=(rsi1h > rsiMA1h ? bullColor : bearColor), text_size=rsiTextSize, text_halign='left')
+    table.cell(table_id=rsi_Table, column=1, row=3, text=str.format("{0,number,#.##} ", rsi4h), width=width_c1, text_color=textColor, bgcolor=(rsi4h > rsiMA4h ? bullColor : bearColor), text_size=rsiTextSize, text_halign='left')
+    table.cell(table_id=rsi_Table, column=1, row=4, text=str.format("{0,number,#.##} ", rsi1d), width=width_c1, text_color=textColor, bgcolor=(rsi1d > rsiMA1d ? bullColor : bearColor), text_size=rsiTextSize, text_halign='left')
+
+// ======== CANDLE COLORING BASED ON RSI ========== //
+barcolor(showCandleColors and rsi > overboughtLevel ? color.new(#e91e63, 25) : na, title="Overbought Candle Color")
+barcolor(showCandleColors and rsi < oversoldLevel ? color.new(#46ff4e, 25) : na, title="Oversold Candle Color")
+barcolor(showCandleColors and rsi > additionalLevel2 ? color.new(#d647ee, 25) : na, title="Above Additional Level 1 Candle Color")
+barcolor(showCandleColors and rsi < additionalLevel2 ? color.new(#00bcd4, 25) : na, title="Below Additional Level 1 Candle Color")
+barcolor(showCandleColors and rsi > additionalLevel1 ? color.new(color.yellow, 25) : na, title="Above Additional Level 2 Candle Color")
+barcolor(showCandleColors and rsi < additionalLevel1 ? color.new(#00bcd4, 25) : na, title="Below Additional Level 2 Candle Color")
+
+// ======== PLOT CANDLESTICK OR HEIKIN ASHI BASED ON RSI ========== //
+var float haOpen = na
+var float haClose = na
+var float haHigh = na
+var float haLow = na
+
+plotSource = enableCRSI ? crsi : rsi
+
+if (candleType != "None")
+    if (candleType == "Heikin Ashi")
+        haOpen := na(haOpen[1]) ? (plotSource[1] + plotSource[1]) / 2 : (haOpen[1] + haClose[1]) / 2
+        haClose := (plotSource + plotSource + plotSource + plotSource) / 4
+        haHigh := math.max(plotSource, math.max(haOpen, haClose))
+        haLow := math.min(plotSource, math.min(haOpen, haClose))
+    else
+        haOpen := plotSource[1]
+        haClose := plotSource
+        haHigh := ta.highest(plotSource, 2)
+        haLow := ta.lowest(plotSource, 2)
+
+plotcandle(haOpen, haHigh, haLow, haClose, title="Candles", color=(haClose > haOpen ? color.new(color.green, 45) : color.new(color.red, 45)), bordercolor=color.new(color.black, 50))
